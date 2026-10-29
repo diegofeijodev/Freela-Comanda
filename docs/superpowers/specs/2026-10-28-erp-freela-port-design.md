@@ -38,8 +38,8 @@ contas a pagar com conciliação de DDA, fechamento de caixa e DRE mensal. Dois 
    administrador" (igual ao protótipo); depois disso só o admin cria contas. **(reversível)**
 5. **Sem e-mail transacional** (o Supabase mandava o link de "esqueci a senha"): "Esqueci minha senha" vira o aviso "peça ao
    administrador"; o admin redefine a senha em Usuários e cada pessoa troca a própria em `/trocar-senha`. **(reversível)**
-6. **Leitura de PDF por IA** (NF e DDA): o protótipo usava o gateway da Lovable. Aqui: API da Anthropic (Claude, entrada de
-   PDF nativa + saída em JSON pelo mesmo esquema do protótipo), atrás de uma porta injetável (`AI_PDF_READER`) — nenhum teste
+6. **Leitura de PDF por IA** (NF e DDA): o protótipo usava o gateway da Lovable. Aqui: API da Anthropic (Claude via SDK oficial, modelo `AI_PDF_MODEL` = `claude-opus-5-5` por padrão, entrada de
+   PDF nativa + saída em JSON pelo mesmo esquema do protótipo), atrás de uma porta injetável (`LEITOR_PDF`) — nenhum teste
    faz rede. Sem `ANTHROPIC_API_KEY` a resposta é a mesma do protótipo: "Leitura de PDF não configurada". Upload multipart
    de até 10 MB (o próprio protótipo dizia "máx. 10 MB"). **(reversível)**
 7. **XML da NF-e, planilhas (xlsx/csv), CSV de saída, impressão e `prompt/confirm`** continuam no navegador, como no protótipo.
