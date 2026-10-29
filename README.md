@@ -30,7 +30,7 @@ Na máquina do dono, sempre pelo teto de memória (`scripts/run-capped.sh`, ver 
   smoke `bash scripts/smoke-capped.sh` (banco descartável, 165 checagens: permissões admin × loja, inventário cego de ponta a ponta,
   lista de compras, nota fiscal, contas/DRE/caixa, importações, usuários, PDF sem chave).
 - Web: `yarn test` (7 arquivos, as regras puras do protótipo), `yarn typecheck`, `yarn lint`,
-  `bash scripts/browser-check.sh` (Playwright headless: admin e loja pelos formulários, capturas em `.cache/telas`).
+  `bash scripts/browser-check.sh` (Playwright headless, 68 checagens: admin no desktop e loja no celular pelos formulários, nota por XML, inventário cego, caixa; capturas em `.cache/telas`).
 
 ## Diferenças em relação ao Lovable (de propósito)
 

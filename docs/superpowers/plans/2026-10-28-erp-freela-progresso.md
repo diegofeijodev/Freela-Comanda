@@ -13,10 +13,11 @@ primeira caixa vazia. Verificação SEMPRE por `scripts/run-capped.sh` (máquina
 - [x] 6. Web base: package.json, configs, kit ui, globals.css, http/auth, layout (app)
 - [x] 7. Web telas (1:1 com o protótipo)
 - [x] 8. `yarn install` (capped), vitest, typecheck, lint
-- [ ] 9. Conferência no navegador (headless, um grupo por vez)
-- [ ] 10. Docs finais (README, api-contract, deploy), docker-compose.prod.yml, Dockerfile, memória
+- [x] 9. Conferência no navegador (headless, um grupo por vez)
+- [x] 10. Docs finais (README, api-contract, deploy), docker-compose.prod.yml, Dockerfile, memória
 
 ## Estado
 - 28/10 ~22h40: API completa. Smoke `api/scripts/smoke-capped.sh` = 165/0 (banco descartável `erpfreela_smoke`, API na 3096);
   jest 6 suítes/25; `tsc --noEmit` limpo. Próximo: web.
 - 28/10 ~22h50: web completo (16 telas + entrada/troca de senha). vitest 7/31, tsc e eslint limpos (web e API). Próximo: navegador.
+- 28/10 ~23h: browser-check 68/0 (admin desktop + loja celular, nota por XML, inventário cego, caixa; sem erro de console). Docs e roteiro de deploy prontos. Falta só o que depende do dono (README, 'Pendências').

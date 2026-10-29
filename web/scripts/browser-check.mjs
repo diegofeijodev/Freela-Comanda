@@ -48,18 +48,29 @@ async function sessao(email, viewport = { width: 1366, height: 900 }) {
     erros.push(`console: ${t.slice(0, 200)}`);
   });
   page.on('dialog', (d) => d.accept(d.type() === 'prompt' ? d.defaultValue() || '1' : undefined));
-  await page.goto(`${BASE}/auth`, { waitUntil: 'domcontentloaded', timeout: 180_000 });
+  // Espera a hidratação: antes dela o formulário é HTML puro e o clique vira um GET nativo (`/auth?`).
+  await page.goto(`${BASE}/auth`, { waitUntil: 'networkidle', timeout: 180_000 });
+  await page.waitForFunction(() => !!document.querySelector('#email') && Object.keys(document.querySelector('#email')).some((k) => k.startsWith('__react')), null, { timeout: 120_000 });
   await page.fill('#email', email);
   await page.fill('#senha', 'erpfreela123');
   await page.getByRole('button', { name: 'Entrar' }).click();
-  await page.waitForURL('**/painel', { timeout: 120_000 });
+  try {
+    await page.waitForURL('**/painel', { timeout: 120_000, waitUntil: 'commit' });
+    await page.getByText(/Painel|Olá!/).first().waitFor({ timeout: 120_000 });
+  } catch (e) {
+    await page.screenshot({ path: join(SHOTS, `falha-login-${email.split('@')[0]}.png`), fullPage: true });
+    console.log('URL:', page.url());
+    console.log('ERROS:', erros.join('\n'));
+    console.log('TEXTO:', (await page.locator('body').innerText()).slice(0, 800));
+    throw e;
+  }
   return { ctx, page, erros };
 }
 
 async function abrir(page, erros, caminho, texto, nome) {
   const antes = erros.length;
   await page.goto(`${BASE}${caminho}`, { waitUntil: 'domcontentloaded', timeout: 180_000 });
-  const achou = await page.getByText(texto, { exact: false }).first().waitFor({ timeout: 120_000 }).then(() => true, () => false);
+  const achou = await page.locator('main').getByText(texto, { exact: false }).first().waitFor({ timeout: 120_000 }).then(() => true, () => false);
   check(`${caminho} mostra "${texto}"`, achou);
   const quebrou = await page.getByText('Esta página não carregou').count();
   check(`${caminho} sem tela de erro`, quebrou === 0);
