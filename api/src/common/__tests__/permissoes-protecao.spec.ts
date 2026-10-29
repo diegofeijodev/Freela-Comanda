@@ -1,0 +1,96 @@
+import 'reflect-metadata';
+import { METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
+import { RequestMethod } from '@nestjs/common';
+import { PERMISSAO_KEY } from '../decorators/permissao.decorator';
+import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
+import { HealthController } from '../health/health.controller';
+import { AuthController } from '../../modules/auth/auth.controller';
+import { CadastrosController } from '../../modules/cadastros/cadastros.controller';
+import { CaixaController } from '../../modules/caixa/caixa.controller';
+import { CardapioController } from '../../modules/cardapio/cardapio.controller';
+import { ComprasController } from '../../modules/compras/compras.controller';
+import { ContasController } from '../../modules/contas/contas.controller';
+import { EstoqueController } from '../../modules/estoque/estoque.controller';
+import { ImportacoesController } from '../../modules/importacoes/importacoes.controller';
+import { InventariosController } from '../../modules/inventarios/inventarios.controller';
+import { LeituraPdfController } from '../../modules/leitura-pdf/leitura-pdf.controller';
+import { NotasController } from '../../modules/notas/notas.controller';
+import { UsuariosController } from '../../modules/usuarios/usuarios.controller';
+import { VendasController } from '../../modules/vendas/vendas.controller';
+
+const CONTROLLERS = [
+  HealthController,
+  AuthController,
+  CadastrosController,
+  CaixaController,
+  CardapioController,
+  ComprasController,
+  ContasController,
+  EstoqueController,
+  ImportacoesController,
+  InventariosController,
+  LeituraPdfController,
+  NotasController,
+  UsuariosController,
+  VendasController,
+];
+
+type Rota = { rota: string; marca: string };
+
+function rotas(): Rota[] {
+  const out: Rota[] = [];
+  for (const c of CONTROLLERS) {
+    const base = String(Reflect.getMetadata(PATH_METADATA, c) ?? '');
+    for (const nome of Object.getOwnPropertyNames(c.prototype)) {
+      const h = (c.prototype as unknown as Record<string, unknown>)[nome];
+      if (nome === 'constructor' || typeof h !== 'function') continue;
+      const path = Reflect.getMetadata(PATH_METADATA, h);
+      if (path === undefined) continue;
+      const metodo = RequestMethod[Reflect.getMetadata(METHOD_METADATA, h) as number];
+      const publica = Reflect.getMetadata(IS_PUBLIC_KEY, h) ?? Reflect.getMetadata(IS_PUBLIC_KEY, c);
+      const marca = publica ? 'public' : (Reflect.getMetadata(PERMISSAO_KEY, h) ?? Reflect.getMetadata(PERMISSAO_KEY, c) ?? 'SEM MARCA');
+      out.push({ rota: `${metodo} /${[base, path].filter(Boolean).join('/')}`.replace(/\/+/g, '/').replace(/\/$/, ''), marca });
+    }
+  }
+  return out;
+}
+
+describe('proteção das rotas (substitui as políticas RLS do Supabase)', () => {
+  const todas = rotas();
+
+  it('encontra as rotas', () => {
+    expect(todas.length).toBeGreaterThan(60);
+  });
+
+  it('toda rota tem marca de permissão ou é pública de propósito', () => {
+    expect(todas.filter((r) => r.marca === 'SEM MARCA')).toEqual([]);
+  });
+
+  it('só estas rotas são públicas', () => {
+    expect(todas.filter((r) => r.marca === 'public').map((r) => r.rota).sort()).toEqual(
+      ['GET /health', 'GET /v1/auth/existe-admin', 'POST /v1/auth/login', 'POST /v1/auth/primeiro-acesso'].sort(),
+    );
+  });
+
+  // A fronteira da loja (is_staff no protótipo): nada aqui devolve custo, preço, teórico ou financeiro.
+  it('a loja alcança exatamente estas rotas', () => {
+    expect(todas.filter((r) => r.marca === 'staff').map((r) => r.rota).sort()).toEqual(
+      [
+        'GET /v1/auth/me',
+        'POST /v1/auth/trocar-senha',
+        'GET /v1/configuracoes',
+        'GET /v1/subgrupos',
+        'GET /v1/fichas/loja',
+        'GET /v1/inventarios',
+        'GET /v1/inventarios/atual',
+        'POST /v1/inventarios',
+        'GET /v1/inventarios/:id',
+        'GET /v1/inventarios/:id/contagem',
+        'POST /v1/inventario-itens/:id/contagem',
+        'GET /v1/listas-compra',
+        'GET /v1/listas-compra/:id',
+        'GET /v1/listas-compra/:id/itens',
+      ].sort(),
+    );
+  });
+});

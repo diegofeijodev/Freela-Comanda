@@ -13,7 +13,7 @@ const envSchema = z.object({
 
   // Leitura de PDF (NF e DDA) — spec, decisão 6. Vazia = "Leitura de PDF não configurada" (igual ao protótipo sem a chave).
   ANTHROPIC_API_KEY: z.string().default(''),
-  AI_PDF_MODEL: z.preprocess(vazioComoAusente, z.string().min(3).default('claude-sonnet-5-5')),
+  AI_PDF_MODEL: z.preprocess(vazioComoAusente, z.string().min(3).default('claude-opus-5-5')),
 
   SWAGGER_ENABLED: z.string().optional(),
 
