@@ -1,0 +1,31 @@
+# Desenvolvimento: só o Postgres (a API e o web rodam fora do Docker).
+# TZ na criação do banco: o `current_date` das views/funções é o de Brasília (a migração também fixa no banco).
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: erp-freela-postgres
+    environment:
+      POSTGRES_USER: erpfreela
+      POSTGRES_PASSWORD: erpfreela
+      POSTGRES_DB: erpfreela
+      TZ: America/Sao_Paulo
+      PGTZ: America/Sao_Paulo
+    ports:
+      - '5440:5432'
+    volumes:
+      - erp_freela_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U erpfreela -d erpfreela']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [erp]
+
+networks:
+  erp:
+    ipam:
+      config:
+        - subnet: 172.62.0.0/24
+
+volumes:
+  erp_freela_pgdata:

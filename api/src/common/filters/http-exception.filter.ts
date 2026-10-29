@@ -1,0 +1,62 @@
+import { ArgumentsHost, Catch, ExceptionFilter, HttpException, HttpStatus, Logger } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
+import { FastifyReply } from 'fastify';
+
+/**
+ * Normaliza TODA resposta de erro para { error: { code, message } } (contrato §1).
+ *
+ * Erros do Postgres que o protótipo mostrava na tela (o Supabase repassava a mensagem) chegam aqui como erros do Prisma:
+ *  - `raise exception` das funções de regra (SQLSTATE P0001) → 400 `REGRA` com o MESMO texto ("Já existe um inventário em
+ *    andamento", "Há itens sem quantidade final"...);
+ *  - unique (P2002 / 23505) → 409 `DUPLICADO`; chave estrangeira (P2003 / 23503) → 409 `EM_USO`.
+ */
+@Catch()
+export class HttpExceptionFilter implements ExceptionFilter {
+  private readonly logger = new Logger(HttpExceptionFilter.name);
+
+  catch(exception: unknown, host: ArgumentsHost) {
+    const reply = host.switchToHttp().getResponse<FastifyReply>();
+    const { status, code, message } = this.resolve(exception);
+    reply.status(status).send({ error: { code, message } });
+  }
+
+  private resolve(exception: unknown): { status: number; code: string; message: string } {
+    if (exception instanceof HttpException) {
+      const status = exception.getStatus();
+      const body = exception.getResponse();
+      if (typeof body === 'string') return { status, code: HttpStatus[status] ?? 'ERROR', message: body };
+      const b = body as Record<string, unknown>;
+      let message = (b.message as string) ?? exception.message;
+      if (Array.isArray(b.message)) message = (b.message as string[]).join(' | ');
+      const code = (b.code as string) ?? (b.error as string)?.toUpperCase()?.replace(/\s+/g, '_') ?? 'ERROR';
+      return { status, code, message };
+    }
+    const pg = postgresError(exception);
+    if (pg) return pg;
+    if (exception instanceof Error) this.logger.error(exception.message, exception.stack);
+    return { status: HttpStatus.INTERNAL_SERVER_ERROR, code: 'INTERNAL_ERROR', message: 'Erro interno do servidor' };
+  }
+}
+
+/** Mapeia erros do banco que viram mensagem de tela. `null` = erro de verdade (500). */
+export function postgresError(exception: unknown): { status: number; code: string; message: string } | null {
+  if (exception instanceof Prisma.PrismaClientKnownRequestError) {
+    if (exception.code === 'P2002') return { status: 409, code: 'DUPLICADO', message: 'Já existe um registro com esses dados.' };
+    if (exception.code === 'P2003') return { status: 409, code: 'EM_USO', message: 'Registro em uso por outros dados.' };
+    if (exception.code === 'P2025') return { status: 404, code: 'NOT_FOUND', message: 'Não encontrado.' };
+    // $queryRaw/$executeRaw: o erro do Postgres vem em meta.code / meta.message.
+    if (exception.code === 'P2010') {
+      const meta = (exception.meta ?? {}) as { code?: string; message?: string };
+      return fromSqlState(meta.code, meta.message);
+    }
+  }
+  return null;
+}
+
+function fromSqlState(sqlState: string | undefined, raw: string | undefined): { status: number; code: string; message: string } | null {
+  const message = (raw ?? '').replace(/^ERROR:\s*/, '').split('\n')[0]?.trim() ?? '';
+  if (sqlState === 'P0001') return { status: 400, code: 'REGRA', message };
+  if (sqlState === '23505') return { status: 409, code: 'DUPLICADO', message: 'Já existe um registro com esses dados.' };
+  if (sqlState === '23503') return { status: 409, code: 'EM_USO', message: 'Registro em uso por outros dados.' };
+  return null;
+}

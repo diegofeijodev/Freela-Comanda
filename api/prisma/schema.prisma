@@ -1,0 +1,396 @@
+// Freela ERP — espelho 1:1 do banco do protótipo Lovable (drizzle/migrations 0000–0006).
+// Nomes de tabela/coluna IGUAIS aos do Supabase: a migração de dados do Lovable vira cópia linha a linha.
+// Views, funções, gatilho, CHECKs e as linhas fixas (configuracoes/sazonalidade/subgrupos) ficam no SQL da migração
+// (o Prisma não os expressa). `numeric` = `Decimal @db.Decimal` (sem precisão, igual ao Postgres do protótipo).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum app_role {
+  admin
+  loja
+}
+
+/// Substitui auth.users + profiles + user_roles do Supabase (um perfil por pessoa, como a tela de Usuários assumia).
+model users {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email         String   @unique
+  nome          String   @default("")
+  password_hash String
+  perfil        app_role
+  created_at    DateTime @default(now()) @db.Timestamptz(6)
+}
+
+model configuracoes {
+  id                    Int     @id @default(1)
+  nome_unidade          String  @default("Chopp & Espeto Valinhos")
+  dia_inventario        Int     @default(1)
+  tolerancia_pct        Decimal @default(2) @db.Decimal
+  tolerancia_abs_kg     Decimal @default(0.05) @db.Decimal
+  tolerancia_abs_un     Decimal @default(0) @db.Decimal
+  max_recontagens       Int     @default(2)
+  custo_preparo_pct     Decimal @default(10) @db.Decimal
+  margem_seguranca_pct  Decimal @default(10) @db.Decimal
+  mkup_padrao           Decimal @default(3.10) @db.Decimal
+  estoque_seguranca_pct Decimal @default(20) @db.Decimal
+  semanas_media         Int     @default(8)
+  loja_pode_abrir       Boolean @default(false)
+  razao_social          String  @default("")
+  nome_fantasia         String  @default("")
+  cnpj                  String  @default("")
+  endereco              String  @default("")
+}
+
+model sazonalidade {
+  mes       Int     @id
+  fator_pct Decimal @default(0) @db.Decimal
+}
+
+model subgrupos {
+  id    String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  nome  String @unique
+  grupo String @default("Insumos")
+  ordem Int    @default(0)
+}
+
+model fornecedores {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  nome       String   @unique
+  contato    String?
+  telefone   String?
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  cnpj       String?
+}
+
+model itens_estoque {
+  id                     String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  codigo                 String?  @unique
+  nome                   String   @unique
+  tipo                   String   @default("Insumo")
+  subgrupo               String   @default("Mercearia")
+  unidade                String   @default("UN")
+  preco_unitario         Decimal? @db.Decimal
+  embalagem_compra       String?
+  qtd_por_embalagem      Decimal  @default(1) @db.Decimal
+  fornecedor             String?
+  consumo_semanal_manual Decimal? @db.Decimal
+  usar_manual            Boolean  @default(false)
+  estoque_seguranca_pct  Decimal? @db.Decimal
+  objetivo_manual        Decimal? @db.Decimal
+  tolerancia_pct         Decimal? @db.Decimal
+  tolerancia_abs         Decimal? @db.Decimal
+  ativo                  Boolean  @default(true)
+  created_at             DateTime @default(now()) @db.Timestamptz(6)
+
+  ficha_ingredientes  ficha_ingredientes[]
+  movimentacoes       movimentacoes[]
+  inventario_itens    inventario_itens[]
+  listas_compra_itens listas_compra_itens[]
+  notas_entrada_itens notas_entrada_itens[]
+  vinculos_produto    vinculos_produto[]
+}
+
+model itens_cardapio {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  codigo        String?
+  nome          String   @unique
+  categoria     String   @default("Pratos")
+  grupo         String   @default("Alimentos")
+  unidade_venda String   @default("UN")
+  preco_venda   Decimal? @db.Decimal
+  mkup          Decimal? @db.Decimal
+  ncm           String?
+  cfop          String?
+  cst           String?
+  aliquota      Decimal? @db.Decimal
+  observacoes   String?
+  ativo         Boolean  @default(true)
+  created_at    DateTime @default(now()) @db.Timestamptz(6)
+
+  ficha_ingredientes ficha_ingredientes[]
+  de_para_produtos   de_para_produtos[]
+  vendas             vendas[]
+}
+
+model ficha_ingredientes {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  item_cardapio_id String   @db.Uuid
+  item_estoque_id  String   @db.Uuid
+  quantidade       Decimal  @default(0) @db.Decimal
+  unidade          String?
+  rendimento       Decimal? @db.Decimal
+  observacao       String?
+  ordem            Int      @default(0)
+
+  itens_cardapio itens_cardapio @relation(fields: [item_cardapio_id], references: [id], onDelete: Cascade)
+  itens_estoque  itens_estoque  @relation(fields: [item_estoque_id], references: [id], onDelete: Restrict)
+
+  @@index([item_cardapio_id])
+}
+
+model de_para_produtos {
+  produto_relatorio String   @id
+  item_cardapio_id  String?  @db.Uuid
+  ignorar           Boolean  @default(false)
+  updated_at        DateTime @default(now()) @db.Timestamptz(6)
+
+  itens_cardapio itens_cardapio? @relation(fields: [item_cardapio_id], references: [id], onDelete: SetNull)
+}
+
+model importacoes {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tipo       String
+  arquivo    String?
+  linhas     Int      @default(0)
+  erros      Int      @default(0)
+  usuario_id String?  @db.Uuid
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+
+  vendas vendas[]
+}
+
+model vendas {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  pedido            String
+  data              DateTime  @db.Date
+  hora              DateTime? @db.Time(6)
+  produto_relatorio String
+  item_cardapio_id  String?   @db.Uuid
+  preco_unitario    Decimal   @default(0) @db.Decimal
+  quantidade        Decimal   @default(0) @db.Decimal
+  desconto          Decimal   @default(0) @db.Decimal
+  taxa              Decimal   @default(0) @db.Decimal
+  frete             Decimal   @default(0) @db.Decimal
+  valor_total       Decimal   @default(0) @db.Decimal
+  importacao_id     String?   @db.Uuid
+  created_at        DateTime  @default(now()) @db.Timestamptz(6)
+
+  itens_cardapio itens_cardapio? @relation(fields: [item_cardapio_id], references: [id], onDelete: SetNull)
+  importacoes    importacoes?    @relation(fields: [importacao_id], references: [id], onDelete: SetNull)
+  movimentacoes  movimentacoes[]
+
+  @@unique([pedido, produto_relatorio, data])
+  @@index([data])
+}
+
+model movimentacoes {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  data            DateTime @default(dbgenerated("CURRENT_DATE")) @db.Date
+  item_estoque_id String   @db.Uuid
+  tipo            String
+  quantidade      Decimal  @db.Decimal
+  custo_unitario  Decimal? @db.Decimal
+  referencia      String?
+  venda_id        String?  @db.Uuid
+  usuario_id      String?  @db.Uuid
+  observacao      String?
+  created_at      DateTime @default(now()) @db.Timestamptz(6)
+
+  itens_estoque itens_estoque @relation(fields: [item_estoque_id], references: [id], onDelete: Cascade)
+  vendas        vendas?       @relation(fields: [venda_id], references: [id], onDelete: Cascade)
+
+  @@index([item_estoque_id, data])
+  @@index([venda_id])
+}
+
+model inventarios {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  data          DateTime  @default(dbgenerated("CURRENT_DATE")) @db.Date
+  status        String    @default("aberto")
+  inicial       Boolean   @default(false)
+  aberto_por    String?   @db.Uuid
+  fechado_por   String?   @db.Uuid
+  fechado_em    DateTime? @db.Timestamptz(6)
+  created_at    DateTime  @default(now()) @db.Timestamptz(6)
+  periodicidade String    @default("semanal")
+
+  inventario_itens inventario_itens[]
+  listas_compra    listas_compra[]
+}
+
+model inventario_itens {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  inventario_id    String    @db.Uuid
+  item_estoque_id  String    @db.Uuid
+  teorico_snapshot Decimal?  @db.Decimal
+  contagem_1       Decimal?  @db.Decimal
+  usuario_1        String?   @db.Uuid
+  hora_1           DateTime? @db.Timestamptz(6)
+  contagem_2       Decimal?  @db.Decimal
+  usuario_2        String?   @db.Uuid
+  hora_2           DateTime? @db.Timestamptz(6)
+  contagem_3       Decimal?  @db.Decimal
+  usuario_3        String?   @db.Uuid
+  hora_3           DateTime? @db.Timestamptz(6)
+  final            Decimal?  @db.Decimal
+  status           String    @default("pendente")
+  justificativa    String?
+
+  inventarios   inventarios   @relation(fields: [inventario_id], references: [id], onDelete: Cascade)
+  itens_estoque itens_estoque @relation(fields: [item_estoque_id], references: [id], onDelete: Cascade)
+
+  @@unique([inventario_id, item_estoque_id])
+}
+
+model listas_compra {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  inventario_id String?  @db.Uuid
+  data          DateTime @default(dbgenerated("CURRENT_DATE")) @db.Date
+  mes           Int
+  status        String   @default("gerada")
+  created_at    DateTime @default(now()) @db.Timestamptz(6)
+
+  inventarios         inventarios?          @relation(fields: [inventario_id], references: [id], onDelete: SetNull)
+  listas_compra_itens listas_compra_itens[]
+}
+
+model listas_compra_itens {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  lista_id          String   @db.Uuid
+  item_estoque_id   String?  @db.Uuid
+  descricao         String
+  subgrupo          String?
+  fornecedor        String?
+  unidade           String?
+  embalagem         String?
+  qtd_por_embalagem Decimal  @default(1) @db.Decimal
+  estoque_contado   Decimal? @db.Decimal
+  objetivo          Decimal? @db.Decimal
+  pedido            Decimal  @default(0) @db.Decimal
+  embalagens        Decimal  @default(0) @db.Decimal
+  preco_unitario    Decimal? @db.Decimal
+  qtd_recebida      Decimal? @db.Decimal
+  preco_pago        Decimal? @db.Decimal
+  recebido          Boolean  @default(false)
+
+  listas_compra listas_compra  @relation(fields: [lista_id], references: [id], onDelete: Cascade)
+  itens_estoque itens_estoque? @relation(fields: [item_estoque_id], references: [id], onDelete: SetNull)
+}
+
+model notas_entrada {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  chave           String?  @unique
+  numero          String?
+  serie           String?
+  fornecedor_nome String   @default("")
+  fornecedor_cnpj String?
+  data_emissao    DateTime @default(dbgenerated("CURRENT_DATE")) @db.Date
+  data_entrada    DateTime @default(dbgenerated("CURRENT_DATE")) @db.Date
+  valor_total     Decimal  @default(0) @db.Decimal
+  forma_pagamento String   @default("outros")
+  origem          String   @default("xml")
+  status          String   @default("rascunho")
+  observacao      String?
+  usuario_id      String?  @db.Uuid
+  created_at      DateTime @default(now()) @db.Timestamptz(6)
+
+  notas_entrada_itens notas_entrada_itens[]
+  contas_pagar        contas_pagar[]
+}
+
+model notas_entrada_itens {
+  id                String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  nota_id           String  @db.Uuid
+  codigo_fornecedor String?
+  descricao         String
+  unidade           String?
+  quantidade        Decimal @default(0) @db.Decimal
+  valor_unitario    Decimal @default(0) @db.Decimal
+  valor_total       Decimal @default(0) @db.Decimal
+  item_estoque_id   String? @db.Uuid
+  fator             Decimal @default(1) @db.Decimal
+  ordem             Int     @default(0)
+
+  notas_entrada notas_entrada  @relation(fields: [nota_id], references: [id], onDelete: Cascade)
+  itens_estoque itens_estoque? @relation(fields: [item_estoque_id], references: [id], onDelete: SetNull)
+}
+
+model vinculos_produto {
+  id                String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  fornecedor_cnpj   String  @default("")
+  codigo_fornecedor String
+  descricao         String?
+  item_estoque_id   String  @db.Uuid
+  fator             Decimal @default(1) @db.Decimal
+
+  itens_estoque itens_estoque @relation(fields: [item_estoque_id], references: [id], onDelete: Cascade)
+
+  @@unique([fornecedor_cnpj, codigo_fornecedor])
+}
+
+model plano_contas {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  grupo      String
+  subgrupo   String   @default("")
+  conta      String
+  ativo      Boolean  @default(true)
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+
+  contas_pagar contas_pagar[]
+}
+
+model centros_custo {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  nome       String
+  ativo      Boolean  @default(true)
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+
+  contas_pagar contas_pagar[]
+}
+
+model contas_pagar {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  descricao       String
+  fornecedor_nome String?
+  nota_id         String?   @db.Uuid
+  parcela         String?
+  valor           Decimal   @default(0) @db.Decimal
+  vencimento      DateTime  @db.Date
+  forma_pagamento String    @default("boleto")
+  categoria       String    @default("Fornecedores")
+  status          String    @default("aberta")
+  pago_em         DateTime? @db.Date
+  valor_pago      Decimal?  @db.Decimal
+  observacao      String?
+  created_at      DateTime  @default(now()) @db.Timestamptz(6)
+  plano_conta_id  String?   @db.Uuid
+  centro_custo_id String?   @db.Uuid
+  linha_digitavel String?
+  origem_dda      Boolean   @default(false)
+
+  notas_entrada notas_entrada? @relation(fields: [nota_id], references: [id], onDelete: Cascade)
+  plano_contas  plano_contas?  @relation(fields: [plano_conta_id], references: [id], onDelete: SetNull)
+  centros_custo centros_custo? @relation(fields: [centro_custo_id], references: [id], onDelete: SetNull)
+}
+
+model dre_subgrupos {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  nome       String   @unique
+  sigla      String   @default("")
+  meta_pct   Decimal? @db.Decimal
+  ordem      Int      @default(0)
+  is_cmv     Boolean  @default(false)
+  is_imposto Boolean  @default(false)
+}
+
+model caixa_fechamentos {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  data               DateTime @unique @db.Date
+  dinheiro           Decimal  @default(0) @db.Decimal
+  debito             Decimal  @default(0) @db.Decimal
+  credito            Decimal  @default(0) @db.Decimal
+  pix                Decimal  @default(0) @db.Decimal
+  ifood              Decimal  @default(0) @db.Decimal
+  delivery_proprio   Decimal  @default(0) @db.Decimal
+  cartao_alimentacao Decimal  @default(0) @db.Decimal
+  sangria            Decimal  @default(0) @db.Decimal
+  sangria_cofre      Decimal  @default(0) @db.Decimal
+  observacao         String?
+  created_at         DateTime @default(now()) @db.Timestamptz(6)
+}
