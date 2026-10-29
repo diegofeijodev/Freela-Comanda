@@ -1,0 +1,51 @@
+# Produção do Freela ERP no EC2 do Freela (mesma máquina do api-freela, do Praça e do Meu Funil) — AINDA NÃO SUBIU.
+# Sobe em /opt/erp-freela:  docker compose -f docker-compose.prod.yml up -d --build
+# Segredos vêm do .env ao lado (nunca versionado; modelo em docs/deploy/.env.prod.example), gerados NO SERVIDOR.
+# A API só escuta em 127.0.0.1:3016; quem expõe é o nginx (docs/deploy/nginx-api-erp.conf).
+# Tetos de memória: a máquina é dividida com o Freela de produção — o ERP nunca pode sufocá-lo.
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: erp-freela-postgres
+    restart: unless-stopped
+    mem_limit: 320m
+    environment:
+      POSTGRES_USER: erpfreela
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}
+      POSTGRES_DB: erpfreela
+      TZ: America/Sao_Paulo
+      PGTZ: America/Sao_Paulo
+    volumes:
+      - erp_freela_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U erpfreela -d erpfreela']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: ./api
+    image: erp-freela-api:${IMAGE_TAG:-latest}
+    container_name: erp-freela-api
+    restart: unless-stopped
+    mem_limit: 640m
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      PORT: 3016
+      NODE_OPTIONS: --max-old-space-size=448
+      DATABASE_URL: postgresql://erpfreela:${POSTGRES_PASSWORD}@erp-freela-postgres:5432/erpfreela?schema=public
+      # Navegador -> nginx -> API: o nginx sobrescreve o X-Forwarded-For com o IP real (ver nginx-api-erp.conf).
+      TRUST_PROXY: 'true'
+      JWT_SECRET: ${JWT_SECRET:?defina JWT_SECRET no .env}
+      CORS_ORIGINS: ${CORS_ORIGINS:?defina CORS_ORIGINS no .env}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      AI_PDF_MODEL: ${AI_PDF_MODEL:-}
+    ports:
+      - '127.0.0.1:3016:3016'
+
+volumes:
+  erp_freela_pgdata:
