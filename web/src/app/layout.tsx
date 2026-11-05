@@ -8,9 +8,9 @@ const fraunces = Fraunces({ subsets: ['latin'], weight: ['500', '700'], variable
 const manrope = Manrope({ subsets: ['latin'], weight: ['400', '500', '600', '700'], variable: '--font-manrope' });
 
 export const metadata: Metadata = {
-  title: 'Freela ERP — Chopp & Espeto Valinhos',
+  title: 'Freela Comanda — Chopp & Espeto Valinhos',
   description: 'Gestão de vendas, fichas técnicas, estoque e compras do restaurante.',
-  openGraph: { title: 'Freela ERP', description: 'Gestão de vendas, fichas técnicas, estoque e compras do restaurante.', type: 'website' },
+  openGraph: { title: 'Freela Comanda', description: 'Gestão de vendas, fichas técnicas, estoque e compras do restaurante.', type: 'website' },
   twitter: { card: 'summary' },
 };
 

@@ -53,7 +53,7 @@ export default function AuthPage() {
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
           <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-gold font-display text-2xl font-bold text-primary-foreground shadow-gold">F</div>
-          <h1 className="text-3xl font-bold">Freela <span className="text-gold">ERP</span></h1>
+          <h1 className="text-3xl font-bold">Freela <span className="text-gold">Comanda</span></h1>
         </div>
         {modo === 'esqueci' ? (
           // Sem e-mail transacional (spec, decisão 5): quem redefine a senha é o administrador, em Usuários.

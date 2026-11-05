@@ -1,6 +1,7 @@
 # CLAUDE.md — Freela ERP
 
-Projeto independente dentro do workspace Freela (repo git próprio, branch `master`, sem remote). Port do app Lovable "Freela ERP"
+Projeto independente dentro do workspace Freela (repo git próprio, branch `master`; remote `origin` = github.com/diegofeijodev/Freela-ERP, branch `main`).
+Nome do produto nas telas: **Freela Comanda** (domínio `freelacomanda.com.br`); nomes internos continuam `erp-freela`. Subida: `docs/deploy.md`. Port do app Lovable "Freela ERP"
 (`erpfreela.zip`, TanStack Start + Supabase) para a stack do Freela: `api/` NestJS + Prisma + PostgreSQL, `web/` Next.js.
 Especificação: `docs/superpowers/specs/2026-10-28-erp-freela-port-design.md`; progresso: `docs/superpowers/plans/2026-10-28-erp-freela-progresso.md`;
 contrato: `docs/api-contract.md`. Protótipo de referência em `.prototype/` (gitignored, **só leitura**).

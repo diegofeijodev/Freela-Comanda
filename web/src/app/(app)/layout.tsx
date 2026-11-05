@@ -54,7 +54,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     <div className="flex min-h-screen">
       <aside className="no-print sticky top-0 hidden h-screen w-64 shrink-0 flex-col border-r bg-sidebar md:flex">
         <div className="px-5 py-6">
-          <div className="font-display text-2xl font-bold">Freela <span className="text-gold">ERP</span></div>
+          <div className="font-display text-2xl font-bold">Freela <span className="text-gold">Comanda</span></div>
           <div className="text-xs text-muted-foreground">Chopp & Espeto Valinhos</div>
         </div>
         <nav className="flex-1 space-y-0.5 overflow-y-auto px-3">
@@ -81,7 +81,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="no-print sticky top-0 z-20 border-b bg-sidebar/95 backdrop-blur md:hidden">
           <div className="flex items-center justify-between px-4 py-3">
-            <div className="font-display text-lg font-bold">Freela <span className="text-gold">ERP</span></div>
+            <div className="font-display text-lg font-bold">Freela <span className="text-gold">Comanda</span></div>
             <div className="flex items-center gap-4">
               <Link href="/trocar-senha" aria-label="Trocar senha"><KeyRound className="h-5 w-5 text-muted-foreground" /></Link>
               <button onClick={sair} aria-label="Sair"><LogOut className="h-5 w-5 text-muted-foreground" /></button>

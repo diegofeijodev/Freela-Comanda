@@ -53,4 +53,4 @@ Enquanto isso, a tela **Importar Dados** aceita as mesmas planilhas de insumos, 
 
 ## Produção
 
-Ainda não publicado. Roteiro em `docs/deploy.md` (EC2 do Freela + Vercel, mesmos passos do Praça/Meu Funil). Contrato da API: `docs/api-contract.md`.
+Nome do produto: **Freela Comanda** (`freelacomanda.com.br`; API `api.freelacomanda.com.br`, web na Vercel `freela-comanda`). Roteiro e estado em `docs/deploy.md` (EC2 do Freela + Vercel, mesmos passos do Praça/Meu Funil; scripts em `~/erp-deploy/`). Contrato da API: `docs/api-contract.md`.

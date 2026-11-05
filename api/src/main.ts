@@ -67,7 +67,7 @@ async function bootstrap() {
   const nodeEnv = config.get<string>('NODE_ENV');
   if (nodeEnv !== 'production' || config.get<string>('SWAGGER_ENABLED') === 'true') {
     const swaggerConfig = new DocumentBuilder()
-      .setTitle('Freela ERP — API')
+      .setTitle('Freela Comanda — API')
       .setDescription('Vendas, fichas técnicas, inventário, estoque, compras, notas, contas a pagar, caixa e DRE. Contrato em docs/api-contract.md.')
       .setVersion('1.0')
       .addBearerAuth({ type: 'http', scheme: 'bearer', bearerFormat: 'JWT' })
@@ -79,7 +79,7 @@ async function bootstrap() {
 
   const port = config.get<number>('PORT') ?? 3016;
   await app.listen(port, '0.0.0.0');
-  logger.log(`🍢 Freela ERP API: http://localhost:${port}`);
+  logger.log(`🍢 Freela Comanda API: http://localhost:${port}`);
 }
 
 void bootstrap();
