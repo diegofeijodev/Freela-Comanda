@@ -32,13 +32,14 @@ Peças (todas em `api/`):
     `AuthService.login` de verdade);
   - e-mail em minúsculas; dois iguais depois disso = aborta;
   - **ficam de fora sozinhas** (não entravam no Lovable): apagada, banida, anônima, e-mail nunca confirmado;
-  - papel: admin; quem tem admin e loja vira admin; **sem papel = aborta**, salvo `--pular-sem-papel` (no Lovable ela entrava e não via nada,
+  - papel: admin ou loja; quem tem os dois vira admin; **sem papel = aborta**, salvo `--pular-sem-papel` (no Lovable ela entrava e não via nada,
     então fica de fora);
   - **sem senha bcrypt** (só login social, hash vazio ou outro formato) **= aborta**, salvo `--importar-sem-senha`: entra com uma senha
     aleatória que ninguém conhece e o admin define uma nova em Usuários → Redefinir senha;
   - **nenhum admin com senha de verdade = aborta SEMPRE** (o "Primeiro acesso" ficaria aberto para qualquer um criar um admin);
   - o relatório lista toda conta que entra (id, perfil, e-mail mascarado, criação, último acesso) e as que ficam de fora com o motivo:
-    no Lovable qualquer cadastro pela API pública ganhava `loja` — conta estranha = parar e removê-la no Lovable.
+    no Lovable qualquer cadastro pela API pública ganhava `loja` — conta estranha = parar e removê-la no Lovable. "Não confirmada = não
+    entrava" é inferência (confirmação de e-mail ligada no Supabase): conta de fora com último acesso recente contradiz isso — avisar.
 - **`--verify`** (e a verificação dentro da carga), cada número com o que é, a conta e de onde veio: (1) arquivo × banco linha a linha
   (`EXCEPT ALL` tipado nos dois sentidos, 23 tabelas + contas); (2) `count(*)` e `sum()` de cada coluna numérica calculados NO SUPABASE na
   hora do pull × os nossos (decimais exatos), e movimentações por tipo; (3) views `v_saldo_teorico`, `v_fichas_resumo`, `v_cmv_periodo`,

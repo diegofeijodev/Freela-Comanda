@@ -54,7 +54,7 @@ echo "== pull (Lovable falso, papel anon)"
 DATABASE_URL="$(url $ORIG)" setsid node scripts/lovable-export/fake-lovable.mjs --port-file "$TMP/porta" >"$TMP/fake.log" 2>&1 & FAKE=$!
 for _ in $(seq 1 100); do [[ -s "$TMP/porta" ]] && break; sleep 0.1; done
 P=$(cat "$TMP/porta")
-pull() { SUPABASE_URL="http://127.0.0.1:$P" SUPABASE_PUBLISHABLE_KEY="sb_publishable_e2e" node scripts/lovable-export/pull.mjs --token-file "$TMP/token" "$@"; }
+pull() { PULL_PAGINA=50 SUPABASE_URL="http://127.0.0.1:$P" SUPABASE_PUBLISHABLE_KEY="sb_publishable_e2e" node scripts/lovable-export/pull.mjs --token-file "$TMP/token" "$@"; }
 node scripts/lovable-export/pull.mjs --token-file "$TMP/token" --out "$TMP/x.json" >"$TMP/p0" 2>&1 && r=0 || r=$?
 check "sem SUPABASE_URL/chave no ambiente: recusa" "1,1" "$r,$(grep -c 'defina SUPABASE_URL' "$TMP/p0")"
 pull --out "$TMP/exp/x.json" >"$TMP/p1" 2>&1 && r=0 || { r=$?; cat "$TMP/p1"; }
@@ -86,6 +86,13 @@ EXP="$TMP/ruim3.json" imp "$TMP/i4" --expect-db $DEST --dry-run && r=0 || r=$?
 check "conta sem papel: recusa pedindo --pular-sem-papel" "1,1" "$r,$(grep -c -- '--pular-sem-papel' "$TMP/i4")"
 EXP="$TMP/ruim3.json" imp "$TMP/i5" --expect-db $DEST --dry-run --pular-sem-papel && r=0 || { r=$?; tail -30 "$TMP/i5"; }
 check "com --pular-sem-papel o ensaio passa e a conta fica de fora" "0,1" "$r,$(grep -c "fora  $LOJA .*sem papel" "$TMP/i5")"
+
+mexe "e.usuarios.find(u=>u.id==='$LOJA').encrypted_password=''" "$TMP/sem-senha.json"
+EXP="$TMP/sem-senha.json" imp "$TMP/i5b" --expect-db $DEST --dry-run --importar-sem-senha && r=0 || { r=$?; tail -30 "$TMP/i5b"; }
+check "com --importar-sem-senha o ensaio passa (verificação da senha travada roda) e o relatório avisa" "0,1,1" \
+  "$r,$(grep -c "entra $LOJA .*SENHA TRAVADA" "$TMP/i5b"),$(grep -c 'verificação: ok' "$TMP/i5b")"
+check "paginação exercitada: movimentações > 50 por página (várias páginas)" "t" \
+  "$(node -e "const e=require('$TMP/exp/x.json');console.log(e.tabelas.movimentacoes.length>200?'t':'f:'+e.tabelas.movimentacoes.length)")"
 
 echo "== ensaio (dry-run)"
 imp "$TMP/i6" --expect-db $DEST --dry-run && r=0 || { r=$?; cat "$TMP/i6"; }

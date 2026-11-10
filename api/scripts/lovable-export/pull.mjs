@@ -12,7 +12,8 @@ import { chmodSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync
 import { dirname, resolve } from 'node:path';
 
 const FORMATO = 'erpfreela-export/1';
-const PAGINA = 1000;
+// Página por chamada (a função aceita até 2000). PULL_PAGINA só existe para o teste forçar várias páginas.
+const PAGINA = Math.min(Math.max(Number(process.env.PULL_PAGINA) || 1000, 1), 2000);
 const argv = process.argv.slice(2);
 const flag = (n) => { const i = argv.indexOf(n); return i >= 0 && argv[i + 1] && !argv[i + 1].startsWith('--') ? argv[i + 1] : undefined; };
 const falha = (m) => { console.error(`ERRO: ${m}`); process.exit(1); };

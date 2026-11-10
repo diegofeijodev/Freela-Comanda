@@ -17,7 +17,7 @@ export type ContaNova = {
   ultimo_acesso: string | null;
   dois_papeis: boolean;
 };
-export type ContaFora = { id: string; email: string; motivo: string };
+export type ContaFora = { id: string; email: string; motivo: string; ultimo_acesso: string | null };
 export type PlanoContas = { total: number; entram: ContaNova[]; fora: ContaFora[] };
 export type OpcoesContas = { importarSemSenha: boolean; pularSemPapel: boolean; hashTravado: string };
 
@@ -71,7 +71,7 @@ export function planejarContas(usuarios: Linha[], profiles: Linha[], roles: Linh
             ? 'e-mail nunca confirmado (não entrava no Lovable)'
             : null;
     if (motivo) {
-      plano.fora.push({ id, email, motivo });
+      plano.fora.push({ id, email, motivo, ultimo_acesso: str(u.ultimo_acesso) });
       continue;
     }
     if (!email) {
@@ -86,7 +86,12 @@ export function planejarContas(usuarios: Linha[], profiles: Linha[], roles: Linh
     }
     if (ps.size === 0) {
       if (op.pularSemPapel)
-        plano.fora.push({ id, email, motivo: 'sem papel no Lovable (entrava mas não via nada) — pulada por --pular-sem-papel' });
+        plano.fora.push({
+          id,
+          email,
+          ultimo_acesso: str(u.ultimo_acesso),
+          motivo: 'sem papel no Lovable (entrava mas não via nada) — pulada por --pular-sem-papel',
+        });
       else semPapel.push({ id, email });
       continue;
     }

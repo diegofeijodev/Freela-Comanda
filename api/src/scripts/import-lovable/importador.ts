@@ -45,7 +45,10 @@ function cabecalho(op: Opcoes, banco: string, exp: Exportacao, contas: PlanoCont
       `  entra ${c.id} ${c.perfil.padEnd(5)} ${mascararEmail(c.email)} criada ${c.created_at.slice(0, 10)} último acesso ${c.ultimo_acesso ?? '—'}${extra ? ` (${extra})` : ''}`,
     );
   }
-  for (const c of contas.fora) out.push(`  fora  ${c.id} ${c.email ? mascararEmail(c.email) : '(sem e-mail)'} — ${c.motivo}`);
+  for (const c of contas.fora) {
+    const quem = c.email ? mascararEmail(c.email) : '(sem e-mail)';
+    out.push(`  fora  ${c.id} ${quem} último acesso ${c.ultimo_acesso ?? '—'} — ${c.motivo}`);
+  }
   out.push(
     '  Confira a lista: no Lovable qualquer cadastro pela API pública ganhava o papel loja. Conta estranha = parar e remover no Lovable.',
   );
