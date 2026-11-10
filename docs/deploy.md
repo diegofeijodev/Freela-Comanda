@@ -27,5 +27,5 @@ Os scripts ficam fora do repositório, em `~/erp-deploy/` (o dono roda cada um c
 8. **Dados do Lovable e virada do `www`:** `docs/migracao-lovable.md`.
 
 Volta: `IMAGE_TAG=<tag> docker compose -f docker-compose.prod.yml up -d --no-build api` (imagem anterior) ou, para tirar tudo do ar,
-`docker compose -f docker-compose.prod.yml down` (o volume `erp_freela_pgdata` fica) e apagar o vhost do nginx.
+`docker compose -f docker-compose.prod.yml down` (o volume fica: no Docker ele se chama `erp-freela_erp_freela_pgdata` — o compose prefixa o nome do projeto `erp-freela`; a chave `erp_freela_pgdata` do compose está certa) e apagar o vhost do nginx.
 Memória no EC2: API 640 MB + Postgres 320 MB (tetos no compose).
