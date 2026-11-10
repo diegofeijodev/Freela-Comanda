@@ -54,7 +54,7 @@ Peças (todas em `api/`):
 3. Memória/disco no EC2 conferidos pelo script (como no `subir-api.sh`). O arquivo do pull é lido inteiro pela memória do contêiner
    (teto 640 MB, heap 448 MB): até ~40 MB tudo bem; maior que isso, rodar o importador com `-e NODE_OPTIONS=--max-old-space-size=560`.
 
-Atalhos usados nos scripts (no servidor, `cd /opt/erp-freela`, `set -euo pipefail`):
+Atalhos usados nos scripts (no servidor, `cd /opt/erp-freela`, `set -euo pipefail`; nos scripts reais o `run` leva também `-T`, porque o ssh não tem terminal):
 
 ```bash
 DC="docker compose -f docker-compose.prod.yml"; RUN="$DC run --rm --no-deps"
@@ -94,7 +94,10 @@ imp() { # imp <banco> <arquivo.json> [opções…] — importador dentro da imag
 - Opcional: subir uma API temporária apontando para o stage para olhar as telas — não é necessário; o login pode ser provado depois.
 - `migracao-ensaio.sh --apagar`: `DROP DATABASE erpfreela_stage WITH (FORCE)`.
 
-### 4. `migracao-virada.sh <STAMP>` — com o Lovable congelado
+### 4. `migracao-virada.sh <STAMP> --confirmo` — com o Lovable congelado
+
+O script exige `--confirmo`, religa a API mesmo se algo falhar (o banco fica como estava) e **não** recria o banco sozinho:
+se o importador recusar por banco não vazio, ele para e o passo 4 abaixo é feito à mão, depois de conferir o que há no banco.
 1. O dono avisa a equipe e para de usar o Lovable (inclusive o endereço `*.lovable.app`); tudo o que for lançado lá depois do pull se perde.
 2. Pull novo (script 2) → `STAMP` novo.
 3. `$DC stop api` (ninguém usa o sistema novo durante a carga; o importador ainda trava as tabelas).
