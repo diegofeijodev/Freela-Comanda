@@ -8,11 +8,16 @@ const tipo = (c: string) => (c === 'id' || c.endsWith('_id') ? 'uuid' : 'text');
 function base(): { exp: Exportacao; nosso: EsquemaNosso } {
   const nosso: EsquemaNosso = new Map(TABELAS.map((t) => [t.nome, t.colunas.map((c) => ({ nome: c, tipo: tipo(c), nulo: c !== 'id' }))]));
   const linha = (cols: readonly string[]) => Object.fromEntries(cols.map((c) => [c, null]));
-  const tabelas: Exportacao['tabelas'] = Object.fromEntries(TABELAS.map((t) => [t.nome, t.nome === 'configuracoes' ? [linha(t.colunas)] : []]));
+  const tabelas: Exportacao['tabelas'] = Object.fromEntries(
+    TABELAS.map((t) => [t.nome, t.nome === 'configuracoes' ? [linha(t.colunas)] : []]),
+  );
   tabelas.profiles = [];
   tabelas.user_roles = [];
   const resumoTabelas: Exportacao['resumo']['tabelas'] = Object.fromEntries(
-    [...TABELAS.map((t) => t.nome), 'profiles', 'user_roles'].map((t) => [t, { linhas: tabelas[t]?.length ?? 0, somas: {}, colunas: nosso.get(t) ?? [] }]),
+    [...TABELAS.map((t) => t.nome), 'profiles', 'user_roles'].map((t) => [
+      t,
+      { linhas: tabelas[t]?.length ?? 0, somas: {}, colunas: nosso.get(t) ?? [] },
+    ]),
   );
   const exp: Exportacao = {
     formato: FORMATO,
@@ -39,7 +44,9 @@ describe('validarExportacao', () => {
     const { exp, nosso } = base();
     exp.tabelas.configuracoes![0]!.extra = 1;
     delete exp.tabelas.configuracoes![0]!.cnpj;
-    expect(validarExportacao(exp, nosso)).toEqual([expect.stringMatching(/configuracoes, linha 1: chave\(s\) desconhecida\(s\) extra; falta\(m\) cnpj/)]);
+    expect(validarExportacao(exp, nosso)).toEqual([
+      expect.stringMatching(/configuracoes, linha 1: chave\(s\) desconhecida\(s\) extra; falta\(m\) cnpj/),
+    ]);
   });
   it('tabela nova no Lovable ou tabela faltando aborta', () => {
     const { exp, nosso } = base();
@@ -52,7 +59,9 @@ describe('validarExportacao', () => {
     const { exp, nosso } = base();
     const cols = exp.resumo.tabelas.vendas!.colunas;
     exp.resumo.tabelas.vendas!.colunas = [
-      ...cols.filter((c) => c.nome !== 'frete').map((c) => (c.nome === 'pedido' ? { ...c, tipo: 'integer' } : c.nome === 'hora' ? { ...c, nulo: false } : c)),
+      ...cols
+        .filter((c) => c.nome !== 'frete')
+        .map((c) => (c.nome === 'pedido' ? { ...c, tipo: 'integer' } : c.nome === 'hora' ? { ...c, nulo: false } : c)),
       { nome: 'cupom', tipo: 'text', nulo: true },
     ];
     const e = validarExportacao(exp, nosso);

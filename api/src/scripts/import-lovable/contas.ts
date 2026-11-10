@@ -85,7 +85,8 @@ export function planejarContas(usuarios: Linha[], profiles: Linha[], roles: Linh
       continue;
     }
     if (ps.size === 0) {
-      if (op.pularSemPapel) plano.fora.push({ id, email, motivo: 'sem papel no Lovable (entrava mas não via nada) — pulada por --pular-sem-papel' });
+      if (op.pularSemPapel)
+        plano.fora.push({ id, email, motivo: 'sem papel no Lovable (entrava mas não via nada) — pulada por --pular-sem-papel' });
       else semPapel.push({ id, email });
       continue;
     }
@@ -109,10 +110,13 @@ export function planejarContas(usuarios: Linha[], profiles: Linha[], roles: Linh
   }
 
   const problemas: string[] = [];
-  if (semEmail.length) problemas.push(`${semEmail.length} conta(s) sem e-mail (o login aqui é por e-mail): ${semEmail.join(', ')} — corrija no Lovable`);
+  if (semEmail.length)
+    problemas.push(`${semEmail.length} conta(s) sem e-mail (o login aqui é por e-mail): ${semEmail.join(', ')} — corrija no Lovable`);
   if (papelEstranho.length) problemas.push(`papel desconhecido (só existem admin e loja): ${papelEstranho.join(', ')}`);
   if (semPapel.length) {
-    problemas.push(`${semPapel.length} conta(s) sem papel (admin/loja) no Lovable: ${ids(semPapel)}. No Lovable elas entravam mas não viam nada; para seguir SEM elas, rode com --pular-sem-papel`);
+    problemas.push(
+      `${semPapel.length} conta(s) sem papel (admin/loja) no Lovable: ${ids(semPapel)}. No Lovable elas entravam mas não viam nada; para seguir SEM elas, rode com --pular-sem-papel`,
+    );
   }
   if (semSenha.length) {
     problemas.push(
@@ -124,7 +128,9 @@ export function planejarContas(usuarios: Linha[], profiles: Linha[], roles: Linh
   for (const c of plano.entram) porEmail.set(c.email, [...(porEmail.get(c.email) ?? []), c.id]);
   const repetidos = [...porEmail].filter(([, xs]) => xs.length > 1);
   if (repetidos.length) {
-    problemas.push(`e-mails repetidos depois de passar para minúsculas: ${repetidos.map(([e, xs]) => `${mascararEmail(e)} → ${xs.join(' + ')}`).join('; ')} — junte as contas no Lovable`);
+    problemas.push(
+      `e-mails repetidos depois de passar para minúsculas: ${repetidos.map(([e, xs]) => `${mascararEmail(e)} → ${xs.join(' + ')}`).join('; ')} — junte as contas no Lovable`,
+    );
   }
   if (!plano.entram.some((c) => c.perfil === 'admin' && !c.senha_travada)) {
     problemas.push(

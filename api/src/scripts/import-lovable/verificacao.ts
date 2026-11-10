@@ -33,16 +33,23 @@ async function linhaALinha(tx: Db, exp: Exportacao, contas: PlanoContas, out: st
   const travadas = contas.entram.filter((c) => c.senha_travada).map((c) => c.id);
   const lista = travadas.length ? travadas.map((id) => `'${id.replace(/[^0-9a-f-]/gi, '')}'::uuid`).join(', ') : 'NULL::uuid';
   await tx.$executeRawUnsafe('CREATE TEMP TABLE _lov_users (LIKE public.users) ON COMMIT DROP');
-  const esperadas = contas.entram.map((c) => ({ ...Object.fromEntries(COLUNAS_USERS.map((k) => [k, c[k]])), password_hash: c.senha_travada ? '' : c.password_hash }));
+  const esperadas = contas.entram.map((c) => ({
+    ...Object.fromEntries(COLUNAS_USERS.map((k) => [k, c[k]])),
+    password_hash: c.senha_travada ? '' : c.password_hash,
+  }));
   await inserirLinhas(tx, '_lov_users', 'users', COLUNAS_USERS, esperadas);
   const proj = `id, email, nome, perfil, created_at, CASE WHEN id IN (${lista}) THEN '' ELSE password_hash END AS senha`;
   await comparar('contas (users)', '_lov_users', proj, 'public.users');
-  const [trav] = await tx.$queryRawUnsafe<{ n: number }[]>(`SELECT count(*)::int AS n FROM public.users WHERE id IN (${lista}) AND password_hash !~ '^\\$2[aby]\\$'`);
+  const [trav] = await tx.$queryRawUnsafe<{ n: number }[]>(
+    `SELECT count(*)::int AS n FROM public.users WHERE id IN (${lista}) AND password_hash !~ '^\\$2[aby]\\$'`,
+  );
   if (trav?.n) {
     ok = false;
     out.push(`  DIFERENTE contas com senha travada sem hash bcrypt: ${trav.n}`);
   }
-  out.push(`  ${marca(ok)} ${fmtInt(total)} linhas em ${TABELAS.length} tabelas + ${contas.entram.length} conta(s), todas as colunas (datas, horas e decimais exatos)`);
+  out.push(
+    `  ${marca(ok)} ${fmtInt(total)} linhas em ${TABELAS.length} tabelas + ${contas.entram.length} conta(s), todas as colunas (datas, horas e decimais exatos)`,
+  );
   return ok;
 }
 
@@ -101,12 +108,19 @@ async function views(tx: Db, exp: Exportacao, out: string[]): Promise<{ ok: bool
     await tx.$executeRawUnsafe(`CREATE TEMP TABLE ${tmp} (${def}) ON COMMIT DROP`);
     const linhas = exp.views[v.nome] ?? [];
     for (let i = 0; i < linhas.length; i += 500) {
-      await tx.$executeRawUnsafe(`INSERT INTO ${tmp} SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(${def})`, JSON.stringify(linhas.slice(i, i + 500)));
+      await tx.$executeRawUnsafe(
+        `INSERT INTO ${tmp} SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(${def})`,
+        JSON.stringify(linhas.slice(i, i + 500)),
+      );
     }
     const k0 = q(v.chave[0] ?? '');
     const junta = v.chave.map((c) => `l.${q(c)} = n.${q(c)}`).join(' AND ');
     const iguais = cols
-      .map(([c, tp]) => (tp === 'numeric' ? `round(l.${q(c)}, ${CASAS_VIEWS}) IS NOT DISTINCT FROM round(n.${q(c)}, ${CASAS_VIEWS})` : `l.${q(c)} IS NOT DISTINCT FROM n.${q(c)}`))
+      .map(([c, tp]) =>
+        tp === 'numeric'
+          ? `round(l.${q(c)}, ${CASAS_VIEWS}) IS NOT DISTINCT FROM round(n.${q(c)}, ${CASAS_VIEWS})`
+          : `l.${q(c)} IS NOT DISTINCT FROM n.${q(c)}`,
+      )
       .join(' AND ');
     const p = q(v.principal);
     const [r] = await tx.$queryRawUnsafe<{ nl: number; nn: number; sl: string | null; sn: string | null; dif: number }[]>(
@@ -149,14 +163,19 @@ export async function verificar(tx: Db, exp: Exportacao, contas: PlanoContas): P
     );
     const ligado = r?.on === 'O';
     d &&= ligado;
-    out.push(`  ${marca(ligado)} ${g.tabela}.${g.nome} ${ligado ? 'ligado' : `NÃO está ligado (tgenabled=${r?.on ?? 'ausente'})`} — ${g.porque}`);
+    out.push(
+      `  ${marca(ligado)} ${g.tabela}.${g.nome} ${ligado ? 'ligado' : `NÃO está ligado (tgenabled=${r?.on ?? 'ausente'})`} — ${g.porque}`,
+    );
   }
   const avisos = [...c.avisos];
   for (const [t, col] of COLUNAS_COM_CONTA) {
     const [r] = await tx.$queryRawUnsafe<{ n: number }[]>(
       `SELECT count(*)::int AS n FROM public.${q(t)} x WHERE x.${q(col)} IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.users u WHERE u.id = x.${q(col)})`,
     );
-    if (r?.n) avisos.push(`${t}.${col}: ${r.n} linha(s) apontam para conta que não veio (excluída no Lovable ou deixada de fora) — o histórico fica, sem o nome`);
+    if (r?.n)
+      avisos.push(
+        `${t}.${col}: ${r.n} linha(s) apontam para conta que não veio (excluída no Lovable ou deixada de fora) — o histórico fica, sem o nome`,
+      );
   }
   const [adm] = await tx.$queryRawUnsafe<{ n: number }[]>(`SELECT count(*)::int AS n FROM public.users WHERE perfil = 'admin'`);
   const e = (adm?.n ?? 0) > 0;

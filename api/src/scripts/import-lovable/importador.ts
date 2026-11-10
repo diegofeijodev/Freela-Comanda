@@ -35,7 +35,10 @@ function cabecalho(op: Opcoes, banco: string, exp: Exportacao, contas: PlanoCont
       `${contas.entram.length - adm} loja), ${contas.fora.length} ficam de fora`,
   );
   for (const c of contas.entram) {
-    const extra = [c.dois_papeis ? 'tinha admin e loja → admin' : '', c.senha_travada ? 'SENHA TRAVADA: o admin define uma nova em Usuários' : '']
+    const extra = [
+      c.dois_papeis ? 'tinha admin e loja → admin' : '',
+      c.senha_travada ? 'SENHA TRAVADA: o admin define uma nova em Usuários' : '',
+    ]
       .filter(Boolean)
       .join('; ');
     out.push(
@@ -43,7 +46,9 @@ function cabecalho(op: Opcoes, banco: string, exp: Exportacao, contas: PlanoCont
     );
   }
   for (const c of contas.fora) out.push(`  fora  ${c.id} ${c.email ? mascararEmail(c.email) : '(sem e-mail)'} — ${c.motivo}`);
-  out.push('  Confira a lista: no Lovable qualquer cadastro pela API pública ganhava o papel loja. Conta estranha = parar e remover no Lovable.');
+  out.push(
+    '  Confira a lista: no Lovable qualquer cadastro pela API pública ganhava o papel loja. Conta estranha = parar e remover no Lovable.',
+  );
   return out;
 }
 
@@ -62,7 +67,8 @@ export async function executar(prisma: PrismaClient, exp: Exportacao, op: Opcoes
   const banco = await conferirBanco(prisma, op.expectDb);
   const esquema = await lerEsquemaNosso(prisma);
   const errosNosso = await conferirEsquemaNosso(prisma, esquema);
-  if (errosNosso.length) throw new Error(`o banco "${banco}" não é o esperado pelo importador:\n  - ${errosNosso.join('\n  - ')}\nNada foi gravado.`);
+  if (errosNosso.length)
+    throw new Error(`o banco "${banco}" não é o esperado pelo importador:\n  - ${errosNosso.join('\n  - ')}\nNada foi gravado.`);
   const errosExp = validarExportacao(exp, esquema);
   if (errosExp.length) throw new Error(`a exportação não bate com o sistema novo:\n  - ${errosExp.join('\n  - ')}\nNada foi gravado.`);
   const hashTravado = op.importarSemSenha ? await bcrypt.hash(randomBytes(32).toString('hex'), 10) : '';

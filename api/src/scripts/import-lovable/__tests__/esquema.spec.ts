@@ -14,7 +14,10 @@ describe('esquema.ts × migrações', () => {
   it('colunas de cada tabela = CREATE TABLE da migração init (e users)', () => {
     const criadas = new Map<string, string[]>();
     for (const m of sql.matchAll(/CREATE TABLE "([a-z_]+)" \(\n([\s\S]*?)\n\);/g)) {
-      criadas.set(m[1]!, [...m[2]!.matchAll(/^\s+"([a-z_0-9]+)" /gm)].map((c) => c[1]!));
+      criadas.set(
+        m[1]!,
+        [...m[2]!.matchAll(/^\s+"([a-z_0-9]+)" /gm)].map((c) => c[1]!),
+      );
     }
     expect([...criadas.keys()].sort()).toEqual([...TABELAS.map((t) => t.nome), 'users'].sort());
     for (const t of TABELAS) expect([t.nome, criadas.get(t.nome)]).toEqual([t.nome, [...t.colunas]]);

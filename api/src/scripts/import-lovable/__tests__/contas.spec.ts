@@ -49,13 +49,27 @@ describe('senha do Lovable (bcrypt do GoTrue)', () => {
 });
 
 describe('planejarContas', () => {
-  const roles = [{ user_id: ADM, role: 'admin' }, { user_id: ADM, role: 'loja' }, { user_id: LOJA, role: 'loja' }];
-  const profiles = [{ id: ADM, nome: 'Dono Teste' }, { id: LOJA, nome: '' }];
+  const roles = [
+    { user_id: ADM, role: 'admin' },
+    { user_id: ADM, role: 'loja' },
+    { user_id: LOJA, role: 'loja' },
+  ];
+  const profiles = [
+    { id: ADM, nome: 'Dono Teste' },
+    { id: LOJA, nome: '' },
+  ];
 
   it('mesmo id, e-mail em minúsculas, hash como está, dois papéis → admin, nome do profile (vazio = parte antes do @)', () => {
     const p = planejarContas([conta(ADM, ' Dono.Teste@Exemplo.COM '), conta(LOJA, 'loja@exemplo.com')], profiles, roles, op);
     expect(p.entram).toEqual([
-      expect.objectContaining({ id: ADM, email: 'dono.teste@exemplo.com', perfil: 'admin', nome: 'Dono Teste', password_hash: VETOR_PGCRYPTO, dois_papeis: true }),
+      expect.objectContaining({
+        id: ADM,
+        email: 'dono.teste@exemplo.com',
+        perfil: 'admin',
+        nome: 'Dono Teste',
+        password_hash: VETOR_PGCRYPTO,
+        dois_papeis: true,
+      }),
       expect.objectContaining({ id: LOJA, email: 'loja@exemplo.com', perfil: 'loja', nome: 'loja', senha_travada: false }),
     ]);
   });
@@ -83,7 +97,10 @@ describe('planejarContas', () => {
   });
 
   it('e-mail repetido depois de minúsculas aborta', () => {
-    const r = [{ user_id: ADM, role: 'admin' }, { user_id: LOJA, role: 'loja' }];
+    const r = [
+      { user_id: ADM, role: 'admin' },
+      { user_id: LOJA, role: 'loja' },
+    ];
     expect(problemas(() => planejarContas([conta(ADM, 'Dono@x.com'), conta(LOJA, 'dono@X.com')], [], r, op))).toEqual([
       expect.stringContaining('e-mails repetidos'),
     ]);
@@ -112,7 +129,10 @@ describe('planejarContas', () => {
   });
 
   it('sem e-mail e papel desconhecido abortam', () => {
-    const r = [{ user_id: ADM, role: 'admin' }, { user_id: LOJA, role: 'gerente' }];
+    const r = [
+      { user_id: ADM, role: 'admin' },
+      { user_id: LOJA, role: 'gerente' },
+    ];
     const ps = problemas(() => planejarContas([conta(ADM, 'a@x.com'), conta(LOJA, 'b@x.com'), conta('z', '')], [], r, op));
     expect(ps).toEqual([expect.stringContaining('sem e-mail'), expect.stringContaining('papel desconhecido')]);
   });

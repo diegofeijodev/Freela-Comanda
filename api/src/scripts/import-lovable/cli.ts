@@ -21,5 +21,11 @@ export function parseArgs(argv: string[]): Opcoes {
   if (!arquivo || !expectDb) throw new Error(USO);
   if (argv.includes('--dry-run') && argv.includes('--verify')) throw new Error(`escolha só um entre --dry-run e --verify\n${USO}`);
   const modo: Modo = argv.includes('--dry-run') ? 'ensaio' : argv.includes('--verify') ? 'verificacao' : 'carga';
-  return { arquivo, expectDb, modo, importarSemSenha: argv.includes('--importar-sem-senha'), pularSemPapel: argv.includes('--pular-sem-papel') };
+  return {
+    arquivo,
+    expectDb,
+    modo,
+    importarSemSenha: argv.includes('--importar-sem-senha'),
+    pularSemPapel: argv.includes('--pular-sem-papel'),
+  };
 }

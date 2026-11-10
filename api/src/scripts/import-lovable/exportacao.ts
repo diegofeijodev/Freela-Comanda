@@ -14,7 +14,13 @@ export type Resumo = {
   movimentacoes_por_tipo: Record<string, { linhas: number; quantidade: string | null }>;
 };
 /** Formato gravado pelo `pull.mjs` (api/scripts/lovable-export). */
-export type Exportacao = { formato: string; resumo: Resumo; tabelas: Record<string, Linha[]>; usuarios: Linha[]; views: Record<string, Linha[]> };
+export type Exportacao = {
+  formato: string;
+  resumo: Resumo;
+  tabelas: Record<string, Linha[]>;
+  usuarios: Linha[];
+  views: Record<string, Linha[]>;
+};
 /** Colunas das tabelas base do NOSSO banco (information_schema), por tabela. */
 export type EsquemaNosso = Map<string, ColunaInfo[]>;
 
@@ -43,7 +49,8 @@ function diferencasDeColunas(tabela: string, lov: ColunaInfo[], nossas: ColunaIn
     const o = n.get(c.nome);
     if (!o) continue;
     if (o.tipo !== c.tipo) out.push(`${tabela}.${c.nome}: tipo ${c.tipo} no Lovable × ${o.tipo} aqui`);
-    if (o.nulo !== c.nulo) out.push(`${tabela}.${c.nome}: ${c.nulo ? 'aceita' : 'não aceita'} nulo no Lovable × ${o.nulo ? 'aceita' : 'não aceita'} aqui`);
+    if (o.nulo !== c.nulo)
+      out.push(`${tabela}.${c.nome}: ${c.nulo ? 'aceita' : 'não aceita'} nulo no Lovable × ${o.nulo ? 'aceita' : 'não aceita'} aqui`);
   }
   return out;
 }
@@ -73,7 +80,10 @@ export function validarExportacao(exp: Exportacao, nosso: EsquemaNosso): string[
   const lov = exp.resumo.tabelas ?? {};
   const conhecidas: string[] = [...TABELAS.map((t) => t.nome), ...TABELAS_DE_CONTAS];
   for (const t of Object.keys(lov)) {
-    if (!conhecidas.includes(t)) erros.push(`O Lovable tem a tabela "${t}", que o sistema novo não tem (mudou depois do port?): decidir o destino dela antes de migrar`);
+    if (!conhecidas.includes(t))
+      erros.push(
+        `O Lovable tem a tabela "${t}", que o sistema novo não tem (mudou depois do port?): decidir o destino dela antes de migrar`,
+      );
   }
   for (const t of conhecidas) if (!lov[t]) erros.push(`falta a tabela "${t}" na exportação`);
   for (const t of TABELAS) {
@@ -85,26 +95,35 @@ export function validarExportacao(exp: Exportacao, nosso: EsquemaNosso): string[
       erros.push(`faltam as linhas de "${t.nome}" no arquivo`);
       continue;
     }
-    if (linhas.length !== Number(info.linhas)) erros.push(`${t.nome}: ${linhas.length} linha(s) no arquivo; o resumo do Lovable diz ${info.linhas}. Refaça o pull.`);
+    if (linhas.length !== Number(info.linhas))
+      erros.push(`${t.nome}: ${linhas.length} linha(s) no arquivo; o resumo do Lovable diz ${info.linhas}. Refaça o pull.`);
     const e = conferirChaves(t.nome, linhas, t.colunas);
     if (e) erros.push(e);
   }
-  if (exp.tabelas.configuracoes?.length !== 1) erros.push(`configuracoes: o Lovable tem ${exp.tabelas.configuracoes?.length ?? 0} linha(s); o sistema precisa de exatamente 1 (id 1)`);
-  const contas: [string, readonly string[]][] = [['profiles', ['id', 'nome']], ['user_roles', ['user_id', 'role']]];
+  if (exp.tabelas.configuracoes?.length !== 1)
+    erros.push(`configuracoes: o Lovable tem ${exp.tabelas.configuracoes?.length ?? 0} linha(s); o sistema precisa de exatamente 1 (id 1)`);
+  const contas: [string, readonly string[]][] = [
+    ['profiles', ['id', 'nome']],
+    ['user_roles', ['user_id', 'role']],
+  ];
   for (const [t, precisa] of contas) {
     const linhas = exp.tabelas[t];
     if (!Array.isArray(linhas)) continue;
-    if (lov[t] && linhas.length !== Number(lov[t].linhas)) erros.push(`${t}: ${linhas.length} linha(s) no arquivo; o resumo diz ${lov[t].linhas}. Refaça o pull.`);
+    if (lov[t] && linhas.length !== Number(lov[t].linhas))
+      erros.push(`${t}: ${linhas.length} linha(s) no arquivo; o resumo diz ${lov[t].linhas}. Refaça o pull.`);
     const sem = linhas.findIndex((r) => precisa.some((k) => !(k in (r ?? {}))));
     if (sem >= 0) erros.push(`${t}, linha ${sem + 1}: faltam ${lista([...precisa])}`);
   }
-  if (exp.usuarios.length !== Number(exp.resumo.usuarios)) erros.push(`contas: ${exp.usuarios.length} no arquivo; o resumo diz ${exp.resumo.usuarios}. Refaça o pull.`);
+  if (exp.usuarios.length !== Number(exp.resumo.usuarios))
+    erros.push(`contas: ${exp.usuarios.length} no arquivo; o resumo diz ${exp.resumo.usuarios}. Refaça o pull.`);
   const e = conferirChaves('contas (auth.users)', exp.usuarios, CHAVES_CONTA);
   if (e) erros.push(e);
   for (const v of VIEWS) {
     const linhas = exp.views[v.nome];
-    if (!Array.isArray(linhas) || exp.resumo.views?.[v.nome] == null) erros.push(`a view ${v.nome} não veio na exportação (o Lovable mudou?)`);
-    else if (linhas.length !== Number(exp.resumo.views[v.nome])) erros.push(`${v.nome}: ${linhas.length} linha(s); o resumo diz ${exp.resumo.views[v.nome]}`);
+    if (!Array.isArray(linhas) || exp.resumo.views?.[v.nome] == null)
+      erros.push(`a view ${v.nome} não veio na exportação (o Lovable mudou?)`);
+    else if (linhas.length !== Number(exp.resumo.views[v.nome]))
+      erros.push(`${v.nome}: ${linhas.length} linha(s); o resumo diz ${exp.resumo.views[v.nome]}`);
   }
   return erros;
 }
