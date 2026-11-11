@@ -1,5 +1,9 @@
 /**
  * Só para o import-lovable-e2e.sh: entra pelo AuthService.login DE VERDADE (mesmo código da rota POST /v1/auth/login) com as senhas
+ * definidas pelo definir-senha (e confere que a senha antiga do Lovable não entra). Imprime "e-mail → ok <perfil>|recusado" por tentativa.
+ *   DATABASE_URL=… npx ts-node --transpile-only scripts/import-lovable-login.ts <email> <senha> [<email> <senha> …]
+ */
+import-lovable-e2e.sh: entra pelo AuthService.login DE VERDADE (mesmo código da rota POST /v1/auth/login) com as senhas
  * que o Lovable falso guardou via pgcrypto. Imprime uma linha "e-mail senha → ok|recusado" por tentativa.
  *   DATABASE_URL=… npx ts-node --transpile-only scripts/import-lovable-login.ts <email> <senha> [<email> <senha> …]
  */

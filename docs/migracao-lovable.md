@@ -34,7 +34,7 @@ Peças (todas em `api/`):
   prontas em `movimentacoes` (ligado, dobrariam). Sem sequences/identity: nada de `setval`.
 - **Contas** (`auth.users` + `profiles` + `user_roles` → `users`, MESMO id; o pull traz só id, e-mail, criação, dia do último acesso e situação):
   - **senha: TODAS entram com o hash bcrypt de uma senha aleatória que ninguém conhece** (o relatório avisa). Ninguém entra até receber
-    senha nova: o admin pelo `definir-senha` (dono, no terminal), os demais pelo admin em Usuários → "Nova senha" (a tela já tem);
+    senha nova: o admin pelo `definir-senha` (dono, no terminal), os demais pelo admin em Usuários → botão "Redefinir senha" (a tela já tem; pede a senha nova, mín. 6);
   - e-mail em minúsculas; dois iguais depois disso = aborta;
   - ficam de fora sozinhas (não entravam no Lovable): apagada, banida, anônima, e-mail nunca confirmado. "Não confirmada = não entrava"
     é inferência (confirmação de e-mail ligada no Supabase): conta de fora com último acesso recente contradiz isso — avisar;
@@ -95,6 +95,8 @@ imp() { # imp <banco> <arquivo.json> [opções…]
 - `umask 077`; `imp erpfreela_stage $STAMP.json --dry-run | tee $EXP/$STAMP-ensaio-dry-run.txt`, a carga `| tee …-ensaio-carga.txt`,
   `--verify | tee …-ensaio-verify.txt` (`set -o pipefail`; parar no primeiro que sair 1; as mesmas opções nas três).
 - Revisar com o dono: contas (estranhos?), contas de fora, avisos, linhas DIFERENTE (zero).
+- Ensaiar também a senha do admin pelo MESMO caminho da virada (script 6 com `--expect-db erpfreela_stage`): prova o JS compilado do
+  `definir-senha` e que a senha chega pelo stdin do `ssh` → `docker compose run -T` (stdin vazio = senha recusada, nada muda).
 - `--apagar`: `DROP DATABASE erpfreela_stage WITH (FORCE)`.
 
 ### 5. `migracao-virada.sh <STAMP> --confirmo` — com o Lovable congelado
@@ -114,7 +116,7 @@ recusar por banco não vazio, ele para e o passo 4 abaixo é feito à mão, depo
 - Manda por **stdin**: `printf '%s\n' "$SENHA" | ssh … "cd /opt/erp-freela && docker compose -f docker-compose.prod.yml run --rm --no-deps -T api node dist/src/scripts/definir-senha/main.js --expect-db erpfreela --email $EMAIL"`.
   Saída esperada: `senha definida para xx***@dominio`. Mesmas regras da tela (6 a 72 caracteres).
 - O dono entra em `https://freela-comanda.vercel.app` com essa senha, confere fichas, estoque, inventários e contas, e em **Usuários →
-  "Nova senha"** define a de cada pessoa (e avisa cada uma).
+  "Redefinir senha"** define a de cada pessoa (e avisa cada uma).
 
 ### 7. Domínio
 - Local: `vercel domains add www.freelacomanda.com.br freela-comanda --scope freelas-projects-ccf14064` e o mesmo para `freelacomanda.com.br`
