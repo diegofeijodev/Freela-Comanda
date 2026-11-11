@@ -16,7 +16,7 @@ Peças (todas em `api/`):
 | `scripts/lovable-export/prompt-exportacao.md` / `prompt-limpeza.md` / `limpeza_erpfreela.sql` | textos colados no chat do Lovable (`node scripts/lovable-export/render-prompts.mjs [--only exportacao\|limpeza]`) |
 | `scripts/lovable-export/login.mjs` | **máquina do dono**: pede e-mail e senha do admin do Lovable (senha sem eco; nada por argumento/variável) e imprime SÓ o `access_token` |
 | `scripts/lovable-export/pull.mjs` | no EC2: `--jwt-file`; `SUPABASE_URL`/`SUPABASE_PUBLISHABLE_KEY` só do ambiente; grava `<arquivo>.json` (600); 401/403/vencido = "entre de novo"; sai 1 se alguma contagem não bater ou se a base mudou durante o pull |
-| `src/scripts/import-lovable/` → `dist/src/scripts/import-lovable/main.js` | importador (`--file`, `--expect-db`, `--dry-run`, `--verify`, `--pular-sem-papel`) |
+| `src/scripts/import-lovable/` → `dist/src/scripts/import-lovable/main.js` | importador (`--file`, `--expect-db`, `--dry-run`, `--verify`, `--pular-sem-papel`, `--ignorar-tabela <nome>`) |
 | `src/scripts/definir-senha/` → `dist/src/scripts/definir-senha/main.js` | `--expect-db <banco> --email <e-mail>`, senha nova pelo STDIN (mesmas regras e bcrypt da tela) |
 | `scripts/import-lovable-e2e.sh` | teste local com Lovable falso (função SQL real, JWT, anon/loja/admin) — `../scripts/run-capped.sh 1500 bash scripts/import-lovable-e2e.sh` |
 
@@ -39,6 +39,7 @@ Peças (todas em `api/`):
   - ficam de fora sozinhas (não entravam no Lovable): apagada, banida, anônima, e-mail nunca confirmado. "Não confirmada = não entrava"
     é inferência (confirmação de e-mail ligada no Supabase): conta de fora com último acesso recente contradiz isso — avisar;
   - papel: admin ou loja; quem tem os dois vira admin; **sem papel = aborta**, salvo `--pular-sem-papel` (fica de fora; no Lovable não via nada);
+  - tabela que o Lovable ganhou depois do port (o sistema novo não tem) **aborta**, salvo `--ignorar-tabela <nome>` (só vale para tabela que não é nossa; o relatório diz quantas linhas ficaram de fora e elas continuam no arquivo exportado). 11/11: `lojas` (1 linha, nome da unidade, criada no Lovable às 17h48 BRT) + coluna `profiles.loja_id`, deixadas de fora — o sistema novo tem uma unidade só (`configuracoes.nome_unidade`);
   - **nenhuma conta ADMIN importada = aborta SEMPRE** (com um admin no banco, o "Primeiro acesso" fica fechado);
   - o relatório lista toda conta que entra (id, perfil, e-mail mascarado, criação, último acesso) e as de fora com o motivo: no Lovable
     qualquer cadastro pela API pública ganhava `loja` — conta estranha = parar e removê-la no Lovable.

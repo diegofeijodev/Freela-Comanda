@@ -29,6 +29,11 @@ function cabecalho(op: Opcoes, banco: string, exp: Exportacao, contas: PlanoCont
     `Banco: ${banco} (conferido com --expect-db)`,
     `Exportação: ${op.arquivo} — feita em ${m.agora} pelo Lovable (fuso ${m.fuso}, Postgres ${m.versao_pg})`,
   ];
+  for (const t of op.ignorarTabelas)
+    out.push(
+      `Tabela deixada de fora (--ignorar-tabela): ${t}, ${fmtInt(Number(exp.resumo.tabelas[t]?.linhas ?? 0))} linha(s) no Lovable — ` +
+        'o sistema novo não tem essa tabela; os dados continuam no arquivo exportado',
+    );
   const adm = contas.entram.filter((c) => c.perfil === 'admin').length;
   out.push(
     `Contas (auth.users + profiles + user_roles → users, mesmo id): ${contas.total} no Lovable → ${contas.entram.length} entram (${adm} admin, ` +
@@ -71,7 +76,7 @@ export async function executar(prisma: PrismaClient, exp: Exportacao, op: Opcoes
   const errosNosso = await conferirEsquemaNosso(prisma, esquema);
   if (errosNosso.length)
     throw new Error(`o banco "${banco}" não é o esperado pelo importador:\n  - ${errosNosso.join('\n  - ')}\nNada foi gravado.`);
-  const errosExp = validarExportacao(exp, esquema);
+  const errosExp = validarExportacao(exp, esquema, op.ignorarTabelas);
   if (errosExp.length) throw new Error(`a exportação não bate com o sistema novo:\n  - ${errosExp.join('\n  - ')}\nNada foi gravado.`);
   // O formato 2 não traz senha: todas as contas entram com o hash de uma senha aleatória jogada fora (ninguém a conhece).
   const hashTravado = await bcrypt.hash(randomBytes(32).toString('hex'), 10);

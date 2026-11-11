@@ -65,6 +65,21 @@ describe('validarExportacao', () => {
     const e = validarExportacao(exp, nosso);
     expect(e).toEqual([expect.stringContaining('tabela "novidade"'), expect.stringContaining('falta a tabela "caixa_fechamentos"')]);
   });
+  it('--ignorar-tabela deixa de fora só tabela que o sistema novo não tem', () => {
+    const { exp, nosso } = base();
+    exp.resumo.tabelas.lojas = { linhas: 1, somas: {}, colunas: [{ nome: 'id', tipo: 'uuid', nulo: false }] };
+    exp.tabelas.lojas = [{ id: 'l1' }];
+    expect(validarExportacao(exp, nosso)).toEqual([expect.stringContaining('tabela "lojas"')]);
+    expect(validarExportacao(exp, nosso, ['lojas'])).toEqual([]);
+    // nunca uma das nossas, nem uma que não veio
+    expect(validarExportacao(exp, nosso, ['lojas', 'vendas', 'fantasma'])).toEqual([
+      expect.stringContaining('--ignorar-tabela vendas: essa tabela existe no sistema novo'),
+      expect.stringContaining('--ignorar-tabela fantasma: essa tabela não está na exportação'),
+    ]);
+    // ignorar uma não esconde outra tabela nova
+    exp.resumo.tabelas.outra = { linhas: 0, somas: {}, colunas: [] };
+    expect(validarExportacao(exp, nosso, ['lojas'])).toEqual([expect.stringContaining('tabela "outra"')]);
+  });
   it('coluna, tipo ou nulabilidade diferente no Lovable aborta (vale até para tabela vazia)', () => {
     const { exp, nosso } = base();
     const cols = exp.resumo.tabelas.vendas!.colunas;
@@ -123,7 +138,15 @@ describe('linha de comando', () => {
       expectDb: 'erpfreela_stage',
       modo: 'ensaio',
       pularSemPapel: true,
+      ignorarTabelas: [],
     });
+    expect(parseArgs(['--file', 'a', '--expect-db', 'b', '--ignorar-tabela', 'lojas', '--ignorar-tabela', 'x_y', '--ignorar-tabela', 'lojas']).ignorarTabelas).toEqual([
+      'lojas',
+      'x_y',
+    ]);
+    expect(() => parseArgs(['--file', 'a', '--expect-db', 'b', '--ignorar-tabela'])).toThrow('--ignorar-tabela precisa de um valor');
+    expect(() => parseArgs(['--file', 'a', '--expect-db', 'b', '--ignorar-tabela', '--dry-run'])).toThrow('precisa de um valor');
+    expect(() => parseArgs(['--file', 'a', '--expect-db', 'b', '--ignorar-tabela', 'Lojas;drop'])).toThrow('nome de tabela inválido');
     expect(parseArgs(['--file', 'a', '--expect-db', 'b']).modo).toBe('carga');
     expect(() => parseArgs(['--file', 'a'])).toThrow('uso:');
     expect(() => parseArgs(['--file', 'a', '--expect-db', 'b', '--dry-run', '--verify'])).toThrow('escolha só um');

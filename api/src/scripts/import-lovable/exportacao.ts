@@ -74,14 +74,20 @@ function conferirChaves(o: string, linhas: Linha[], esperadas: readonly string[]
 /**
  * Tudo o que precisa estar certo ANTES de abrir a transação. Devolve a lista de problemas (vazia = pode seguir).
  * Tabela do Lovable fora das 23 + profiles + user_roles, ou qualquer diferença de coluna, aborta: o Lovable pode ter mudado desde o port.
+ * Exceção explícita: `ignorar` (--ignorar-tabela) deixa de fora uma tabela que o sistema novo NÃO tem (nunca uma das nossas).
  */
-export function validarExportacao(exp: Exportacao, nosso: EsquemaNosso): string[] {
+export function validarExportacao(exp: Exportacao, nosso: EsquemaNosso, ignorar: readonly string[] = []): string[] {
   if (exp.formato !== FORMATO) return [`formato "${exp.formato}" ≠ "${FORMATO}": arquivo de outro pull`];
   const erros: string[] = [];
   const lov = exp.resumo.tabelas ?? {};
   const conhecidas: string[] = [...TABELAS.map((t) => t.nome), ...TABELAS_DE_CONTAS];
+  for (const t of ignorar) {
+    if (conhecidas.includes(t))
+      erros.push(`--ignorar-tabela ${t}: essa tabela existe no sistema novo e tem de ser importada; só dá para deixar de fora tabela que ele não tem`);
+    else if (!lov[t]) erros.push(`--ignorar-tabela ${t}: essa tabela não está na exportação`);
+  }
   for (const t of Object.keys(lov)) {
-    if (!conhecidas.includes(t))
+    if (!conhecidas.includes(t) && !ignorar.includes(t))
       erros.push(
         `O Lovable tem a tabela "${t}", que o sistema novo não tem (mudou depois do port?): decidir o destino dela antes de migrar`,
       );
