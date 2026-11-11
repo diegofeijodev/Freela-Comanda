@@ -36,6 +36,16 @@ function base(): { exp: Exportacao; nosso: EsquemaNosso } {
 }
 
 describe('validarExportacao', () => {
+  it('conta com campo de senha (formato 1) é recusada', () => {
+    const { exp, nosso } = base();
+    exp.resumo.usuarios = 1;
+    exp.usuarios = [
+      { id: 'u', email: 'a@x.com', encrypted_password: '$2a$', created_at: '', ultimo_acesso: null, confirmada: true, apagada: false, banida: false, anonima: false },
+    ];
+    expect(validarExportacao(exp, nosso)).toEqual([expect.stringContaining('chave(s) desconhecida(s) encrypted_password')]);
+    expect(validarExportacao({ ...exp, formato: 'erpfreela-export/1' }, nosso)).toEqual([expect.stringContaining('formato')]);
+  });
+
   it('exportação igual ao esquema passa', () => {
     const { exp, nosso } = base();
     expect(validarExportacao(exp, nosso)).toEqual([]);
@@ -112,12 +122,12 @@ describe('linha de comando', () => {
       arquivo: 'a.json',
       expectDb: 'erpfreela_stage',
       modo: 'ensaio',
-      importarSemSenha: false,
       pularSemPapel: true,
     });
     expect(parseArgs(['--file', 'a', '--expect-db', 'b']).modo).toBe('carga');
     expect(() => parseArgs(['--file', 'a'])).toThrow('uso:');
     expect(() => parseArgs(['--file', 'a', '--expect-db', 'b', '--dry-run', '--verify'])).toThrow('escolha só um');
     expect(() => parseArgs(['--file', 'a', '--expect-db', 'b', '--force'])).toThrow('opção desconhecida: --force');
+    expect(() => parseArgs(['--file', 'a', '--expect-db', 'b', '--importar-sem-senha'])).toThrow('opção desconhecida: --importar-sem-senha');
   });
 });

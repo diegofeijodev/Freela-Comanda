@@ -1,16 +1,15 @@
--- Função TEMPORÁRIA de exportação (migração do Freela ERP do Lovable para o Freela Comanda). SÓ LEITURA (STABLE).
--- Só responde a quem manda o token cujo SHA-256 está abaixo; sem ele, devolve erro.
--- Apagar depois da virada (limpeza_erpfreela.sql): DROP FUNCTION public.export_erpfreela(text, text, text, integer, integer);
+-- Função TEMPORÁRIA de exportação (mudança do Freela ERP para o servidor próprio, Freela Comanda). SÓ LEITURA (STABLE).
+-- Só um ADMINISTRADOR logado consegue chamar (public.is_admin(), a mesma checagem das políticas); não exporta senha nem hash de senha.
+-- Apagar depois da mudança (limpeza_erpfreela.sql): DROP FUNCTION public.export_erpfreela(text, text, integer, integer);
 --
--- Ações (todas devolvem jsonb; páginas de até 2000 linhas por causa do tempo-limite do papel anon):
+-- Ações (todas devolvem jsonb; páginas de até 2000 linhas):
 --   resumo   → meta (agora, hoje, semana de referência, fuso, versão), e para CADA tabela base de public: colunas (nome, tipo, aceita
 --              nulo), linhas e a soma de cada coluna numeric (como texto exato); linhas de cada view; nº de contas; movimentações por tipo.
 --   tabela   → página de uma tabela base de public (p_name), na ordem da chave primária.
---   usuarios → página das contas (auth.users): só id, e-mail, hash da senha, data de criação, dia do último acesso e situação.
+--   usuarios → página das contas (auth.users): só id, e-mail, data de criação, dia do último acesso e situação. SEM senha.
 --   view     → página de v_saldo_teorico | v_fichas_resumo | v_cmv_periodo | v_consumo_semanal (resultados, para conferência).
 -- Todo número sai como TEXTO exato (o JSON.parse do Node arredondaria numeric longo para double).
 CREATE OR REPLACE FUNCTION public.export_erpfreela(
-  p_token text,
   p_action text,
   p_name text DEFAULT NULL,
   p_limit integer DEFAULT 1000,
@@ -37,8 +36,8 @@ DECLARE
   v_n bigint;
   t text;
 BEGIN
-  IF p_token IS NULL OR encode(sha256(convert_to(p_token, 'UTF8')), 'hex') <> '__TOKEN_SHA256__' THEN
-    RAISE EXCEPTION 'forbidden';
+  IF NOT coalesce(public.is_admin(), false) THEN
+    RAISE EXCEPTION 'Acesso negado: só um administrador logado pode exportar' USING ERRCODE = '42501';
   END IF;
 
   IF p_action = 'resumo' THEN
@@ -92,7 +91,6 @@ BEGIN
       SELECT jsonb_build_object(
         'id', u.id,
         'email', u.email,
-        'encrypted_password', u.encrypted_password,
         'created_at', u.created_at,
         'ultimo_acesso', ((to_jsonb(u) ->> 'last_sign_in_at')::timestamptz)::date,
         'confirmada', (to_jsonb(u) ->> 'email_confirmed_at') IS NOT NULL,
@@ -120,5 +118,6 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.export_erpfreela(text, text, text, integer, integer) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.export_erpfreela(text, text, text, integer, integer) TO anon, authenticated;
+REVOKE ALL ON FUNCTION public.export_erpfreela(text, text, integer, integer) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.export_erpfreela(text, text, integer, integer) FROM anon;
+GRANT EXECUTE ON FUNCTION public.export_erpfreela(text, text, integer, integer) TO authenticated;

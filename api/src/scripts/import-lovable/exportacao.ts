@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { TABELAS, TABELAS_DE_CONTAS, VIEWS } from './esquema';
 
-export const FORMATO = 'erpfreela-export/1';
+/** v2: a função do Lovable só responde a admin logado e não exporta senha nem hash de senha. */
+export const FORMATO = 'erpfreela-export/2';
 
 export type Linha = Record<string, unknown>;
 export type ColunaInfo = { nome: string; tipo: string; nulo: boolean };
@@ -24,7 +25,7 @@ export type Exportacao = {
 /** Colunas das tabelas base do NOSSO banco (information_schema), por tabela. */
 export type EsquemaNosso = Map<string, ColunaInfo[]>;
 
-const CHAVES_CONTA = ['id', 'email', 'encrypted_password', 'created_at', 'ultimo_acesso', 'confirmada', 'apagada', 'banida', 'anonima'];
+const CHAVES_CONTA = ['id', 'email', 'created_at', 'ultimo_acesso', 'confirmada', 'apagada', 'banida', 'anonima'];
 
 export function lerExportacao(arquivo: string): Exportacao {
   const exp = JSON.parse(readFileSync(arquivo, 'utf8')) as Exportacao;

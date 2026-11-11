@@ -35,16 +35,15 @@ function cabecalho(op: Opcoes, banco: string, exp: Exportacao, contas: PlanoCont
       `${contas.entram.length - adm} loja), ${contas.fora.length} ficam de fora`,
   );
   for (const c of contas.entram) {
-    const extra = [
-      c.dois_papeis ? 'tinha admin e loja → admin' : '',
-      c.senha_travada ? 'SENHA TRAVADA: o admin define uma nova em Usuários' : '',
-    ]
-      .filter(Boolean)
-      .join('; ');
+    const extra = c.dois_papeis ? 'tinha admin e loja → admin' : '';
     out.push(
       `  entra ${c.id} ${c.perfil.padEnd(5)} ${mascararEmail(c.email)} criada ${c.created_at.slice(0, 10)} último acesso ${c.ultimo_acesso ?? '—'}${extra ? ` (${extra})` : ''}`,
     );
   }
+  out.push(
+    '  Senhas: o Lovable não exporta senha, então TODAS as contas entram com uma senha aleatória que ninguém conhece. Depois da carga, ' +
+      'o dono define a do admin com dist/src/scripts/definir-senha/main.js e o admin dá senha nova aos demais em Usuários.',
+  );
   for (const c of contas.fora) {
     const quem = c.email ? mascararEmail(c.email) : '(sem e-mail)';
     out.push(`  fora  ${c.id} ${quem} último acesso ${c.ultimo_acesso ?? '—'} — ${c.motivo}`);
@@ -74,7 +73,8 @@ export async function executar(prisma: PrismaClient, exp: Exportacao, op: Opcoes
     throw new Error(`o banco "${banco}" não é o esperado pelo importador:\n  - ${errosNosso.join('\n  - ')}\nNada foi gravado.`);
   const errosExp = validarExportacao(exp, esquema);
   if (errosExp.length) throw new Error(`a exportação não bate com o sistema novo:\n  - ${errosExp.join('\n  - ')}\nNada foi gravado.`);
-  const hashTravado = op.importarSemSenha ? await bcrypt.hash(randomBytes(32).toString('hex'), 10) : '';
+  // O formato 2 não traz senha: todas as contas entram com o hash de uma senha aleatória jogada fora (ninguém a conhece).
+  const hashTravado = await bcrypt.hash(randomBytes(32).toString('hex'), 10);
   const contas = planejarContas(exp.usuarios, exp.tabelas.profiles ?? [], exp.tabelas.user_roles ?? [], { ...op, hashTravado });
   const linhas = cabecalho(op, banco, exp, contas);
 

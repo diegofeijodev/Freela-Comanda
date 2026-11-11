@@ -16,6 +16,17 @@ CREATE TABLE public.profiles (id uuid PRIMARY KEY REFERENCES auth.users(id) ON D
   created_at timestamptz NOT NULL DEFAULT now());
 CREATE TABLE public.user_roles (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   role app_role NOT NULL, UNIQUE (user_id, role));
+-- auth.uid() do Supabase lê a claim `sub` do JWT que o PostgREST põe em request.jwt.claim(s); has_role/is_admin iguais ao protótipo
+-- (.prototype/drizzle/migrations/0000_migration.sql).
+CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $$
+  SELECT coalesce(nullif(current_setting('request.jwt.claim.sub', true), ''), nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')::uuid
+$$;
+CREATE FUNCTION public.has_role(_user_id uuid, _role app_role) RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT EXISTS (SELECT 1 FROM public.user_roles WHERE user_id = _user_id AND role = _role)
+$$;
+CREATE FUNCTION public.is_admin() RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $$
+  SELECT public.has_role(auth.uid(), 'admin')
+$$;
 
 INSERT INTO auth.users (id, email, encrypted_password, created_at, last_sign_in_at, email_confirmed_at, deleted_at) VALUES
   ('aaaaaaaa-0000-4000-8000-000000000001', 'Dono.Teste@Exemplo.COM', crypt('Senha-Admin 1', gen_salt('bf', 10)), '2026-09-01 10:00:00.123456+00', now(), '2026-09-01 10:01:00+00', NULL),

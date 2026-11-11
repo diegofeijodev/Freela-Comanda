@@ -7,7 +7,7 @@ import { executar } from './importador';
 /**
  * Importador dos dados do Lovable (script avulso: NÃO sobe o app Nest). Roteiro: docs/migracao-lovable.md.
  *   node dist/src/scripts/import-lovable/main.js --file <exportacao.json> --expect-db <banco> [--dry-run | --verify]
- *        [--importar-sem-senha] [--pular-sem-papel]
+ *        [--pular-sem-papel]
  * Sai 0 só com tudo conferido; 1 em qualquer trava ou diferença (e então nada foi gravado).
  */
 async function main() {

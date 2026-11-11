@@ -1,16 +1,13 @@
-import * as bcrypt from 'bcryptjs';
-import { senhaConfere } from '../../../common/auth/senha-falsa';
-import { BCRYPT, ContasError, mascararEmail, planejarContas } from '../contas';
+import { ContasError, mascararEmail, planejarContas } from '../contas';
 
-/** Gerado por OUTRA implementação: pgcrypto `crypt('Senha-do-Lovable 123', gen_salt('bf', 10))` — mesmo formato `$2a$10$` do GoTrue. */
-const VETOR_PGCRYPTO = '$2a$10$7ZA0mQqjcsZASaCsimtMguNeCA8dFQgtJgV5zYB5VluNfAznJyz4a';
 const ADM = '11111111-1111-4111-8111-000000000001';
 const LOJA = '11111111-1111-4111-8111-000000000002';
+const TRAVADO = '$2a$10$' + 'x'.repeat(53);
 
+/** Conta no formato 2 da exportação: sem nenhum campo de senha. */
 const conta = (id: string, email: string, extra: Record<string, unknown> = {}) => ({
   id,
   email,
-  encrypted_password: VETOR_PGCRYPTO,
   created_at: '2026-10-01T12:00:00.123456+00:00',
   ultimo_acesso: '2026-11-09',
   confirmada: true,
@@ -19,7 +16,7 @@ const conta = (id: string, email: string, extra: Record<string, unknown> = {}) =
   anonima: false,
   ...extra,
 });
-const op = { importarSemSenha: false, pularSemPapel: false, hashTravado: '$2a$10$' + 'x'.repeat(53) };
+const op = { pularSemPapel: false, hashTravado: TRAVADO };
 const problemas = (fn: () => unknown): string[] => {
   try {
     fn();
@@ -30,25 +27,7 @@ const problemas = (fn: () => unknown): string[] => {
   return [];
 };
 
-describe('senha do Lovable (bcrypt do GoTrue)', () => {
-  it('o hash gerado pelo pgcrypto confere no MESMO caminho do nosso login (senhaConfere/bcryptjs)', async () => {
-    expect(BCRYPT.test(VETOR_PGCRYPTO)).toBe(true);
-    expect(await senhaConfere('Senha-do-Lovable 123', VETOR_PGCRYPTO)).toBe(true);
-    expect(await senhaConfere('senha-do-lovable 123', VETOR_PGCRYPTO)).toBe(false);
-  });
-  it('aceita os prefixos $2a$, $2b$ e $2y$', async () => {
-    const h = await bcrypt.hash('abc123', 4);
-    for (const p of ['$2a$', '$2b$', '$2y$']) {
-      const x = p + h.slice(4);
-      expect(BCRYPT.test(x)).toBe(true);
-      expect(await bcrypt.compare('abc123', x)).toBe(true);
-    }
-    expect(BCRYPT.test('')).toBe(false);
-    expect(BCRYPT.test('$argon2id$v=19$m=65536,t=3,p=4$abc')).toBe(false);
-  });
-});
-
-describe('planejarContas', () => {
+describe('planejarContas (formato 2, sem senha)', () => {
   const roles = [
     { user_id: ADM, role: 'admin' },
     { user_id: ADM, role: 'loja' },
@@ -59,40 +38,38 @@ describe('planejarContas', () => {
     { id: LOJA, nome: '' },
   ];
 
-  it('mesmo id, e-mail em minúsculas, hash como está, dois papéis → admin, nome do profile (vazio = parte antes do @)', () => {
+  it('mesmo id, e-mail em minúsculas, dois papéis → admin, nome do profile (vazio = parte antes do @), TODAS com senha travada', () => {
     const p = planejarContas([conta(ADM, ' Dono.Teste@Exemplo.COM '), conta(LOJA, 'loja@exemplo.com')], profiles, roles, op);
     expect(p.entram).toEqual([
-      expect.objectContaining({
-        id: ADM,
-        email: 'dono.teste@exemplo.com',
-        perfil: 'admin',
-        nome: 'Dono Teste',
-        password_hash: VETOR_PGCRYPTO,
-        dois_papeis: true,
-      }),
-      expect.objectContaining({ id: LOJA, email: 'loja@exemplo.com', perfil: 'loja', nome: 'loja', senha_travada: false }),
+      expect.objectContaining({ id: ADM, email: 'dono.teste@exemplo.com', perfil: 'admin', nome: 'Dono Teste', dois_papeis: true }),
+      expect.objectContaining({ id: LOJA, email: 'loja@exemplo.com', perfil: 'loja', nome: 'loja' }),
     ]);
+    expect(p.entram.every((c) => c.senha_travada && c.password_hash === TRAVADO)).toBe(true);
   });
 
-  it('apagada, banida, anônima e não confirmada ficam de fora com o motivo', () => {
+  it('o hash travado tem de ser bcrypt (nunca grava senha vazia)', () => {
+    expect(() => planejarContas([conta(ADM, 'a@x.com')], [], roles, { ...op, hashTravado: '' })).toThrow('hashTravado');
+  });
+
+  it('apagada, banida, anônima e não confirmada ficam de fora com o motivo e o último acesso', () => {
     const p = planejarContas(
       [
         conta(ADM, 'a@x.com'),
         conta('a1', 'b@x.com', { apagada: true }),
         conta('a2', 'c@x.com', { banida: true }),
         conta('a3', 'd@x.com', { anonima: true }),
-        conta('a4', 'e@x.com', { confirmada: false }),
+        conta('a4', 'e@x.com', { confirmada: false, ultimo_acesso: null }),
       ],
       [],
       [{ user_id: ADM, role: 'admin' }],
       op,
     );
     expect(p.entram.map((c) => c.id)).toEqual([ADM]);
-    expect(p.fora.map((f) => f.motivo)).toEqual([
-      'apagada no Lovable',
-      'bloqueada (banida) no Lovable',
-      'conta anônima',
-      'e-mail nunca confirmado (não entrava no Lovable)',
+    expect(p.fora.map((f) => [f.motivo, f.ultimo_acesso])).toEqual([
+      ['apagada no Lovable', '2026-11-09'],
+      ['bloqueada (banida) no Lovable', '2026-11-09'],
+      ['conta anônima', '2026-11-09'],
+      ['e-mail nunca confirmado (não entrava no Lovable)', null],
     ]);
   });
 
@@ -114,18 +91,11 @@ describe('planejarContas', () => {
     expect(p.fora).toEqual([expect.objectContaining({ id: LOJA, motivo: expect.stringContaining('sem papel') })]);
   });
 
-  it('sem senha bcrypt: aborta pedindo --importar-sem-senha; com a opção, entra com a senha travada', () => {
-    const contas = [conta(ADM, 'a@x.com'), conta(LOJA, 'b@x.com', { encrypted_password: '' })];
-    expect(problemas(() => planejarContas(contas, [], roles, op))).toEqual([expect.stringContaining('--importar-sem-senha')]);
-    const p = planejarContas(contas, [], roles, { ...op, importarSemSenha: true });
-    expect(p.entram.find((c) => c.id === LOJA)).toEqual(expect.objectContaining({ senha_travada: true, password_hash: op.hashTravado }));
-  });
-
-  it('sem administrador com senha de verdade aborta SEMPRE, mesmo com as duas opções', () => {
-    const contas = [conta(ADM, 'a@x.com', { encrypted_password: null }), conta(LOJA, 'b@x.com')];
-    const tudo = { ...op, importarSemSenha: true, pularSemPapel: true };
-    expect(problemas(() => planejarContas(contas, [], roles, tudo))).toEqual([expect.stringContaining('nenhuma conta de ADMINISTRADOR')]);
+  it('nenhuma conta ADMIN importada aborta SEMPRE (só loja, ou o único admin ficou de fora)', () => {
+    const tudo = { ...op, pularSemPapel: true };
     expect(problemas(() => planejarContas([conta(LOJA, 'b@x.com')], [], roles, tudo))).toEqual([expect.stringContaining('ADMINISTRADOR')]);
+    const adminNaoConfirmado = [conta(ADM, 'a@x.com', { confirmada: false }), conta(LOJA, 'b@x.com')];
+    expect(problemas(() => planejarContas(adminNaoConfirmado, [], roles, tudo))).toEqual([expect.stringContaining('nenhuma conta de ADMINISTRADOR')]);
   });
 
   it('sem e-mail e papel desconhecido abortam', () => {
