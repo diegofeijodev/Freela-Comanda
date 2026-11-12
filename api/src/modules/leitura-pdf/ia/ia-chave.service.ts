@@ -34,7 +34,7 @@ function erroDoTeste(e: unknown, modelo: string): string {
     case 'PDF_ILEGIVEL':
       return 'A chave funciona, mas a IA não conseguiu ler o PDF de teste. Tente a chave de outra IA.';
     default:
-      return e.message;
+      return e.detalhe ? `${e.message} (${e.detalhe})` : e.message;
   }
 }
 

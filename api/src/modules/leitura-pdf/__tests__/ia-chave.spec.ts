@@ -180,6 +180,15 @@ describe('chave de IA da empresa', () => {
     expect(linha()).toBeNull();
   });
 
+  it('falha inesperada do provedor no teste mostra o que ele respondeu (para diagnosticar sem log)', async () => {
+    const { svc } = montar(ENV, { status: 400, corpo: { error: { message: "Invalid value for 'file_data'." } } });
+    const e = (await svc.salvar('openai', CHAVE_OPENAI, 'u1').catch((x: unknown) => x)) as BadRequestException;
+    expect(e.getResponse()).toEqual({
+      code: 'CHAVE_IA_INVALIDA',
+      message: "Não foi possível ler o PDF agora. (a IA respondeu 400: Invalid value for 'file_data'.)",
+    });
+  });
+
   it('resposta sem o texto do PDF de teste também não grava', async () => {
     const { svc, linha } = montar(ENV, geminiOk({ outra: 1 }));
     await expect(svc.salvar('gemini', 'AIzaChaveDoGoogle0123456789', 'u1')).rejects.toBeInstanceOf(BadRequestException);

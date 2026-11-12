@@ -26,6 +26,8 @@ export class LeituraPdfErro extends Error {
     message: string,
     readonly status: number,
     readonly code: string,
+    /** O que o provedor respondeu (status + mensagem dele, sem a chave): só aparece no teste ao salvar a chave, para dar para diagnosticar. */
+    readonly detalhe?: string,
   ) {
     super(message);
   }

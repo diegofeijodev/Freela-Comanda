@@ -23,5 +23,17 @@ export function erroDoProvedor(status: number, corpo: string): LeituraPdfErro {
     return new LeituraPdfErro(MSG.semCredito, 503, 'PDF_SEM_CREDITO');
   if (status === 429) return new LeituraPdfErro(MSG.muitas, 429, 'PDF_LIMITE');
   if (status === 404 || /model[_ ]not[_ ]found|does not exist|is not found/i.test(corpo)) return new LeituraPdfErro(MSG.modelo, 503, 'PDF_MODELO');
-  return new LeituraPdfErro(MSG.indisponivel, 502, 'PDF_INDISPONIVEL');
+  return new LeituraPdfErro(MSG.indisponivel, 502, 'PDF_INDISPONIVEL', `a IA respondeu ${status}: ${mensagemDoProvedor(corpo)}`);
+}
+
+/** `error.message` do corpo de erro (OpenAI e Google usam esse formato), ou o começo do texto; nunca inclui a chave (os dois mascaram). */
+export function mensagemDoProvedor(corpo: string): string {
+  let m = corpo;
+  try {
+    const j = JSON.parse(corpo) as { error?: { message?: unknown } };
+    if (typeof j.error?.message === 'string') m = j.error.message;
+  } catch {
+    /* texto puro */
+  }
+  return m.replace(/\s+/g, ' ').trim().slice(0, 200) || 'sem detalhe';
 }
