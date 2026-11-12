@@ -91,8 +91,18 @@ itens[{ codigo?, descricao, unidade?, quantidade, valor_unitario, item_estoque_i
 ## §12 Leitura de PDF por IA (admin, multipart, 1 arquivo ≤ 10 MB)
 
 `POST /v1/notas/ler-pdf` → a mesma `NotaLida` do leitor de XML · `POST /v1/dda/ler-pdf` → `BoletoDDA[]`. Erros: 400 "Arquivo vazio ou grande demais (máx. 10 MB)",
-400 "O arquivo não é um PDF.", 503 "Leitura de PDF não configurada", 429 "Muitas leituras seguidas, tente de novo em instantes.", 502 "Não foi possível
-ler o PDF agora.", 422 "Não consegui identificar os dados deste PDF.".
+400 "O arquivo não é um PDF.", 503 `PDF_NAO_CONFIGURADO` "Leitura de PDF não configurada: cadastre a chave de uma IA em Configurações.",
+503 `PDF_CHAVE_RECUSADA` / `PDF_SEM_CREDITO` / `PDF_MODELO` / `PDF_CHAVE_ILEGIVEL` (frases em `leitor-pdf.port.ts`), 429 "Muitas leituras seguidas, tente de novo
+em instantes.", 502 "Não foi possível ler o PDF agora.", 422 "Não consegui identificar os dados deste PDF.".
+
+**Qual IA lê:** a chave cadastrada em Configurações (tabela `ia_chave`, uma linha, cifrada AES-256-GCM com chave HKDF de `IA_CHAVES_SECRET` ou, sem
+ela, do `JWT_SECRET`); sem chave salva, a `ANTHROPIC_API_KEY` do servidor. Modelos: `AI_PDF_MODEL` (Claude, padrão `claude-opus-5-5`),
+`AI_PDF_MODEL_OPENAI` (padrão `gpt-5-mini`), `AI_PDF_MODEL_GEMINI` (padrão `gemini-flash-latest`).
+
+`GET /v1/ia-chave` (admin) → `{ origem: 'configuracoes'|'servidor'|null, provedor: 'anthropic'|'openai'|'gemini'|null, nome, dica: '••••1234'|null,
+modelo, atualizado_em }` — a chave nunca volta. `PUT /v1/ia-chave` (admin) `{ provedor, chave }` → testa lendo um PDF de 1 página com esquema (mesmo
+código das notas) e só grava se der certo; senão 400 `CHAVE_IA_INVALIDA` com o motivo ("A IA recusou esta chave…", sem créditos, modelo). Devolve o
+status. `DELETE /v1/ia-chave` (admin) → status (volta para a chave do servidor, se houver).
 
 ## §13 Contas a pagar, DRE e caixa (admin)
 

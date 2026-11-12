@@ -17,6 +17,8 @@ import { DIAS, MESES, num, parseNum } from "@/lib/format";
 import { errMsg, getConfig } from "@/lib/db";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PlanoContas } from "@/components/plano-contas";
+import { IaChavePanel } from "@/components/ia-chave-panel";
+import { useMe } from "@/lib/auth";
 
 
 const CAMPOS: [string, string][] = [
@@ -26,6 +28,7 @@ const CAMPOS: [string, string][] = [
 ];
 
 export default function Config() {
+  const { data: me } = useMe();
   const { data: cfg, refetch } = useQuery({ queryKey: ["config"], queryFn: getConfig });
   const { data: saz, refetch: rS } = useQuery({ queryKey: ["sazonalidade"], queryFn: listarSazonalidade });
   const { data: forn, refetch: rF } = useQuery({ queryKey: ["fornecedores"], queryFn: listarFornecedores });
@@ -71,6 +74,7 @@ export default function Config() {
           <div><Label className="text-xs text-muted-foreground">Endereço completo</Label><Input value={empresa.endereco} onChange={(e) => setEmpresa({ ...empresa, endereco: e.target.value })} /></div>
         </div>
       </Panel>
+      {me?.perfil === "admin" && <IaChavePanel />}
       <Panel title="Geral">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <div><Label className="text-xs text-muted-foreground">Dia do inventário/compra</Label>

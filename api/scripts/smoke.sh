@@ -239,7 +239,15 @@ req GET /v1/auth/me "$TU"; check "token de conta excluída morre" 401 "$CODE"
 # ---------- leitura de PDF sem chave
 PDF=$(mktemp --suffix=.pdf); printf '%%PDF-1.4\n%%fim\n' > "$PDF"; TXT=$(mktemp --suffix=.pdf); echo oi > "$TXT"
 CODE=$(curl -s -o "$OUT" -w '%{http_code}' -H "authorization: Bearer $ADM" -F "arquivo=@$PDF;type=application/pdf" "$BASE/v1/notas/ler-pdf"); BODY=$(cat "$OUT")
-check "PDF sem chave" "Leitura de PDF não configurada" "$(j .error.message)"
+check "PDF sem chave" "Leitura de PDF não configurada: cadastre a chave de uma IA em Configurações." "$(j .error.message)"
+# chave de IA pela tela (Configurações): só admin; sem chave = desligada; recusa provedor/chave inválidos SEM chamar a IA
+req GET /v1/ia-chave "$ADM"; check "status da IA sem chave" 200 "$CODE"; check "IA desligada" null "$(j .origem)"
+req GET /v1/ia-chave "$LOJA"; check "loja não vê a chave de IA" 403 "$CODE"
+req PUT /v1/ia-chave "$LOJA" '{"provedor":"openai","chave":"sk-proj-abcdefghijklmnopqrstuvwxyz"}'; check "loja não salva chave de IA" 403 "$CODE"
+req PUT /v1/ia-chave "$ADM" '{"provedor":"outra","chave":"sk-proj-abcdefghijklmnopqrstuvwxyz"}'; check "IA desconhecida" 400 "$CODE"
+req PUT /v1/ia-chave "$ADM" '{"provedor":"openai","chave":"curta"}'; check "chave curta recusada" 400 "$CODE"
+check "nada gravado" 0 "$(sql "select count(*) from ia_chave")"
+req DELETE /v1/ia-chave "$ADM"; check "remover sem chave" 200 "$CODE"
 CODE=$(curl -s -o "$OUT" -w '%{http_code}' -H "authorization: Bearer $ADM" -F "arquivo=@$TXT" "$BASE/v1/dda/ler-pdf"); BODY=$(cat "$OUT")
 check "arquivo que não é PDF" "O arquivo não é um PDF." "$(j .error.message)"
 CODE=$(curl -s -o "$OUT" -w '%{http_code}' -H "authorization: Bearer $LOJA" -F "arquivo=@$PDF" "$BASE/v1/notas/ler-pdf"); check "loja não lê PDF" 403 "$CODE"

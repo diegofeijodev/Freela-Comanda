@@ -14,6 +14,11 @@ const envSchema = z.object({
   // Leitura de PDF (NF e DDA) — spec, decisão 6. Vazia = "Leitura de PDF não configurada" (igual ao protótipo sem a chave).
   ANTHROPIC_API_KEY: z.string().default(''),
   AI_PDF_MODEL: z.preprocess(vazioComoAusente, z.string().min(3).default('claude-opus-5-5')),
+  // Chave de IA cadastrada pela tela (Configurações): modelo de cada provedor (PDF exige modelo com visão) e o segredo da cifra.
+  AI_PDF_MODEL_OPENAI: z.preprocess(vazioComoAusente, z.string().min(3).default('gpt-5-mini')),
+  AI_PDF_MODEL_GEMINI: z.preprocess(vazioComoAusente, z.string().min(3).default('gemini-flash-latest')),
+  /** Vazio = deriva do JWT_SECRET (rótulo próprio no HKDF). Trocar o segredo usado obriga a cadastrar a chave de IA de novo. */
+  IA_CHAVES_SECRET: z.preprocess(vazioComoAusente, z.string().min(16).optional()),
 
   SWAGGER_ENABLED: z.string().optional(),
 

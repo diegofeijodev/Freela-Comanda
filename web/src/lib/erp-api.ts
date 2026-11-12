@@ -234,6 +234,20 @@ export type Importacao = { id: string; tipo: string; arquivo: string | null; lin
 export type DePara = { produto_relatorio: string; item_cardapio_id: string | null; ignorar: boolean };
 export type Usuario = { id: string; nome: string; email: string; perfil: Perfil | null };
 
+// ---------- chave de IA (leitura de PDF): a chave só vai; o que volta é o provedor e os 4 últimos caracteres
+export type ProvedorIa = 'anthropic' | 'openai' | 'gemini';
+export type StatusIa = {
+  origem: 'configuracoes' | 'servidor' | null;
+  provedor: ProvedorIa | null;
+  nome: string | null;
+  dica: string | null;
+  modelo: string | null;
+  atualizado_em: string | null;
+};
+export const statusIa = () => get<StatusIa>('/v1/ia-chave');
+export const salvarChaveIa = (provedor: ProvedorIa, chave: string) => put<StatusIa>('/v1/ia-chave', { provedor, chave });
+export const removerChaveIa = () => del<StatusIa>('/v1/ia-chave');
+
 // ---------- configurações e cadastros
 export const getConfig = () => get<Config>('/v1/configuracoes');
 export const salvarConfig = (patchConfig: Partial<Config>) => patch<Config>('/v1/configuracoes', patchConfig);

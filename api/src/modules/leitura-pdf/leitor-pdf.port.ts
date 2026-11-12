@@ -1,4 +1,7 @@
-/** Porta da leitura de PDF por IA (spec, decisão 6). Produção = Claude; testes injetam um falso — nenhum teste faz rede. */
+/**
+ * Porta da leitura de PDF por IA (spec, decisão 6). Produção = a IA cuja chave a empresa cadastrou em Configurações
+ * (Claude, ChatGPT ou Gemini; sem ela, a ANTHROPIC_API_KEY do servidor); testes injetam um falso — nenhum teste faz rede.
+ */
 export const LEITOR_PDF = Symbol('LEITOR_PDF');
 
 export interface PedidoLeitura {
@@ -13,9 +16,7 @@ export interface PedidoLeitura {
 }
 
 export interface LeitorPdf {
-  /** `false` = sem chave: a rota responde "Leitura de PDF não configurada" sem chamar ninguém. */
-  configurado(): boolean;
-  /** Devolve o objeto já parseado, ou lança `LeituraPdfErro` com a mensagem de tela. */
+  /** Devolve o objeto já parseado, ou lança `LeituraPdfErro` com a mensagem de tela (sem chave: "Leitura de PDF não configurada"). */
   ler(pedido: PedidoLeitura): Promise<unknown>;
 }
 
@@ -31,7 +32,15 @@ export class LeituraPdfErro extends Error {
 }
 
 export const MSG = {
-  naoConfigurada: 'Leitura de PDF não configurada',
+  naoConfigurada: 'Leitura de PDF não configurada: cadastre a chave de uma IA em Configurações.',
+  chaveRecusada: 'A IA recusou a chave cadastrada. Confira a chave em Configurações.',
+  semCredito: 'A conta da IA está sem créditos. Adicione saldo no site da IA e tente de novo.',
+  modelo: 'O modelo de IA configurado não está disponível para esta chave.',
+  chaveIlegivel: 'A chave de IA salva não pode mais ser lida. Cadastre a chave de novo em Configurações.',
   muitas: 'Muitas leituras seguidas, tente de novo em instantes.',
   indisponivel: 'Não foi possível ler o PDF agora.',
+  ilegivel: 'Não consegui identificar os dados deste PDF.',
 } as const;
+
+/** Mesmo erro de "não li nada útil" para os três provedores. */
+export const pdfIlegivel = () => new LeituraPdfErro(MSG.ilegivel, 422, 'PDF_ILEGIVEL');

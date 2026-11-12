@@ -27,6 +27,17 @@ model users {
   created_at    DateTime @default(now()) @db.Timestamptz(6)
 }
 
+/// Chave de IA da empresa para ler PDF (nota de compra e DDA). Não existe no Lovable (lá a IA era o gateway da própria Lovable).
+/// Uma linha só (id = 1): o provedor escolhido e a chave CIFRADA (AES-256-GCM); a chave nunca sai do servidor, só os 4 últimos caracteres.
+model ia_chave {
+  id             Int      @id @default(1)
+  provedor       String
+  chave_cifrada  String
+  dica           String
+  atualizado_em  DateTime @default(now()) @db.Timestamptz(6)
+  atualizado_por String?  @db.Uuid
+}
+
 model configuracoes {
   id                    Int     @id @default(1)
   nome_unidade          String  @default("Chopp & Espeto Valinhos")

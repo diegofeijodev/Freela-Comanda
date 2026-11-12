@@ -13,6 +13,7 @@ import { ContasController } from '../../modules/contas/contas.controller';
 import { EstoqueController } from '../../modules/estoque/estoque.controller';
 import { ImportacoesController } from '../../modules/importacoes/importacoes.controller';
 import { InventariosController } from '../../modules/inventarios/inventarios.controller';
+import { IaChaveController } from '../../modules/leitura-pdf/ia/ia-chave.controller';
 import { LeituraPdfController } from '../../modules/leitura-pdf/leitura-pdf.controller';
 import { NotasController } from '../../modules/notas/notas.controller';
 import { UsuariosController } from '../../modules/usuarios/usuarios.controller';
@@ -29,6 +30,7 @@ const CONTROLLERS = [
   EstoqueController,
   ImportacoesController,
   InventariosController,
+  IaChaveController,
   LeituraPdfController,
   NotasController,
   UsuariosController,
@@ -64,6 +66,14 @@ describe('proteção das rotas (substitui as políticas RLS do Supabase)', () =>
 
   it('toda rota tem marca de permissão ou é pública de propósito', () => {
     expect(todas.filter((r) => r.marca === 'SEM MARCA')).toEqual([]);
+  });
+
+  it('a chave de IA é só do admin', () => {
+    expect(todas.filter((r) => r.rota.includes('/ia-chave'))).toEqual([
+      { rota: 'GET /v1/ia-chave', marca: 'admin' },
+      { rota: 'PUT /v1/ia-chave', marca: 'admin' },
+      { rota: 'DELETE /v1/ia-chave', marca: 'admin' },
+    ]);
   });
 
   it('só estas rotas são públicas', () => {

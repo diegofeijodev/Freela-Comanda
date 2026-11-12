@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { COLUNAS_USERS, GATILHOS, TABELAS } from '../esquema';
+import { COLUNAS_USERS, GATILHOS, TABELAS, TABELAS_SO_NOSSAS } from '../esquema';
 
 /** Lê as migrações versionadas: a lista fixa do importador não pode se afastar delas. */
 const MIGR = join(__dirname, '../../../../prisma/migrations');
@@ -19,7 +19,7 @@ describe('esquema.ts × migrações', () => {
         [...m[2]!.matchAll(/^\s+"([a-z_0-9]+)" /gm)].map((c) => c[1]!),
       );
     }
-    expect([...criadas.keys()].sort()).toEqual([...TABELAS.map((t) => t.nome), 'users'].sort());
+    expect([...criadas.keys()].sort()).toEqual([...TABELAS.map((t) => t.nome), ...TABELAS_SO_NOSSAS.filter((t) => t !== '_prisma_migrations')].sort());
     for (const t of TABELAS) expect([t.nome, criadas.get(t.nome)]).toEqual([t.nome, [...t.colunas]]);
     expect(criadas.get('users')).toEqual([...COLUNAS_USERS]);
   });

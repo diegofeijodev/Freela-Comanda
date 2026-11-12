@@ -1,5 +1,5 @@
 import { ClaudeLeitorPdf } from '../claude-leitor-pdf';
-import { LeituraPdfErro, type LeitorPdf, type PedidoLeitura } from '../leitor-pdf.port';
+import { LeituraPdfErro, MSG, type LeitorPdf, type PedidoLeitura } from '../leitor-pdf.port';
 import { iso, LeituraPdfService } from '../leitura-pdf.service';
 import { SCHEMA_DDA, SCHEMA_NOTA } from '../schemas';
 
@@ -54,7 +54,7 @@ describe('leitura de PDF', () => {
   it('sem chave: "Leitura de PDF não configurada" sem chamar a rede', async () => {
     const leitor = new ClaudeLeitorPdf('', 'claude-opus-5-5');
     expect(leitor.configurado()).toBe(false);
-    await expect(leitor.ler({} as PedidoLeitura)).rejects.toEqual(new LeituraPdfErro('Leitura de PDF não configurada', 503, 'PDF_NAO_CONFIGURADO'));
+    await expect(leitor.ler({} as PedidoLeitura)).rejects.toEqual(new LeituraPdfErro(MSG.naoConfigurada, 503, 'PDF_NAO_CONFIGURADO'));
   });
 
   it('iso do protótipo', () => {

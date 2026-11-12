@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { Logger } from '@nestjs/common';
-import { LeitorPdf, LeituraPdfErro, MSG, PedidoLeitura } from './leitor-pdf.port';
+import { LeitorPdf, LeituraPdfErro, MSG, PedidoLeitura, pdfIlegivel } from './leitor-pdf.port';
 
 /**
  * Leitura de PDF pela API da Anthropic (o protótipo usava o gateway de IA da Lovable): PDF em base64 como bloco `document`
@@ -48,13 +48,13 @@ export class ClaudeLeitorPdf implements LeitorPdf {
     }
     if (resposta.stop_reason === 'refusal' || resposta.stop_reason === 'max_tokens') {
       this.logger.warn(`leitura de PDF sem resposta útil: stop_reason=${resposta.stop_reason}`);
-      throw new LeituraPdfErro('Não consegui identificar os dados deste PDF.', 422, 'PDF_ILEGIVEL');
+      throw pdfIlegivel();
     }
     const texto = resposta.content.flatMap((b) => (b.type === 'text' ? [b.text] : [])).join('');
     try {
       return JSON.parse(texto) as unknown;
     } catch {
-      throw new LeituraPdfErro('Não consegui identificar os dados deste PDF.', 422, 'PDF_ILEGIVEL');
+      throw pdfIlegivel();
     }
   }
 
@@ -62,8 +62,10 @@ export class ClaudeLeitorPdf implements LeitorPdf {
     if (e instanceof Anthropic.RateLimitError) return new LeituraPdfErro(MSG.muitas, 429, 'PDF_LIMITE');
     if (e instanceof Anthropic.AuthenticationError || e instanceof Anthropic.PermissionDeniedError) {
       this.logger.error(`chave da Anthropic recusada (${e.status})`);
-      return new LeituraPdfErro(MSG.naoConfigurada, 503, 'PDF_NAO_CONFIGURADO');
+      return new LeituraPdfErro(MSG.chaveRecusada, 503, 'PDF_CHAVE_RECUSADA');
     }
+    if (e instanceof Anthropic.NotFoundError) return new LeituraPdfErro(MSG.modelo, 503, 'PDF_MODELO');
+    if (e instanceof Anthropic.APIError && /credit balance|billing/i.test(e.message)) return new LeituraPdfErro(MSG.semCredito, 503, 'PDF_SEM_CREDITO');
     if (e instanceof Anthropic.APIError) {
       this.logger.error(`leitura de PDF falhou: ${e.status} ${e.message}`);
       return new LeituraPdfErro(MSG.indisponivel, 502, 'PDF_INDISPONIVEL');

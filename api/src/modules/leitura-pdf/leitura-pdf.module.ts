@@ -1,20 +1,19 @@
 import { Module } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { ClaudeLeitorPdf } from './claude-leitor-pdf';
+import { HTTP_IA, type HttpIa } from './ia/http-ia';
+import { IaChaveController } from './ia/ia-chave.controller';
+import { IaChaveService, LeitorPorIa } from './ia/ia-chave.service';
 import { LEITOR_PDF } from './leitor-pdf.port';
 import { LeituraPdfController } from './leitura-pdf.controller';
 import { LeituraPdfService } from './leitura-pdf.service';
 
 @Module({
-  controllers: [LeituraPdfController],
+  controllers: [LeituraPdfController, IaChaveController],
   providers: [
     LeituraPdfService,
-    {
-      provide: LEITOR_PDF,
-      inject: [ConfigService],
-      useFactory: (config: ConfigService) =>
-        new ClaudeLeitorPdf(config.get<string>('ANTHROPIC_API_KEY') ?? '', config.get<string>('AI_PDF_MODEL') ?? 'claude-opus-5-5'),
-    },
+    IaChaveService,
+    { provide: HTTP_IA, useValue: ((url, init) => fetch(url, init)) satisfies HttpIa },
+    // A chave é escolhida a cada leitura (a da tela de Configurações ou, sem ela, a ANTHROPIC_API_KEY do servidor).
+    { provide: LEITOR_PDF, inject: [IaChaveService], useFactory: (chaves: IaChaveService) => new LeitorPorIa(chaves) },
   ],
 })
 export class LeituraPdfModule {}
