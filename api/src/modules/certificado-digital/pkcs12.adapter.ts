@@ -37,7 +37,7 @@ function conferirEstrutura(raiz: forge.asn1.Asn1): void {
 // ---------------------------------------------------------------------------------------------------------------------
 // Conferência PRÓPRIA do MAC (RFC 7292 §4): a decisão "a senha está certa" nunca depende de texto de erro do forge.
 
-const TETO_ITERACOES_MAC = 10_000_000;
+const TETO_ITERACOES_MAC = 1_000_000;
 const HASHES_MAC: Record<string, { md: () => forge.md.MessageDigest; node: string; bytes: number }> = {
   '1.3.14.3.2.26': { md: () => forge.md.sha1.create(), node: 'sha1', bytes: 20 },
   '2.16.840.1.101.3.4.2.1': { md: () => forge.md.sha256.create(), node: 'sha256', bytes: 32 },
@@ -55,7 +55,7 @@ function bytesDeOctet(n: forge.asn1.Asn1 | undefined): string {
 
 /**
  * `true` se o HMAC do conteúdo do authSafe confere com a senha; `false` se não confere. Qualquer defeito do arquivo
- * (algoritmo desconhecido/mal formado, campo ausente, iterações fora de 1..10.000.000) lança `CERTIFICADO_FORMATO`:
+ * (algoritmo desconhecido/mal formado, campo ausente, iterações fora de 1..1.000.000) lança `CERTIFICADO_FORMATO`:
  * nunca vira "senha incorreta" nem "MAC conferido".
  */
 export function macConfere(pfx: forge.asn1.Asn1, senha: string): boolean {
@@ -208,6 +208,15 @@ const OID_POLITICAS = '2.5.29.32';
 const OID_CNPJ_PJ = '2.16.76.1.3.3';
 
 export function lerCamposX509(der: Buffer): CamposX509 {
+  try {
+    return lerCampos(der);
+  } catch {
+    throw formatoInvalido(); // qualquer defeito do certificado vira FORMATO, nunca erro cru da biblioteca
+  }
+}
+
+function lerCampos(der: Buffer): CamposX509 {
+  new X509Certificate(der); // parser estrito do Node: o forge em modo tolerante aceita até texto solto
   const cert = forge.asn1.fromDer(der.toString('binary'), false);
   const tbs = filhos(cert)[0];
   let f = filhos(tbs);

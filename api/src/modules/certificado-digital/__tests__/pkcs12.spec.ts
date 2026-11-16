@@ -94,7 +94,7 @@ describe('abrirPfx', () => {
   it('iterações do MAC acima do teto = FORMATO, sem demorar', () => {
     const raiz = forge.asn1.fromDer(fx('valido.pfx').toString('binary'), false);
     const macData = (raiz.value as forge.asn1.Asn1[])[2];
-    (macData.value as forge.asn1.Asn1[])[2].value = '\x00\x98\x96\x81'; // 10.000.001
+    (macData.value as forge.asn1.Asn1[])[2].value = '\x0f\x42\x41'; // 1.000.001
     const b = Buffer.from(forge.asn1.toDer(raiz).getBytes(), 'binary');
     const t = Date.now();
     expect(() => abrirPfx(b, SENHA)).toThrow(expect.objectContaining({ code: 'CERTIFICADO_FORMATO' }));
@@ -139,6 +139,13 @@ describe('abrirPfx', () => {
     });
     it('CNPJ alfanumérico', () => {
       expect(campos('cnpj-alfanumerico.pfx').cnpjSan).toBe('12ABC34501DE35');
+    });
+    it('certificado malformado = FORMATO, nunca erro cru', () => {
+      const der = folhaDe(abrirPfx(fx('valido.pfx'), SENHA)).raw;
+      const malformados = [Buffer.from('lixo'), Buffer.alloc(0), der.subarray(0, 40), Buffer.concat([der.subarray(0, 12), Buffer.alloc(30, 0xff)])];
+      for (const b of malformados) {
+        expect(() => lerCamposX509(b)).toThrow(expect.objectContaining({ code: 'CERTIFICADO_FORMATO' }));
+      }
     });
   });
 

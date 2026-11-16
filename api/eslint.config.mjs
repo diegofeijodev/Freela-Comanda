@@ -3,7 +3,7 @@ import tsparser from '@typescript-eslint/parser';
 import prettier from 'eslint-config-prettier';
 
 export default [
-  { ignores: ['dist/**', 'node_modules/**'] },
+  { ignores: ['dist/**', 'node_modules/**', '**/icp-brasil.gerado.ts'] },
   {
     files: ['**/*.ts'],
     languageOptions: { parser: tsparser, parserOptions: { sourceType: 'module' } },
