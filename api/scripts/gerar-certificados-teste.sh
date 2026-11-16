@@ -59,6 +59,8 @@ folha a1 "$DN" folha
 pfx a1 valido.pfx -certfile cadeia.pem                  # PBES2/AES-256-CBC, MAC SHA-256 (padrão do OpenSSL 3)
 pfx a1 legado.pfx -certfile cadeia.pem -legacy          # RC2-40 nos certificados, 3DES na chave, MAC SHA-1
 pfx a1 so-certificado-final.pfx                         # sem a cadeia
+for _ in 1 2 3 4 5 6 7 8 9 10; do cat inter.pem raiz.pem; done > muitas.pem
+pfx a1 muitos-certificados.pfx -certfile muitas.pem     # folha + 20 extras = 21 certificados (teto de abrirPfx é 20)
 openssl pkcs12 -export -nokeys -in a1.pem -certfile cadeia.pem -passout $P -out "$OUT/sem-chave.p12"
 folha venc "$DN" folha 20200101000000Z 20210101000000Z && pfx venc vencido.pfx -certfile cadeia.pem
 folha fut "$DN" folha 20350101000000Z 20360101000000Z && pfx fut ainda-nao-vale.pfx -certfile cadeia.pem

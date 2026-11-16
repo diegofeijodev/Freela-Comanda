@@ -38,6 +38,8 @@ function conferirEstrutura(raiz: forge.asn1.Asn1): void {
 // Conferência PRÓPRIA do MAC (RFC 7292 §4): a decisão "a senha está certa" nunca depende de texto de erro do forge.
 
 const TETO_ITERACOES_MAC = 1_000_000;
+/** Mais certificados que isso num .pfx = arquivo forjado (um A1 real traz a folha e 2-4 ACs). */
+const MAX_CERTIFICADOS = 20;
 const HASHES_MAC: Record<string, { md: () => forge.md.MessageDigest; node: string; bytes: number }> = {
   '1.3.14.3.2.26': { md: () => forge.md.sha1.create(), node: 'sha1', bytes: 20 },
   '2.16.840.1.101.3.4.2.1': { md: () => forge.md.sha256.create(), node: 'sha256', bytes: 32 },
@@ -155,10 +157,11 @@ export function abrirPfx(arquivo: Buffer, senha: string): PfxAberto {
           format: 'der',
           type: 'pkcs8',
         });
-    const certificados = (pfx.getBags({ bagType: BAG_CERTIFICADO })[BAG_CERTIFICADO] ?? [])
+    const ders = (pfx.getBags({ bagType: BAG_CERTIFICADO })[BAG_CERTIFICADO] ?? [])
       .map(derDoCertificado)
-      .filter((d): d is Buffer => d !== null)
-      .map((d) => new X509Certificate(d));
+      .filter((d): d is Buffer => d !== null);
+    if (ders.length > MAX_CERTIFICADOS) throw formatoInvalido(); // .pfx forjado para pesar a busca da cadeia
+    const certificados = ders.map((d) => new X509Certificate(d));
     return { chave, certificados };
   } catch (e) {
     if (e instanceof CertificadoRecusado) throw e;

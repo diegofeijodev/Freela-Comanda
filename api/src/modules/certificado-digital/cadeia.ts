@@ -16,7 +16,7 @@ export type ResultadoCadeia =
   | { situacao: 'adulterada' }
   | { situacao: 'nao_fechou' };
 
-const NIVEIS_MAX = 5;
+const NIVEIS_MAX = 8;
 
 let cache: CadeiaIcp | undefined;
 export function carregarCadeiaIcp(): CadeiaIcp {
@@ -37,41 +37,51 @@ const naoAssina = (c: X509Certificate, agora: Date): boolean => {
   return !(c.ca === true && t >= new Date(c.validFrom).getTime() && t <= new Date(c.validTo).getTime());
 };
 
-function assinou(emissor: X509Certificate, filho: X509Certificate): boolean {
+/** `true`/`false` = assinatura conferida com chave legível; `null` = o Node não lê a chave do emissor (ex.: raiz v7). */
+function assinou(emissor: X509Certificate, filho: X509Certificate): boolean | null {
   try {
     return filho.verify(emissor.publicKey);
   } catch {
-    return false; // chave que o Node não lê
+    return null;
   }
 }
 
 /**
  * Procura o emissor pelo NOME (`issuer === subject`) entre o .pfx, o pacote e as âncoras. Um candidato vale com a assinatura
- * confirmada por `verify`, válido em `agora` e `ca === true`. No máximo 5 níveis. Nunca usa `checkIssued` (compara AKI/SKI
- * e manda a fraude para o aviso em vez da recusa).
+ * confirmada por `verify`, válido em `agora` e `ca === true`. No máximo 8 níveis e cada certificado é expandido uma única vez
+ * (custo O(n²) mesmo com .pfx forjado). Nunca usa `checkIssued` (compara AKI/SKI e manda a fraude para o aviso em vez da recusa).
  * - `conferida`: algum caminho chega a uma âncora (`intermediarias` = o que fica entre a folha e a âncora);
- * - `adulterada`: o .pfx traz um emissor com o nome certo e nenhum candidato, de nenhuma fonte, confirma;
- * - `nao_fechou`: qualquer outro caso (AC mais nova que o pacote, raiz fora das âncoras).
+ * - `adulterada`: o .pfx traz um emissor com o nome certo, de chave legível, cuja assinatura FALHA, e nenhum candidato de
+ *   nenhuma fonte a confirma. Emissor vencido, sem marca de AC ou de chave ilegível é só descartado;
+ * - `nao_fechou`: qualquer outro caso (AC mais nova que o pacote, v7, profundidade esgotada).
  */
 export function montarCadeia(folha: X509Certificate, doPfx: X509Certificate[], icp: CadeiaIcp, agora: Date): ResultadoCadeia {
-  const ancoras = new Set(icp.ancoras.map(impressaoDigital));
-  const doPfxFp = new Set(doPfx.map(impressaoDigital));
-  const vistos = new Map<string, X509Certificate>();
-  for (const c of [...doPfx, ...icp.pacote, ...icp.ancoras]) vistos.set(impressaoDigital(c), c);
-  const todos = [...vistos.values()];
+  const fps = new Map<X509Certificate, string>();
+  const fp = (c: X509Certificate): string => {
+    let v = fps.get(c);
+    if (v === undefined) fps.set(c, (v = impressaoDigital(c)));
+    return v;
+  };
+  const ancoras = new Set(icp.ancoras.map(fp));
+  const doPfxFp = new Set(doPfx.map(fp));
+  const unicos = new Map<string, X509Certificate>();
+  for (const c of [...doPfx, ...icp.pacote, ...icp.ancoras]) unicos.set(fp(c), c);
+  const todos = [...unicos.values()];
+  const expandidos = new Set<string>();
 
   const passo = (no: X509Certificate, caminho: X509Certificate[]): ResultadoCadeia => {
-    const fpNo = impressaoDigital(no);
-    const nomeados = todos.filter((c) => c.subject === no.issuer && impressaoDigital(c) !== fpNo);
-    const confirmados = nomeados.filter((c) => assinou(c, no) && !naoAssina(c, agora));
-    if (confirmados.length === 0) {
-      return nomeados.some((c) => doPfxFp.has(impressaoDigital(c))) ? { situacao: 'adulterada' } : { situacao: 'nao_fechou' };
-    }
+    const fpNo = fp(no);
+    if (expandidos.has(fpNo)) return { situacao: 'nao_fechou' };
+    expandidos.add(fpNo);
+    const nomeados = todos.filter((c) => c.subject === no.issuer && fp(c) !== fpNo);
+    const avaliados = nomeados.map((c) => ({ c, assinatura: assinou(c, no) }));
+    const refutado = avaliados.some((a) => a.assinatura === false && doPfxFp.has(fp(a.c)));
+    const confirmados = avaliados.filter((a) => a.assinatura === true);
+    if (confirmados.length === 0) return refutado ? { situacao: 'adulterada' } : { situacao: 'nao_fechou' };
     let pior: ResultadoCadeia = { situacao: 'nao_fechou' };
-    for (const c of confirmados) {
-      const fp = impressaoDigital(c);
-      if (ancoras.has(fp)) return { situacao: 'conferida', intermediarias: caminho };
-      if (caminho.length + 1 >= NIVEIS_MAX || fp === fpNo || caminho.some((x) => impressaoDigital(x) === fp)) continue;
+    for (const { c } of confirmados.filter((a) => !naoAssina(a.c, agora))) {
+      if (ancoras.has(fp(c))) return { situacao: 'conferida', intermediarias: caminho };
+      if (caminho.length + 1 >= NIVEIS_MAX) continue;
       const r = passo(c, [...caminho, c]);
       if (r.situacao === 'conferida') return r;
       if (r.situacao === 'adulterada') pior = r;
@@ -86,7 +96,7 @@ export function caminhoDoPfx(folha: X509Certificate, doPfx: X509Certificate[]): 
   const saida: X509Certificate[] = [];
   let atual = folha;
   for (let i = 0; i < NIVEIS_MAX; i++) {
-    const prox = doPfx.find((c) => c.subject === atual.issuer && c.subject !== c.issuer && assinou(c, atual));
+    const prox = doPfx.find((c) => c.subject === atual.issuer && c.subject !== c.issuer && assinou(c, atual) === true);
     if (!prox || saida.includes(prox)) break;
     saida.push(prox);
     atual = prox;

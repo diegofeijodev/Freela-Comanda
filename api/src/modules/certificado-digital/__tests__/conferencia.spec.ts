@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { X509Certificate } from 'node:crypto';
-import { type CadeiaIcp } from '../cadeia';
+import { type CadeiaIcp, montarCadeia } from '../cadeia';
 import { conferirCertificado, escolherFolha, tipoDaPolitica } from '../conferencia';
 import { abrirPfx } from '../pkcs12.adapter';
 
@@ -143,5 +143,71 @@ describe('tipoDaPolitica', () => {
     [[], { tipo: 'outro', politicaOid: null }],
   ])('%j', (politicas, esperado) => {
     expect(tipoDaPolitica(politicas)).toEqual(esperado);
+  });
+});
+
+describe('montarCadeia: o que NÃO é adulteração', () => {
+  const { certificados } = abrirPfx(fx('valido.pfx'), SENHA);
+  const folha = certificados.find((c) => /EMPRESA DE TESTE/.test(c.subject)) as X509Certificate;
+
+  it('emissor vencido dentro do arquivo = não conferida (não recusa)', () => {
+    const r = montarCadeia(folha, certificados, ICP, new Date('2041-01-01T12:00:00Z'));
+    expect(r.situacao).toBe('nao_fechou');
+  });
+
+  it('emissor de chave ilegível (caso da raiz v7) é descartado, sem recusa', () => {
+    const ilegivel = {
+      subject: folha.issuer,
+      issuer: 'CN=Raiz v7',
+      raw: Buffer.from('emissor-ilegivel'),
+      ca: true,
+      validFrom: INTER.validFrom,
+      validTo: INTER.validTo,
+      get publicKey(): never {
+        throw new Error('chave não suportada');
+      },
+    } as unknown as X509Certificate;
+    expect(montarCadeia(folha, [folha, ilegivel], ICP, AGORA).situacao).toBe('nao_fechou');
+  });
+
+  it('assinatura refutada com chave legível continua sendo adulteração', () => {
+    const adult = abrirPfx(fx('cadeia-adulterada.pfx'), SENHA).certificados;
+    const f = adult.find((c) => /EMPRESA DE TESTE/.test(c.subject)) as X509Certificate;
+    expect(montarCadeia(f, adult, ICP, AGORA).situacao).toBe('adulterada');
+  });
+
+  // certificados de mentira: só o que `montarCadeia` lê; `verify` sempre confirma, para o pior caso de ramificação
+  const falso = (i: number, subject: string, issuer: string) =>
+    ({
+      subject,
+      issuer,
+      raw: Buffer.from(`falso-${i}-${subject}-${issuer}`),
+      ca: true,
+      validFrom: INTER.validFrom,
+      validTo: INTER.validTo,
+      publicKey: {},
+      verify: () => true,
+    }) as unknown as X509Certificate;
+
+  it('ciclo entre ACs termina rápido, não conferida', () => {
+    const cs = Array.from({ length: 6 }, (_, i) => falso(i, `CN=ac${i}`, `CN=ac${(i + 1) % 6}`));
+    const f = falso(99, 'CN=folha', 'CN=ac0');
+    const t = Date.now();
+    expect(montarCadeia(f, [f, ...cs], ICP, AGORA).situacao).toBe('nao_fechou');
+    expect(Date.now() - t).toBeLessThan(1000);
+  });
+
+  it('cadeia longa passa da profundidade máxima: não conferida, sem exceção', () => {
+    const cs = Array.from({ length: 12 }, (_, i) => falso(i, `CN=ac${i}`, `CN=ac${i + 1}`));
+    const f = falso(99, 'CN=folha', 'CN=ac0');
+    expect(montarCadeia(f, [f, ...cs], ICP, AGORA).situacao).toBe('nao_fechou');
+  });
+
+  it('muitas ACs com o mesmo nome: a busca visita cada uma uma vez só', () => {
+    const cs = Array.from({ length: 150 }, (_, i) => falso(i, 'CN=x', 'CN=x'));
+    const f = falso(99, 'CN=folha', 'CN=x');
+    const t = Date.now();
+    expect(montarCadeia(f, [f, ...cs], ICP, AGORA).situacao).toBe('nao_fechou');
+    expect(Date.now() - t).toBeLessThan(2000);
   });
 });

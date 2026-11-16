@@ -91,6 +91,10 @@ describe('abrirPfx', () => {
     expect(() => abrirPfx(b, 'errada')).toThrow(expect.objectContaining({ code: 'CERTIFICADO_FORMATO' }));
   });
 
+  it('.pfx com mais de 20 certificados (21) = FORMATO', () => {
+    expect(() => abrirPfx(fx('muitos-certificados.pfx'), SENHA)).toThrow(expect.objectContaining({ code: 'CERTIFICADO_FORMATO' }));
+  });
+
   it('iterações do MAC acima do teto = FORMATO, sem demorar', () => {
     const raiz = forge.asn1.fromDer(fx('valido.pfx').toString('binary'), false);
     const macData = (raiz.value as forge.asn1.Asn1[])[2];
