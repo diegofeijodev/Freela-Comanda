@@ -342,6 +342,11 @@ const enviarPdf = async <T>(url: string, f: File) => {
 };
 export const lerPdfNota = <T>(f: File) => enviarPdf<T>('/v1/notas/ler-pdf', f);
 export const lerPdfDDA = <T>(f: File) => enviarPdf<T>('/v1/dda/ler-pdf', f);
+export const lerFotoNota = async <T>(fotos: File[]) => {
+  const fd = new FormData();
+  for (const f of fotos) fd.append('arquivo', f, f.name);
+  return (await api.post<T>('/v1/notas/ler-foto', fd)).data;
+};
 
 // ---------- contas / DRE / caixa
 export const listarContas = () => get<Conta[]>('/v1/contas-pagar');

@@ -5,6 +5,9 @@ export type ItemNota = {
   quantidade: number;
   valor_unitario: number;
   valor_total: number;
+  item_estoque_id?: string | null;
+  novo?: { nome: string; unidade: string; subgrupo: string | null } | null;
+  fator?: number;
 };
 export type Parcela = { numero: string; vencimento: string; valor: number };
 export type NotaLida = {
