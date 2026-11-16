@@ -29,6 +29,22 @@ declare module 'node-forge' {
     function toDer(obj: Asn1): Buf;
     function derToOid(bytes: string): string;
   }
+  namespace util {
+    interface ByteBuffer {
+      readonly __forgeBuffer?: never;
+    }
+    function createBuffer(bytes: string): ByteBuffer;
+  }
+  namespace md {
+    interface MessageDigest {
+      readonly __forgeMd?: never;
+    }
+    const sha1: { create(): MessageDigest };
+    const sha256: { create(): MessageDigest };
+    const sha384: { create(): MessageDigest };
+    const sha512: { create(): MessageDigest };
+    const md5: { create(): MessageDigest };
+  }
   namespace pki {
     interface Key {
       readonly __forgeKey?: never;
@@ -49,6 +65,7 @@ declare module 'node-forge' {
     interface Pkcs12Pfx {
       getBags(filter: { bagType: string }): Record<string, Bag[] | undefined>;
     }
+    function generateKey(password: string, salt: util.ByteBuffer, id: number, iter: number, n: number, md: md.MessageDigest): util.ByteBuffer & { getBytes(): string };
     function pkcs12FromAsn1(obj: asn1.Asn1, strict: boolean, password: string): Pkcs12Pfx;
   }
 }

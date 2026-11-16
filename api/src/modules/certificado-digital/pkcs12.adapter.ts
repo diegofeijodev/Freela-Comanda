@@ -1,4 +1,4 @@
-import { createPrivateKey, type KeyObject, X509Certificate } from 'node:crypto';
+import { createHmac, createPrivateKey, type KeyObject, timingSafeEqual, X509Certificate } from 'node:crypto';
 import * as forge from 'node-forge';
 import { CertificadoRecusado, MSG_CERTIFICADO } from './mensagens';
 
@@ -16,36 +16,13 @@ const BAG_CERTIFICADO = '1.2.840.113549.1.12.10.1.3';
 
 const recusa = (code: ConstructorParameters<typeof CertificadoRecusado>[0], msg: string) => new CertificadoRecusado(code, msg);
 
-/**
- * ÚNICO lugar que depende de texto de erro do node-forge. Vale para a versão FIXADA (1.4.3, ver package.json): ao trocar a
- * versão, rever esta lista contra `lib/pkcs12.js` (testes em pkcs12.spec.ts cobrem uma entrada de cada classe).
- *  - senha:    a conferência do MAC falhou (o forge compara o HMAC logo depois de ler o macData).
- *  - antesDoMac: erros de estrutura/algoritmo levantados ANTES da conferência do MAC (não dizem nada sobre a senha).
- *  - estrutura:  subconjunto de antesDoMac que significa "isto não é um PFX".
- * Todo outro erro do `pkcs12FromAsn1` acontece DEPOIS do MAC (decifrar/ler o conteúdo), logo com a senha já provada.
- */
-const TEXTOS_FORGE = {
-  senha: /MAC could not be verified/i,
-  antesDoMac:
-    /^(Cannot read PKCS#12 PFX|PKCS#12 PFX of version|Only PKCS#12 PFX|PKCS#12 authSafe|PKCS#12 uses unsupported MAC|PKCS#12 MAC iteration|Invalid PKCS#12)/i,
-  estrutura: /^Cannot read PKCS#12 PFX/i,
-};
-
-export type FalhaForge = 'senha' | 'arquivo' | 'formato' | 'depoisDoMac';
-
-export function classificarErroForge(e: unknown): FalhaForge {
-  const m = e instanceof Error ? e.message : '';
-  if (TEXTOS_FORGE.senha.test(m)) return 'senha';
-  if (TEXTOS_FORGE.estrutura.test(m)) return 'arquivo';
-  if (TEXTOS_FORGE.antesDoMac.test(m)) return 'formato';
-  return 'depoisDoMac';
-}
-
 /** A "outra" leitura de uma senha com acento: os bytes UTF-8 lidos como latin1. */
 const foraDoAscii = (s: string) => /[^\x00-\x7f]/.test(s);
 const comoUtf8Binario = (s: string) => Buffer.from(s, 'utf8').toString('latin1');
 
 type Pfx = ReturnType<typeof forge.pkcs12.pkcs12FromAsn1>;
+
+const formatoInvalido = () => recusa('CERTIFICADO_FORMATO', MSG_CERTIFICADO.formato);
 
 /** O PFX tem de ser SEQUENCE { INTEGER, authSafe, macData }. Sem macData não há prova de senha nem de integridade. */
 function conferirEstrutura(raiz: forge.asn1.Asn1): void {
@@ -53,41 +30,89 @@ function conferirEstrutura(raiz: forge.asn1.Asn1): void {
   if (raiz.type !== forge.asn1.Type.SEQUENCE || !raiz.constructed || f.length < 2 || f[0].type !== forge.asn1.Type.INTEGER) {
     throw recusa('CERTIFICADO_ARQUIVO', MSG_CERTIFICADO.arquivo);
   }
-  if (f.length === 2) throw recusa('CERTIFICADO_FORMATO', MSG_CERTIFICADO.formato); // .pfx sem MAC: recusado antes de qualquer senha
+  if (f.length === 2) throw formatoInvalido(); // .pfx sem MAC: recusado antes de qualquer senha
   if (f.length > 3) throw recusa('CERTIFICADO_ARQUIVO', MSG_CERTIFICADO.arquivo);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Conferência PRÓPRIA do MAC (RFC 7292 §4): a decisão "a senha está certa" nunca depende de texto de erro do forge.
+
+const TETO_ITERACOES_MAC = 10_000_000;
+const HASHES_MAC: Record<string, { md: () => forge.md.MessageDigest; node: string; bytes: number }> = {
+  '1.3.14.3.2.26': { md: () => forge.md.sha1.create(), node: 'sha1', bytes: 20 },
+  '2.16.840.1.101.3.4.2.1': { md: () => forge.md.sha256.create(), node: 'sha256', bytes: 32 },
+  '2.16.840.1.101.3.4.2.2': { md: () => forge.md.sha384.create(), node: 'sha384', bytes: 48 },
+  '2.16.840.1.101.3.4.2.3': { md: () => forge.md.sha512.create(), node: 'sha512', bytes: 64 },
+  '1.2.840.113549.2.5': { md: () => forge.md.md5.create(), node: 'md5', bytes: 16 },
+};
+
+/** Bytes de um OCTET STRING (DER ou BER em pedaços). */
+function bytesDeOctet(n: forge.asn1.Asn1 | undefined): string {
+  if (!n || n.type !== forge.asn1.Type.OCTETSTRING) throw new Error('octet');
+  if (typeof n.value === 'string') return n.value;
+  return n.value.map(bytesDeOctet).join('');
+}
+
+/**
+ * `true` se o HMAC do conteúdo do authSafe confere com a senha; `false` se não confere. Qualquer defeito do arquivo
+ * (algoritmo desconhecido/mal formado, campo ausente, iterações fora de 1..10.000.000) lança `CERTIFICADO_FORMATO`:
+ * nunca vira "senha incorreta" nem "MAC conferido".
+ */
+export function macConfere(pfx: forge.asn1.Asn1, senha: string): boolean {
+  try {
+    const [, authSafe, macData] = pfx.value as forge.asn1.Asn1[];
+    const contexto = (authSafe.value as forge.asn1.Asn1[])[1]; // [0] EXPLICIT { OCTET STRING }
+    const conteudo = bytesDeOctet((contexto.value as forge.asn1.Asn1[])[0]);
+    const [digestInfo, salt, iteracoes] = macData.value as forge.asn1.Asn1[];
+    const [algoritmo, digest] = digestInfo.value as forge.asn1.Asn1[];
+    const hash = HASHES_MAC[forge.asn1.derToOid(((algoritmo.value as forge.asn1.Asn1[])[0]).value as string)];
+    if (!hash) throw new Error('algoritmo');
+    let n = 1;
+    if (iteracoes !== undefined) {
+      if (iteracoes.type !== forge.asn1.Type.INTEGER || typeof iteracoes.value !== 'string') throw new Error('iteracoes');
+      const b = Buffer.from(iteracoes.value, 'binary');
+      if (b.length < 1 || b.length > 4) throw new Error('iteracoes');
+      n = b.readUIntBE(0, b.length);
+    }
+    if (!(n >= 1 && n <= TETO_ITERACOES_MAC)) throw new Error('iteracoes');
+    const esperado = Buffer.from(bytesDeOctet(digest), 'binary');
+    const saltBytes = bytesDeOctet(salt);
+    const chave = forge.pkcs12.generateKey(senha, forge.util.createBuffer(saltBytes), 3, n, hash.bytes, hash.md()).getBytes();
+    const obtido = createHmac(hash.node, Buffer.from(chave, 'binary')).update(Buffer.from(conteudo, 'binary')).digest();
+    return obtido.length === esperado.length && timingSafeEqual(obtido, esperado);
+  } catch {
+    throw formatoInvalido();
+  }
 }
 
 /**
  * Abre o PKCS#12. O forge usa a MESMA string para o MAC e para a cifra, e um .pfx moderno (PBES2) do OpenSSL 3 usa a senha
- * como BMPString no MAC (string normal) mas como bytes UTF-8 no PBKDF2 (string "binária"). Por isso:
- *  1. senha como veio (MAC verificado);
- *  2. se o MAC falhar E houver caractere fora do ASCII: a outra codificação (UTF-8 lido como latin1), mesma regra;
- *  3. se o MAC passou (senha provada) e QUALQUER erro depois dele ocorrer com senha não-ASCII (a decifragem pode falhar de
- *     formas diferentes, inclusive com um padding falso que passa): reabre o mesmo arquivo SEM o macData e com a senha em bytes UTF-8.
- * Senha só-ASCII errada falha uma vez só. Se a decifragem falhar com o MAC conferido, o arquivo é inválido (FORMATO).
+ * como BMPString no MAC (string normal) mas como bytes UTF-8 no PBKDF2 (string "binária"). Fluxo:
+ *  1. `macConfere` com a senha como veio; se não conferir E houver caractere fora do ASCII, com a outra codificação
+ *     (UTF-8 lido como latin1). Nenhuma conferir = SENHA.
+ *  2. SÓ com o MAC provado o conteúdo é decifrado: com a string que provou; se falhar e a senha for não-ASCII, reabre
+ *     sem o macData (já provado) com a senha em bytes UTF-8. Qualquer falha depois da prova = FORMATO.
+ * Senha só-ASCII errada falha uma vez só.
  */
 function abrirComSenha(der: string, senha: string): Pfx {
-  const abrir = (macSenha: string, bytesSenha: string | null): Pfx => {
-    const raiz = forge.asn1.fromDer(der, false);
-    if (bytesSenha !== null && Array.isArray(raiz.value)) raiz.value.length = 2; // tira o macData: já conferido no passo anterior
-    return forge.pkcs12.pkcs12FromAsn1(raiz, false, bytesSenha ?? macSenha);
-  };
-  const comMac = (s: string, bytes: string): Pfx => {
-    try {
-      return abrir(s, null);
-    } catch (e) {
-      if (classificarErroForge(e) === 'depoisDoMac' && foraDoAscii(s)) return abrir(s, bytes); // MAC ok: senha certa
-      throw e;
-    }
+  const raiz = forge.asn1.fromDer(der, false);
+  const candidatas = foraDoAscii(senha) ? [senha, comoUtf8Binario(senha)] : [senha];
+  const provada = candidatas.find((c) => macConfere(raiz, c));
+  if (provada === undefined) throw recusa('CERTIFICADO_SENHA', MSG_CERTIFICADO.senha);
+  const abrir = (macSenha: string, semMac: boolean): Pfx => {
+    const r = forge.asn1.fromDer(der, false);
+    if (semMac && Array.isArray(r.value)) r.value.length = 2; // tira o macData: já provado por `macConfere`
+    return forge.pkcs12.pkcs12FromAsn1(r, false, macSenha);
   };
   try {
-    return comMac(senha, comoUtf8Binario(senha));
-  } catch (e) {
-    if (classificarErroForge(e) === 'senha' && foraDoAscii(senha)) {
-      const alt = comoUtf8Binario(senha);
-      return comMac(alt, alt); // `alt` já são os bytes UTF-8, um por caractere
-    }
-    throw e;
+    return abrir(provada, false);
+  } catch {
+    if (!foraDoAscii(provada)) throw formatoInvalido();
+  }
+  try {
+    return abrir(provada === senha ? comoUtf8Binario(senha) : provada, true); // `alt` já são os bytes UTF-8
+  } catch {
+    throw formatoInvalido();
   }
 }
 
@@ -109,10 +134,8 @@ export function abrirPfx(arquivo: Buffer, senha: string): PfxAberto {
   try {
     pfx = abrirComSenha(der, senha);
   } catch (e) {
-    const f = classificarErroForge(e);
-    if (f === 'senha') throw recusa('CERTIFICADO_SENHA', MSG_CERTIFICADO.senha);
-    if (f === 'arquivo') throw recusa('CERTIFICADO_ARQUIVO', MSG_CERTIFICADO.arquivo);
-    throw recusa('CERTIFICADO_FORMATO', MSG_CERTIFICADO.formato); // inclui a decifragem que falha com o MAC conferido
+    if (e instanceof CertificadoRecusado) throw e;
+    throw formatoInvalido();
   }
   try {
     const bagsChave = [

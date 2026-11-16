@@ -2,7 +2,8 @@ import { createHash, X509Certificate } from 'node:crypto';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { dataBrSp } from '../../../common/time/dates';
-import { abrirPfx, classificarErroForge, lerCamposX509, type PfxAberto } from '../pkcs12.adapter';
+import * as forge from 'node-forge';
+import { abrirPfx, lerCamposX509, macConfere, type PfxAberto } from '../pkcs12.adapter';
 
 const fx = (nome: string): Buffer => readFileSync(join(__dirname, 'fixtures', nome));
 const SENHA = 'senha-de-teste';
@@ -74,22 +75,42 @@ describe('abrirPfx', () => {
     }
   });
 
-  it('arquivo adulterado com a senha acentuada certa = SENHA (o MAC não confere, não se chega à reabertura sem MAC)', () => {
+  it('arquivo adulterado (um byte do CONTEÚDO) com a senha acentuada certa = SENHA, pois o MAC não confere', () => {
     const b = Buffer.from(fx('senha-acentuada.pfx'));
-    b[b.length - 5] ^= 0xff; // dentro do macData/authSafe
-    expect(() => abrirPfx(b, ACENTUADA)).toThrow(expect.objectContaining({ code: expect.stringMatching(/^CERTIFICADO_(SENHA|FORMATO|ARQUIVO)$/) }));
+    b[300] ^= 0xff; // dentro do authSafe, longe do salt/digest do macData
+    expect(() => abrirPfx(b, ACENTUADA)).toThrow(expect.objectContaining({ code: 'CERTIFICADO_SENHA' }));
   });
 
-  describe('classificação dos erros do forge (textos da versão fixada)', () => {
-    it.each([
-      ['PKCS#12 MAC could not be verified. Invalid password?', 'senha'],
-      ['Cannot read PKCS#12 PFX. ASN.1 object is not an PKCS#12 PFX.', 'arquivo'],
-      ['Only PKCS#12 PFX in password integrity mode supported.', 'formato'],
-      ['PKCS#12 uses unsupported MAC algorithm: 1.2.3', 'formato'],
-      ['Failed to decrypt PKCS#12 SafeContents.', 'depoisDoMac'],
-      ['Too few bytes to parse DER.', 'depoisDoMac'], // padding falso que passou: outro erro depois do MAC
-    ])('%s -> %s', (msg, esperado) => {
-      expect(classificarErroForge(new Error(msg))).toBe(esperado);
+  it('OID do algoritmo do MAC forjado (FF×8 01) com senha acentuada certa = FORMATO, nunca abre', () => {
+    const b = Buffer.from(fx('senha-acentuada.pfx'));
+    const oidSha256 = Buffer.from('608648016503040201', 'hex');
+    const i = b.lastIndexOf(oidSha256);
+    expect(i).toBeGreaterThan(4000); // o do macData, no fim do arquivo
+    Buffer.from('ffffffffffffffff01', 'hex').copy(b, i);
+    expect(() => abrirPfx(b, ACENTUADA)).toThrow(expect.objectContaining({ code: 'CERTIFICADO_FORMATO' }));
+    expect(() => abrirPfx(b, 'errada')).toThrow(expect.objectContaining({ code: 'CERTIFICADO_FORMATO' }));
+  });
+
+  it('iterações do MAC acima do teto = FORMATO, sem demorar', () => {
+    const raiz = forge.asn1.fromDer(fx('valido.pfx').toString('binary'), false);
+    const macData = (raiz.value as forge.asn1.Asn1[])[2];
+    (macData.value as forge.asn1.Asn1[])[2].value = '\x00\x98\x96\x81'; // 10.000.001
+    const b = Buffer.from(forge.asn1.toDer(raiz).getBytes(), 'binary');
+    const t = Date.now();
+    expect(() => abrirPfx(b, SENHA)).toThrow(expect.objectContaining({ code: 'CERTIFICADO_FORMATO' }));
+    expect(Date.now() - t).toBeLessThan(2000);
+  });
+
+  describe('macConfere', () => {
+    const arquivos = readdirSync(join(__dirname, 'fixtures')).filter((n) => /\.(pfx|p12)$/.test(n) && n !== 'sem-mac.pfx');
+    it('há arquivos com MAC para conferir', () => {
+      expect(arquivos.length).toBeGreaterThanOrEqual(16);
+    });
+    it.each(arquivos)('%s: senha certa = true, errada = false', (nome) => {
+      const raiz = forge.asn1.fromDer(fx(nome).toString('binary'), false);
+      const certa = nome.startsWith('senha-acentuada') ? ACENTUADA : SENHA;
+      expect(macConfere(raiz, certa)).toBe(true);
+      expect(macConfere(raiz, 'errada')).toBe(false);
     });
   });
 
