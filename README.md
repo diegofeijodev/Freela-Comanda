@@ -45,6 +45,12 @@ Na máquina do dono, sempre pelo teto de memória (`scripts/run-capped.sh`, ver 
 - **Correções:** caixa/DRE em meses de 30 dias (o protótipo filtrava até o dia 31 e a consulta falhava); linha de venda com data inválida é
   ignorada em vez de derrubar a importação inteira; conta de nota não é excluída solta.
 
+## Pendências do dono (conferir depois de subir)
+
+- **Nota por foto:** a leitura de foto real pela IA não é coberta por teste (nenhum teste faz rede). Depois de subir, fotografe uma nota de verdade
+  em Entrada de Notas e confira itens, insumos indicados e sugestões de insumo novo.
+- Os leitores do ChatGPT e do Gemini nunca rodaram contra a API real; confira cada um com uma chave de verdade antes de depender dele.
+
 ## Migração dos dados (pendente)
 
 As tabelas são idênticas às do Supabase do Lovable, então trazer os dados de Valinhos (insumos, fichas, inventários, vendas, contas) é cópia

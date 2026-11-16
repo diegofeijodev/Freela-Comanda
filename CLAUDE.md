@@ -23,7 +23,8 @@ contrato: `docs/api-contract.md`. Protótipo de referência em `.prototype/` (gi
   No web, ler com `errMsg()` (`@/lib/db`) — nunca `error.message` do axios.
 - Id da URL passa por `ParseUuidPipe` (malformado = 404). DTO com `whitelist + forbidNonWhitelisted`; rotas estáticas antes das `:id`.
 - "Hoje" no servidor = `todaySp()`; o banco roda com `timezone = America/Sao_Paulo` (migração `regras`).
-- Leitura de PDF por IA só pela porta `LEITOR_PDF` (`modules/leitura-pdf`): nenhum teste faz rede; sem `ANTHROPIC_API_KEY` = "Leitura de PDF não configurada".
+- Leitura de PDF e de foto (1–4 imagens) por IA só pela porta `LEITOR_PDF` (`modules/leitura-pdf`; rotas `notas/ler-pdf` e `notas/ler-foto`): nenhum teste faz rede; sem chave de IA = "Leitura de PDF/nota não configurada".
+  A leitura nunca grava: insumo novo só nasce dentro da transação do "Dar entrada" (`POST /v1/notas`, `novo_insumo`).
 - Web: storage do navegador só em `modules/auth/infrastructure/auth.storage.ts` (sessão `authUser`) e `modules/inventario/infrastructure/rascunho.storage.ts`
   (rascunho da contagem). Telas são `'use client'`; `@/lib/erp-api.ts` é o único lugar com chamadas HTTP.
 
