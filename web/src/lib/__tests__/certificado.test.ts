@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { CertificadoStatus, ItemHistoricoCertificado } from "../erp-api";
 import {
-  arquivoParaBase64, dataHoraSp, dataSp, faltamDias, formatarCnpj, linhasDoHistorico, nomeDoTipo, resumoDoCertificado, rotuloVencimento,
+  arquivoParaBase64, dataHoraSp, dataSp, faixaDoCertificado, faltamDias, formatarCnpj, linhasDoHistorico, nomeDoTipo, resumoDoCertificado, rotuloVencimento,
   validarArquivoCertificado,
 } from "../certificado";
 
@@ -143,5 +143,63 @@ describe("linhasDoHistorico", () => {
   });
   it("sozinho mostra titular e CNPJ", () => {
     expect(linhasDoHistorico([item({})])[0]).toContain("Empresa A");
+  });
+});
+
+describe("faixaDoCertificado", () => {
+  // Meio-dia em Brasília (15:00Z): somar N dias inteiros dá o dia civil N dias depois.
+  const AGORA = new Date("2026-11-16T15:00:00.000Z");
+  // n = 0 cai 1 h depois de `agora` (no mesmo dia, ainda vigente); n = -1 cai um dia antes (vencido).
+  const em = (n: number) => new Date(AGORA.getTime() + (n === 0 ? 3_600_000 : n * 86_400_000)).toISOString();
+  const dia = (n: number) => dataSp(em(n));
+  const faixa = (p: Partial<CertificadoStatus>, agora = AGORA) => faixaDoCertificado(com({ situacao: "valido", dias_restantes: 114, ...p }), agora);
+  const vence = (n: number, p: Partial<CertificadoStatus> = {}) => faixa({ valido_ate: em(n), ...p });
+  const TXT_CNPJ = "O certificado digital não é do CNPJ da empresa. Confira em Configurações.";
+
+  it("sem faixa: carregando, ausente, sem segredo e 31 dias", () => {
+    expect(faixaDoCertificado(undefined, AGORA)).toBeNull();
+    expect(faixa({ situacao: "ausente", valido_ate: null })).toBeNull();
+    expect(faixa({ situacao: "sem_segredo", valido_ate: null })).toBeNull();
+    expect(vence(31)).toBeNull();
+    expect(vence(114)).toBeNull();
+  });
+  it("sem faixa para avisos só do painel", () => {
+    expect(vence(114, { cnpj_confere: "mesma_raiz" })).toBeNull();
+    expect(vence(114, { cadeia_conferida: false })).toBeNull();
+    expect(vence(114, { tipo: "outro" })).toBeNull();
+    expect(vence(114, { cnpj_confere: "empresa_sem_cnpj" })).toBeNull();
+  });
+  it("30 e 8 dias: aviso dispensável", () => {
+    expect(vence(30)).toEqual({ tom: "warn", dispensavel: true, texto: `O certificado digital vence em 30 dias (${dia(30)}). Envie o renovado em Configurações.` });
+    expect(vence(20)).toEqual({ tom: "warn", dispensavel: true, texto: `O certificado digital vence em 20 dias (${dia(20)}). Envie o renovado em Configurações.` });
+    expect(vence(8)).toMatchObject({ tom: "warn", dispensavel: true });
+  });
+  it("7 dias ou menos: forte e sem dispensar", () => {
+    expect(vence(7)).toEqual({ tom: "warn_forte", dispensavel: false, texto: `O certificado digital vence em 7 dias (${dia(7)}). Envie o renovado em Configurações.` });
+    expect(vence(1)).toMatchObject({ tom: "warn_forte", dispensavel: false, texto: `O certificado digital vence amanhã (${dia(1)}). Envie o renovado em Configurações.` });
+    expect(vence(0)).toMatchObject({ tom: "warn_forte", dispensavel: false, texto: `O certificado digital vence hoje (${dia(0)}). Envie o renovado em Configurações.` });
+  });
+  it("vence mais tarde hoje ainda é 'hoje'; passou o instante é vencido (dia em Brasília)", () => {
+    const quase = new Date("2026-11-17T02:30:00.000Z"); // 16/11 23h30 em Brasília
+    expect(faixa({ valido_ate: "2026-11-17T02:59:59.000Z" }, quase)?.texto).toContain("vence hoje (16/11/2026)");
+    const passou = new Date("2026-11-17T03:30:00.000Z"); // 17/11 00h30
+    expect(faixa({ valido_ate: "2026-11-17T02:59:59.000Z" }, passou)).toMatchObject({ tom: "bad", texto: "O certificado digital venceu em 16/11/2026. Envie o renovado em Configurações." });
+  });
+  it("vencido: vermelha, sem dispensar, mesmo com a resposta guardada ainda dizendo 'vencendo'", () => {
+    const esperado = { tom: "bad", dispensavel: false, texto: `O certificado digital venceu em ${dia(-1)}. Envie o renovado em Configurações.` };
+    expect(vence(-1, { situacao: "vencido", dias_restantes: -1 })).toEqual(esperado);
+    expect(vence(-1, { situacao: "vencendo", dias_restantes: 0 })).toEqual(esperado);
+    expect(vence(-1, { situacao: "vencido", cnpj_confere: "diferente" })).toEqual(esperado); // vencido ganha do CNPJ
+  });
+  it("ilegível: vermelha, sem dispensar, ganha de tudo", () => {
+    expect(faixa({ situacao: "ilegivel", valido_ate: null, cnpj_confere: "diferente" })).toEqual({
+      tom: "bad", dispensavel: false, texto: "O certificado digital guardado não pode mais ser lido. Envie o arquivo de novo em Configurações.",
+    });
+    expect(vence(-3, { situacao: "ilegivel" })?.texto).toContain("não pode mais ser lido");
+  });
+  it("CNPJ diferente: vermelha, sem dispensar, mesmo com 20 ou 114 dias; ganha do vencendo", () => {
+    expect(vence(20, { cnpj_confere: "diferente" })).toEqual({ tom: "bad", dispensavel: false, texto: TXT_CNPJ });
+    expect(vence(114, { cnpj_confere: "diferente" })).toEqual({ tom: "bad", dispensavel: false, texto: TXT_CNPJ });
+    expect(vence(3, { cnpj_confere: "diferente" })?.texto).toBe(TXT_CNPJ);
   });
 });

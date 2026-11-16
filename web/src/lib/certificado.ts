@@ -136,3 +136,40 @@ export function linhasDoHistorico(h: ItemHistoricoCertificado[]): string[] {
     return linha;
   });
 }
+
+export type FaixaCertificado = { tom: "warn" | "warn_forte" | "bad"; texto: string; dispensavel: boolean };
+
+/** Dia civil de Brasília como número de dias (para contar diferença de dias sem depender da hora). */
+function diaCivilSp(d: Date): number {
+  const p = partes(d.toISOString());
+  return Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day)) / 86_400_000;
+}
+
+const RENOVAR = "Envie o renovado em Configurações.";
+
+/**
+ * Faixa do topo do app (só admin): qual aviso mostrar, ou `null`. Os dias saem de `valido_ate` e de `agora` (dia civil de Brasília),
+ * não do `dias_restantes` guardado, porque a consulta fica 5 minutos em cache e o dia pode virar nesse meio tempo.
+ * Precedência: ilegível > vencido > CNPJ diferente > vence em 0–7 > vence em 8–30. Sem faixa para "ausente", "sem segredo"
+ * nem para os avisos que são só do painel.
+ */
+export function faixaDoCertificado(c: CertificadoStatus | undefined, agora: Date): FaixaCertificado | null {
+  if (!c || c.situacao === "ausente" || c.situacao === "sem_segredo") return null;
+  if (c.situacao === "ilegivel") {
+    return { tom: "bad", dispensavel: false, texto: "O certificado digital guardado não pode mais ser lido. Envie o arquivo de novo em Configurações." };
+  }
+  const ate = c.valido_ate ? new Date(c.valido_ate) : null;
+  if (c.situacao === "vencido" || (ate && agora.getTime() >= ate.getTime())) {
+    const quando = c.valido_ate ? ` em ${dataSp(c.valido_ate)}` : "";
+    return { tom: "bad", dispensavel: false, texto: `O certificado digital venceu${quando}. ${RENOVAR}` };
+  }
+  if (c.cnpj_confere === "diferente") {
+    return { tom: "bad", dispensavel: false, texto: "O certificado digital não é do CNPJ da empresa. Confira em Configurações." };
+  }
+  if (!ate || !c.valido_ate) return null;
+  const dias = diaCivilSp(ate) - diaCivilSp(agora);
+  if (dias > 30) return null;
+  const data = dataSp(c.valido_ate);
+  const quando = dias <= 0 ? `hoje (${data})` : dias === 1 ? `amanhã (${data})` : `em ${dias} dias (${data})`;
+  return { tom: dias <= 7 ? "warn_forte" : "warn", dispensavel: dias > 7, texto: `O certificado digital vence ${quando}. ${RENOVAR}` };
+}

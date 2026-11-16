@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useMe, useSair } from '@/lib/auth';
+import { CertificadoFaixa } from '@/components/certificado-faixa';
 import { useSessao } from '@/modules/auth/application/use-auth';
 
 const MENU = [
@@ -96,7 +97,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             ))}
           </nav>
         </header>
-        <main className="mx-auto w-full max-w-7xl flex-1 p-4 md:p-8">{children}</main>
+        <main className="mx-auto w-full max-w-7xl flex-1 p-4 md:p-8">
+          {me.perfil === 'admin' && <CertificadoFaixa />}
+          {children}
+        </main>
       </div>
     </div>
   );

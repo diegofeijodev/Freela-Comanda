@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 
 const require = createRequire(import.meta.url);
@@ -226,10 +227,66 @@ async function abrir(page, erros, caminho, texto, nome) {
   await ctx.close();
 }
 
+// ---------------- ADMIN: faixa do certificado no topo (celular 360x800)
+{
+  const fx = (nome) => fileURLToPath(new URL(`../../api/src/modules/certificado-digital/__tests__/fixtures/${nome}`, import.meta.url));
+  const PGDB = 'erpfreela_browser';
+  const venceEm = (intervalo) =>
+    execFileSync('docker', ['exec', 'erp-freela-postgres', 'psql', '-U', 'erpfreela', '-d', PGDB, '-c', `update certificado_digital set valido_ate = now() + interval '${intervalo}'`]);
+  const { ctx, page, erros } = await sessao('admin@erpfreela.local', { width: 360, height: 800 });
+  const faixa = page.locator('main [role="status"], main [role="alert"]').filter({ hasText: 'O certificado digital' });
+  // Reenvia o certificado (o bloco anterior removeu) e deixa a validade original (longe): sem faixa.
+  await page.goto(`${BASE}/configuracoes`, { waitUntil: 'networkidle', timeout: 180_000 });
+  await page.setInputFiles('#certificado-arquivo', fx('valido.pfx'));
+  await page.locator('#certificado-senha').fill('senha-de-teste');
+  await page.locator('#certificado-digital').getByRole('button', { name: 'Conferir e guardar certificado' }).click();
+  check('faixa: certificado reenviado', await page.getByText('Certificado guardado.').first().waitFor({ timeout: 30_000 }).then(() => true, () => false));
+  await page.goto(`${BASE}/painel`, { waitUntil: 'networkidle', timeout: 120_000 });
+  check('faixa: sem faixa com o certificado longe de vencer', (await faixa.count()) === 0);
+
+  // 20 dias: aviso dispensável.
+  venceEm('20 days');
+  await page.reload({ waitUntil: 'networkidle' });
+  check('faixa: 20 dias mostra "vence em N dias"', await faixa.getByText(/vence em \d+ dias/).waitFor({ timeout: 30_000 }).then(() => true, () => false));
+  const caixa = await faixa.boundingBox();
+  check('faixa: cabe em 360 px e tem 44 px de altura', !!caixa && caixa.x >= 0 && caixa.x + caixa.width <= 360 && caixa.height >= 44, JSON.stringify(caixa));
+  check('faixa: sem rolagem lateral em 360', await page.evaluate(() => document.documentElement.scrollWidth <= 360));
+  const x = await page.getByRole('button', { name: 'Esconder aviso' }).boundingBox();
+  check('faixa: botão de esconder com 44 px', !!x && x.width >= 44 && x.height >= 44, JSON.stringify(x));
+  await page.screenshot({ path: join(SHOTS, 'admin-faixa-certificado-360.png') });
+  await page.getByRole('button', { name: 'Esconder aviso' }).click();
+  check('faixa: esconder some a faixa', await faixa.waitFor({ state: 'hidden', timeout: 10_000 }).then(() => true, () => false));
+  // Navegação do cliente (clique no menu, sem recarregar): continua escondida. Nunca page.goto aqui, que zera o estado.
+  await page.locator('header nav a', { hasText: 'Vendas' }).click();
+  await page.waitForURL('**/vendas', { timeout: 60_000 });
+  check('faixa: continua escondida em outra tela (sem recarregar)', (await faixa.count()) === 0);
+  await page.reload({ waitUntil: 'networkidle' });
+  check('faixa: voltou depois de recarregar', await faixa.getByText(/vence em \d+ dias/).waitFor({ timeout: 30_000 }).then(() => true, () => false));
+
+  // 3 dias: aviso forte, sem esconder; o clique leva ao painel do certificado.
+  venceEm('3 days');
+  await page.goto(`${BASE}/painel`, { waitUntil: 'networkidle' });
+  check('faixa: 3 dias mostra a faixa', await faixa.getByText(/vence em \d+ dias/).waitFor({ timeout: 30_000 }).then(() => true, () => false));
+  check('faixa: 3 dias sem "Esconder aviso"', (await page.getByRole('button', { name: 'Esconder aviso' }).count()) === 0);
+  await faixa.getByRole('link').click();
+  await page.waitForURL('**/configuracoes#certificado-digital', { timeout: 60_000 });
+  check('faixa: o clique leva ao painel do certificado', page.url().endsWith('/configuracoes#certificado-digital'));
+
+  const storage = await page.evaluate(() => ({ local: Object.keys(localStorage), sessao: sessionStorage.length }));
+  check('faixa: localStorage só com authUser e sessionStorage vazio', storage.local.length === 1 && storage.local[0] === 'authUser' && storage.sessao === 0, JSON.stringify(storage));
+  const reais = erros.filter((e) => !/Failed to load resource/.test(e));
+  check('faixa: sem erro de console', reais.length === 0, reais.join(' | '));
+  await ctx.close();
+}
+
 // ---------------- LOJA (celular)
 {
   const { ctx, page, erros } = await sessao('loja@erpfreela.local', { width: 390, height: 844 });
+  const pedidosCertificado = [];
+  page.on('request', (r) => { if (r.url().includes('/v1/certificado-digital')) pedidosCertificado.push(r.url()); });
   await abrir(page, erros, '/painel', 'Contar estoque', 'loja-painel-celular');
+  check('loja: nenhum pedido ao certificado digital', pedidosCertificado.length === 0, pedidosCertificado.join(' | '));
+  check('loja: nenhuma faixa do certificado', (await page.getByText('O certificado digital').count()) === 0);
   const menu = await page.locator('header nav a').allInnerTexts();
   check('menu da loja tem 4 itens', menu.length === 4, JSON.stringify(menu));
   check('loja não vê Vendas no menu', !menu.some((t) => t.includes('Vendas')));
