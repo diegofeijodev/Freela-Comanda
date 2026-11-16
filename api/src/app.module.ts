@@ -17,6 +17,7 @@ import { EstoqueModule } from './modules/estoque/estoque.module';
 import { ImportacoesModule } from './modules/importacoes/importacoes.module';
 import { InventariosModule } from './modules/inventarios/inventarios.module';
 import { LeituraPdfModule } from './modules/leitura-pdf/leitura-pdf.module';
+import { CertificadoDigitalModule } from './modules/certificado-digital/certificado-digital.module';
 import { NotasModule } from './modules/notas/notas.module';
 import { UsuariosModule } from './modules/usuarios/usuarios.module';
 import { VendasModule } from './modules/vendas/vendas.module';
@@ -36,6 +37,7 @@ import { VendasModule } from './modules/vendas/vendas.module';
     InventariosModule,
     ComprasModule,
     LeituraPdfModule,
+    CertificadoDigitalModule,
     NotasModule,
     ContasModule,
     CaixaModule,

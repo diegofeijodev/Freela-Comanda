@@ -301,6 +301,45 @@ check "arquivo que não é imagem" "O arquivo não é uma imagem (JPG, PNG ou We
 CODE=$(curl -s -o "$OUT" -w '%{http_code}' -H "authorization: Bearer $ADM" -F "a=@$JPG" -F "b=@$JPG" -F "c=@$JPG" -F "d=@$JPG" -F "e=@$JPG" "$BASE/v1/notas/ler-foto"); BODY=$(cat "$OUT")
 check "cinco fotos" "Envie até 4 fotos da mesma nota." "$(j .error.message)"; check "cinco fotos: 400" 400 "$CODE"
 CODE=$(curl -s -o "$OUT" -w '%{http_code}' -H "authorization: Bearer $LOJA" -F "arquivo=@$JPG" "$BASE/v1/notas/ler-foto"); check "loja não lê foto" 403 "$CODE"
+# ---------- certificado digital (A1): só admin; .pfx de TESTE do repositório (senha senha-de-teste); nada sensível volta nem é gravado em claro
+FIX=src/modules/certificado-digital/__tests__/fixtures
+cert() { # cert ARQUIVO SENHA → corpo JSON do PUT
+  jq -n --arg a "$(base64 -w0 "$FIX/$1")" --arg s "$2" '{arquivo_base64:$a,senha:$s}'
+}
+VALIDO=$(cert valido.pfx senha-de-teste)
+req GET /v1/certificado-digital "$LOJA"; check "loja não vê o certificado" 403 "$CODE"
+req PUT /v1/certificado-digital "$LOJA" "$VALIDO"; check "loja não envia certificado" 403 "$CODE"
+req DELETE /v1/certificado-digital "$LOJA"; check "loja não remove certificado" 403 "$CODE"
+req GET /v1/certificado-digital "$ADM"; check "certificado: status" 200 "$CODE"
+check "certificado ausente" ausente "$(j .situacao)"; check "histórico vazio" 0 "$(j '.historico | length')"
+req PUT /v1/certificado-digital "$ADM" "$VALIDO"; check "empresa sem CNPJ: 400" 400 "$CODE"
+check "empresa sem CNPJ: code" EMPRESA_SEM_CNPJ "$(j .error.code)"
+check "empresa sem CNPJ: frase" "Preencha o CNPJ da empresa no quadro Empresa, toque em Salvar (no alto da página) e envie o certificado de novo." "$(j .error.message)"
+req PATCH /v1/configuracoes "$ADM" '{"cnpj":"12.345.678/0001-95"}'; check "CNPJ da empresa gravado" 200 "$CODE"
+req PUT /v1/certificado-digital "$ADM" "$(cert valido.pfx errada)"; check "senha errada: 400" 400 "$CODE"
+check "senha errada: code" CERTIFICADO_SENHA "$(j .error.code)"
+check "senha errada: nada gravado" 0 "$(sql "select count(*) from certificado_digital")"
+req PUT /v1/certificado-digital "$ADM" "$VALIDO"; check "certificado válido: 200" 200 "$CODE"
+check "válido: situação" valido "$(j .situacao)"; check "válido: CNPJ confere" igual "$(j .cnpj_confere)"; check "válido: tipo" A1 "$(j .tipo)"
+check "válido: cadeia não conferida (âncoras reais)" false "$(j .cadeia_conferida)"
+check "válido: resposta sem chave" false "$(echo "$BODY" | grep -c -e BEGIN -e senha-de-teste -e PRIVATE | jq '. > 0')"
+check "válido: material cifrado" 0 "$(sql "select count(*) from certificado_digital where material_cifrado like '%BEGIN%'")"
+req GET /v1/certificado-digital "$ADM"; check "GET sem material" false "$(echo "$BODY" | grep -c -e BEGIN -e material -e chave | jq '. > 0')"
+check "GET: histórico do envio" enviado "$(j '.historico[0].evento')"
+req PUT /v1/certificado-digital "$ADM" "$(cert mesma-raiz-filial.pfx senha-de-teste)"; check "filial da mesma raiz: 200" 200 "$CODE"
+check "filial: mesma raiz" mesma_raiz "$(j .cnpj_confere)"
+req PUT /v1/certificado-digital "$ADM" "$(cert outro-cnpj.pfx senha-de-teste)"; check "outro CNPJ: 400" 400 "$CODE"
+check "outro CNPJ: frase" "Este certificado é do CNPJ 99.888.777/0001-00 (OUTRA EMPRESA SA). O CNPJ da empresa é 12.345.678/0001-95." "$(j .error.message)"
+req GET /v1/certificado-digital "$ADM"; check "troca recusada: segue a filial" 12345678000276 "$(j .cnpj)"
+TXTB64=$(printf 'isto não é um certificado' | base64 -w0)
+req PUT /v1/certificado-digital "$ADM" "{\"arquivo_base64\":\"$TXTB64\",\"senha\":\"x\"}"; check "arquivo de texto: 400" 400 "$CODE"
+check "arquivo de texto: code" CERTIFICADO_ARQUIVO "$(j .error.code)"
+req DELETE /v1/certificado-digital "$ADM"; check "remover certificado" 200 "$CODE"
+check "removido: situação" ausente "$(j .situacao)"; check "removido: histórico" 3 "$(j '.historico | length')"
+check "removido: 1º evento" removido "$(j '.historico[0].evento')"
+req DELETE /v1/certificado-digital "$ADM"; check "remover de novo" 200 "$CODE"; check "histórico não cresce" 3 "$(j '.historico | length')"
+check "histórico no banco" 3 "$(sql "select count(*) from certificado_digital_historico")"
+req GET /v1/configuracoes "$LOJA"; check "loja lê config sem certificado" 0 "$(echo "$BODY" | grep -c BEGIN)"
 rm -f "$PDF" "$TXT" "$JPG" "$OUT"
 
 echo "smoke: $ok ok, $falhas falha(s)"

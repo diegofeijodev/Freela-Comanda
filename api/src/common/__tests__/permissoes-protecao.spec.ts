@@ -7,6 +7,7 @@ import { HealthController } from '../health/health.controller';
 import { AuthController } from '../../modules/auth/auth.controller';
 import { CadastrosController } from '../../modules/cadastros/cadastros.controller';
 import { CaixaController } from '../../modules/caixa/caixa.controller';
+import { CertificadoDigitalController } from '../../modules/certificado-digital/certificado-digital.controller';
 import { CardapioController } from '../../modules/cardapio/cardapio.controller';
 import { ComprasController } from '../../modules/compras/compras.controller';
 import { ContasController } from '../../modules/contas/contas.controller';
@@ -25,6 +26,7 @@ const CONTROLLERS = [
   CadastrosController,
   CaixaController,
   CardapioController,
+  CertificadoDigitalController,
   ComprasController,
   ContasController,
   EstoqueController,
@@ -73,6 +75,14 @@ describe('proteção das rotas (substitui as políticas RLS do Supabase)', () =>
       { rota: 'GET /v1/ia-chave', marca: 'admin' },
       { rota: 'PUT /v1/ia-chave', marca: 'admin' },
       { rota: 'DELETE /v1/ia-chave', marca: 'admin' },
+    ]);
+  });
+
+  it('o certificado digital é só do admin', () => {
+    expect(todas.filter((r) => r.rota.includes('/certificado-digital'))).toEqual([
+      { rota: 'GET /v1/certificado-digital', marca: 'admin' },
+      { rota: 'PUT /v1/certificado-digital', marca: 'admin' },
+      { rota: 'DELETE /v1/certificado-digital', marca: 'admin' },
     ]);
   });
 
