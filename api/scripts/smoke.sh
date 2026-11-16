@@ -204,6 +204,11 @@ check "existente + novo: mensagem" "Escolha um insumo existente ou cadastre um n
 NI5='[{"descricao":"Z","quantidade":1,"valor_unitario":5,"novo_insumo":{"nome":"Nao Deve Existir","unidade":"un"}}]'
 req POST /v1/notas "$ADM" "$(nota_foto 35261012345678000199550010000070051000070051 "$NI5" boleto)"; check "a prazo sem parcelas" 400 "$CODE"
 check "nada criado se a nota falha" 0 "$(sql "select count(*) from itens_estoque where nome='Nao Deve Existir'")"
+NI7='[{"descricao":"R1","quantidade":1,"valor_unitario":5,"novo_insumo":{"nome":"Rollback Smoke","unidade":"un"}},{"descricao":"R2","quantidade":1,"valor_unitario":5,"item_estoque_id":"00000000-0000-4000-8000-000000000000"}]'
+req POST /v1/notas "$ADM" "$(nota_foto 35261012345678000199550010000070071000070071 "$NI7")"; echo "rollback: HTTP $CODE $(j .error.code)"
+check "falha dentro da transação não é 201" 1 "$([ "$CODE" != 201 ] && echo 1 || echo 0)"
+check "rollback desfaz o insumo novo" 0 "$(sql "select count(*) from itens_estoque where nome='Rollback Smoke'")"
+check "rollback não deixa nota gravada" 0 "$(sql "select count(*) from notas_entrada where chave='35261012345678000199550010000070071000070071'")"
 NI6='[{"descricao":"Y","quantidade":1,"valor_unitario":5,"novo_insumo":{"nome":"Smoke Sem Grupo","unidade":"un","subgrupo":"Grupo Inventado"}}]'
 req POST /v1/notas "$ADM" "$(nota_foto 35261012345678000199550010000070061000070061 "$NI6")"; check "subgrupo inexistente: nota" 201 "$CODE"
 check "subgrupo inexistente cai no padrão" Mercearia "$(sql "select subgrupo from itens_estoque where nome='Smoke Sem Grupo'")"
