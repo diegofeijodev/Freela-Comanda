@@ -23,10 +23,17 @@ export function dataHoraSp(iso: string): string {
   return `${p.day}/${p.month}/${p.year} às ${p.hour}h${p.minute}`;
 }
 
+/** Trecho "(faltam N dias)" do painel, com singular e o dia do vencimento. */
+export function faltamDias(dias: number): string {
+  if (dias <= 0) return "vence hoje";
+  if (dias === 1) return "falta 1 dia";
+  return `faltam ${dias} dias`;
+}
+
 export function rotuloVencimento(dias: number): string {
   if (dias <= 0) return "Vence hoje";
   if (dias === 1) return "Vence amanhã";
-  return `Vence em ${dias} dias`;
+  return `Vence em ${dias} dias`; // 1 já saiu acima, então o plural é sempre certo
 }
 
 /** 00.000.000/0000-00 (aceita as letras do CNPJ alfanumérico). Se não tiver 14 caracteres, devolve como veio. */

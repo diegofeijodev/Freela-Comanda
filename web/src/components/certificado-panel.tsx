@@ -16,7 +16,7 @@ import {
 import { errCode, errMsg, getConfig } from "@/lib/db";
 import { useCertificado, CERTIFICADO_QUERY_KEY } from "@/hooks/use-certificado";
 import {
-  arquivoParaBase64, dataHoraSp, dataSp, formatarCnpj, linhasDoHistorico, nomeDoTipo, resumoDoCertificado, validarArquivoCertificado,
+  arquivoParaBase64, dataHoraSp, dataSp, faltamDias, formatarCnpj, linhasDoHistorico, nomeDoTipo, resumoDoCertificado, validarArquivoCertificado,
 } from "@/lib/certificado";
 
 type Erro = { code: string | null; msg: string };
@@ -87,16 +87,15 @@ export function CertificadoPanel() {
     setErro(null);
   }
 
-  async function enviar(e: React.FormEvent) {
-    e.preventDefault();
+  async function enviar() {
     if (!arquivo || !senha || enviando) return;
     setEnviando(true);
     setErro(null);
     try {
       const resposta = await enviarCertificado(await arquivoParaBase64(arquivo), senha);
-      qc.setQueryData<CertificadoStatus>(CERTIFICADO_QUERY_KEY, resposta);
-      limpar();
+      limpar(); // a senha sai do estado ANTES de o formulário sair da tela: o campo nunca é desmontado com valor
       setTrocando(false);
+      qc.setQueryData<CertificadoStatus>(CERTIFICADO_QUERY_KEY, resposta);
       toast.success(substituindo ? "Certificado trocado." : "Certificado guardado.");
       donoRef.current?.focus();
     } catch (error) {
@@ -116,9 +115,9 @@ export function CertificadoPanel() {
     try {
       const resposta = await removerCertificado();
       focarEscolher.current = true;
-      qc.setQueryData<CertificadoStatus>(CERTIFICADO_QUERY_KEY, resposta);
       limpar();
       setTrocando(false);
+      qc.setQueryData<CertificadoStatus>(CERTIFICADO_QUERY_KEY, resposta);
       toast.success("Certificado removido.");
     } catch (error) {
       toast.error(errMsg(error));
@@ -143,7 +142,7 @@ export function CertificadoPanel() {
         </p>
 
         {isPending && <div className="space-y-2" aria-busy="true"><Skeleton className="h-6 w-1/2" /><Skeleton className="h-4 w-3/4" /><Skeleton className="h-4 w-2/3" /></div>}
-        {isError && (
+        {isError && !cert && (
           <div className="flex flex-col gap-2 text-sm">
             <p>Não consegui ver o certificado agora. Toque em Tentar de novo.</p>
             <Button variant="outline" className="h-11 w-full sm:w-auto" onClick={() => refetch()}>Tentar de novo</Button>
@@ -177,7 +176,7 @@ export function CertificadoPanel() {
                     {cert.valido_ate && (
                       <div>
                         {cert.situacao === "vencido" ? "Venceu em" : "Vale até"} {dataSp(cert.valido_ate)}
-                        {cert.situacao !== "vencido" && cert.dias_restantes !== null ? ` (faltam ${cert.dias_restantes} dias)` : ""}
+                        {cert.situacao !== "vencido" && cert.dias_restantes !== null ? ` (${faltamDias(cert.dias_restantes)})` : ""}
                       </div>
                     )}
                     {cert.cadeia_conferida === true && <div className="text-muted-foreground">Cadeia ICP-Brasil conferida</div>}
@@ -199,14 +198,14 @@ export function CertificadoPanel() {
             )}
 
             {guardado && !trocando && (
-              <div className="flex flex-col gap-2 min-[340px]:flex-row">
-                <Button variant={primario ? "default" : "outline"} className="h-11 flex-1 min-[340px]:flex-none" onClick={() => setTrocando(true)}>{rotuloAbrir}</Button>
-                <Button variant="outline" className="h-11 flex-1 text-destructive hover:text-destructive min-[340px]:flex-none" onClick={() => setRemoverAberto(true)}>Remover</Button>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <Button variant={primario ? "default" : "outline"} className="h-11 w-full whitespace-normal sm:w-auto" onClick={() => setTrocando(true)}>{rotuloAbrir}</Button>
+                <Button variant="outline" className="h-11 w-full whitespace-normal text-destructive hover:text-destructive sm:w-auto" onClick={() => setRemoverAberto(true)}>Remover</Button>
               </div>
             )}
 
             {mostrarForm && (
-              <form onSubmit={enviar} className="space-y-3 border-t pt-4" aria-describedby="certificado-ajuda-cnpj">
+              <div className="space-y-3 border-t pt-4" role="group" aria-describedby="certificado-ajuda-cnpj">
                 {trocando && (
                   <div className="space-y-1">
                     <h3 className="text-base font-semibold">Novo certificado</h3>
@@ -221,8 +220,8 @@ export function CertificadoPanel() {
                 <div>
                   <Label htmlFor="certificado-arquivo" className="text-sm">Arquivo do certificado (.pfx ou .p12)</Label>
                   <input id="certificado-arquivo" type="file" accept=".pfx,.p12,application/x-pkcs12" className="sr-only" tabIndex={-1} onChange={escolher} disabled={desligado} />
-                  <div className="mt-1 flex flex-col gap-2 min-[420px]:flex-row min-[420px]:items-center">
-                    <Button id="certificado-escolher" type="button" variant="outline" className="h-11 w-full min-[420px]:w-auto" disabled={desligado}
+                  <div className="mt-1 flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <Button id="certificado-escolher" type="button" variant="outline" className="h-11 w-full whitespace-normal sm:w-auto" disabled={desligado}
                       onClick={() => document.getElementById("certificado-arquivo")?.click()}>
                       {arquivo ? "Trocar arquivo" : "Escolher arquivo"}
                     </Button>
@@ -234,9 +233,10 @@ export function CertificadoPanel() {
                 <div>
                   <Label htmlFor="certificado-senha" className="text-sm">Senha do certificado</Label>
                   <div className="mt-1 flex gap-2">
-                    <Input id="certificado-senha" ref={senhaRef} name="cert-segredo" type={verSenha ? "text" : "password"} autoComplete="new-password" autoCapitalize="none"
+                    <Input id="certificado-senha" ref={senhaRef} name="cert-segredo" type={verSenha ? "text" : "password"} autoComplete="off" data-1p-ignore data-lpignore="true" data-bwignore data-form-type="other" autoCapitalize="none"
                       autoCorrect="off" spellCheck={false} maxLength={128} className="h-11 min-w-0 flex-1 text-base" value={senha} disabled={desligado}
-                      onChange={(e) => setSenha(e.target.value)} />
+                      onChange={(e) => setSenha(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); if (completo && !desligado) void enviar(); } }} />
                     <Button type="button" variant="outline" className="h-11 w-11 shrink-0 px-0" aria-pressed={verSenha} aria-label={verSenha ? "Ocultar senha" : "Mostrar senha"}
                       disabled={desligado} onClick={() => setVerSenha((v) => !v)}>
                       {verSenha ? <EyeOff aria-hidden /> : <Eye aria-hidden />}
@@ -258,13 +258,13 @@ export function CertificadoPanel() {
                 </p>
 
                 <div className="flex flex-col gap-2">
-                  <Button type="submit" className="h-11 w-full" disabled={!completo || desligado}>
+                  <Button type="button" className="h-11 w-full whitespace-normal" disabled={!completo || desligado} onClick={() => void enviar()}>
                     {enviando ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />Conferindo…</> : trocando ? "Conferir e trocar certificado" : "Conferir e guardar certificado"}
                   </Button>
                   {!completo && !enviando && !semSegredo && <p className="text-sm text-muted-foreground">Escolha o arquivo e digite a senha.</p>}
                   {trocando && !enviando && <Button type="button" variant="ghost" className="h-11 w-full" onClick={() => { limpar(); setTrocando(false); }}>Cancelar</Button>}
                 </div>
-              </form>
+              </div>
             )}
 
             <p aria-live="polite" className="text-sm text-muted-foreground">{enviando ? "Conferindo o certificado. Leva alguns segundos." : ""}</p>
@@ -272,7 +272,7 @@ export function CertificadoPanel() {
             {historico.length > 0 && (
               <details className="text-sm">
                 <summary className="flex min-h-11 cursor-pointer items-center text-primary">Ver histórico</summary>
-                <ul className="mt-1 space-y-1 break-words">{historico.map((l) => <li key={l}>{l}</li>)}</ul>
+                <ul className="mt-1 space-y-1 break-words">{historico.map((l, i) => <li key={`${i}-${l}`}>{l}</li>)}</ul>
               </details>
             )}
           </div>

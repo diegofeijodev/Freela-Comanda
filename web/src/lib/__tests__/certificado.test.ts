@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { CertificadoStatus, ItemHistoricoCertificado } from "../erp-api";
 import {
-  arquivoParaBase64, dataHoraSp, dataSp, formatarCnpj, linhasDoHistorico, nomeDoTipo, resumoDoCertificado, rotuloVencimento,
+  arquivoParaBase64, dataHoraSp, dataSp, faltamDias, formatarCnpj, linhasDoHistorico, nomeDoTipo, resumoDoCertificado, rotuloVencimento,
   validarArquivoCertificado,
 } from "../certificado";
 
@@ -22,6 +22,15 @@ describe("datas e rótulos", () => {
     expect(rotuloVencimento(0)).toBe("Vence hoje");
     expect(rotuloVencimento(1)).toBe("Vence amanhã");
     expect(rotuloVencimento(12)).toBe("Vence em 12 dias");
+  });
+});
+
+describe("faltamDias", () => {
+  it("singular e plural", () => {
+    expect(faltamDias(0)).toBe("vence hoje");
+    expect(faltamDias(1)).toBe("falta 1 dia");
+    expect(faltamDias(2)).toBe("faltam 2 dias");
+    expect(faltamDias(114)).toBe("faltam 114 dias");
   });
 });
 

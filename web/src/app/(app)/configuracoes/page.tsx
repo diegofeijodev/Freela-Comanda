@@ -19,6 +19,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PlanoContas } from "@/components/plano-contas";
 import { IaChavePanel } from "@/components/ia-chave-panel";
 import { CertificadoPanel } from "@/components/certificado-panel";
+import { CERTIFICADO_QUERY_KEY } from "@/hooks/use-certificado";
 import { useMe } from "@/lib/auth";
 
 
@@ -58,7 +59,7 @@ export default function Config() {
       return toast.error(errMsg(error));
     }
     toast.success("Configurações salvas"); refetch();
-    queryClient.invalidateQueries({ queryKey: ["certificado"] });
+    queryClient.invalidateQueries({ queryKey: CERTIFICADO_QUERY_KEY });
   }
 
   return (

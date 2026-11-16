@@ -190,6 +190,8 @@ async function abrir(page, erros, caminho, texto, nome) {
   check('certificado: aviso da cadeia', await painel.getByText('não consegui conferir a emissora').isVisible());
   check('certificado: senha não está no HTML', !(await page.content()).includes('senha-de-teste'));
   check('certificado: sem rolagem lateral em 360', await page.evaluate(() => document.documentElement.scrollWidth <= 360));
+  const caixas = await Promise.all(['Substituir certificado', 'Remover'].map((n) => painel.getByRole('button', { name: n, exact: true }).boundingBox()));
+  check('certificado: botões de ação empilhados e dentro de 360 px', caixas.every((c) => c && c.x >= 0 && c.x + c.width <= 360) && caixas[1].y > caixas[0].y, JSON.stringify(caixas));
   await painel.getByText('Ver histórico').click();
   check('certificado: histórico mostra "Enviado por"', await painel.locator('details li').first().getByText('Enviado por').isVisible());
   await painel.scrollIntoViewIfNeeded();
