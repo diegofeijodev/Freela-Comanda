@@ -334,7 +334,7 @@ export const receberLista = (id: string, atualizar_preco: boolean) => post<Lista
 export const notasRecentes = (limite = 30) => get<Nota[]>('/v1/notas', { limite });
 export const notaExiste = async (chave: string) => (await get<{ existe: boolean }>('/v1/notas/existe', { chave })).existe;
 export const vinculos = (cnpj: string) => get<Vinculo[]>('/v1/vinculos', { cnpj });
-export const lancarNota = (n: unknown) => post<{ id: string; contas: number; a_vista: boolean }>('/v1/notas', n);
+export const lancarNota = (n: unknown) => post<{ id: string; contas: number; a_vista: boolean; insumos_criados: number }>('/v1/notas', n);
 const enviarPdf = async <T>(url: string, f: File) => {
   const fd = new FormData();
   fd.append('arquivo', f, f.name);

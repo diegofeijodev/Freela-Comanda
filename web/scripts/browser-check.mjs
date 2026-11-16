@@ -27,9 +27,10 @@ const XML = `<?xml version="1.0"?><nfeProc xmlns="http://www.portalfiscal.inf.br
 <ide><serie>1</serie><nNF>1234</nNF><dhEmi>2026-10-20T10:00:00-03:00</dhEmi></ide>
 <emit><CNPJ>12345678000199</CNPJ><xNome>FRIGORIFICO SA</xNome></emit>
 <det nItem="1"><prod><cProd>P01</cProd><xProd>PICANHA BOVINA KG</xProd><uCom>kg</uCom><qCom>10.5000</qCom><vUnCom>65.90</vUnCom><vProd>691.95</vProd></prod></det>
-<total><ICMSTot><vNF>691.95</vNF></ICMSTot></total>
-<cobr><dup><nDup>001</nDup><dVenc>2026-11-20</dVenc><vDup>345.98</vDup></dup><dup><nDup>002</nDup><dVenc>2026-12-20</dVenc><vDup>345.97</vDup></dup></cobr>
-<pag><detPag><tPag>15</tPag><vPag>691.95</vPag></detPag></pag></infNFe></NFe></nfeProc>`;
+<det nItem="2"><prod><cProd>P02</cProd><xProd>TAXA DE ENTREGA</xProd><uCom>un</uCom><qCom>1.0000</qCom><vUnCom>10.00</vUnCom><vProd>10.00</vProd></prod></det>
+<total><ICMSTot><vNF>701.95</vNF></ICMSTot></total>
+<cobr><dup><nDup>001</nDup><dVenc>2026-11-20</dVenc><vDup>350.98</vDup></dup><dup><nDup>002</nDup><dVenc>2026-12-20</dVenc><vDup>350.97</vDup></dup></cobr>
+<pag><detPag><tPag>15</tPag><vPag>701.95</vPag></detPag></pag></infNFe></NFe></nfeProc>`;
 const xmlPath = join(tmpdir(), 'nfe-teste-erp.xml');
 writeFileSync(xmlPath, XML);
 
@@ -101,9 +102,22 @@ async function abrir(page, erros, caminho, texto, nome) {
   await page.getByText('2. Dados da nota').waitFor();
   check('XML lido (fornecedor)', (await page.locator('input[value="FRIGORIFICO SA"]').count()) === 1);
   check('insumo sugerido pelo nome', (await page.getByText('sugestão — confira').count()) === 1);
+  // Linha 1 vira insumo novo (nome editado); linha 2 vai a "Cadastrar novo" e volta a "não lançar": não cria nada.
+  const linha1 = page.locator('tbody tr', { hasText: 'PICANHA BOVINA KG' }).first();
+  const linha2 = page.locator('tbody tr', { hasText: 'TAXA DE ENTREGA' }).first();
+  await linha1.getByLabel('Insumo do estoque').selectOption('__novo__');
+  await linha1.getByLabel('Nome do insumo novo').fill('PICANHA NOVA TESTE');
+  await linha2.getByLabel('Insumo do estoque').selectOption('__novo__');
+  check('tag "novo — confira" nas 2 linhas', (await page.getByText('novo — confira').count()) === 2);
+  await page.screenshot({ path: join(SHOTS, 'admin-notas-cadastrar-novo.png'), fullPage: true });
+  await linha2.getByLabel('Insumo do estoque').selectOption('');
+  check('linha 2 sem campos de insumo novo', (await linha2.getByLabel('Nome do insumo novo').count()) === 0);
   await page.getByRole('button', { name: 'Dar entrada' }).click();
   const lancou = await page.getByText('Entrada lançada no estoque e 2 conta(s) a pagar').waitFor({ timeout: 30_000 }).then(() => true, () => false);
   check('nota lançada com 2 parcelas', lancou);
+  check('toast informa 1 insumo cadastrado', (await page.getByText('· 1 insumo(s) cadastrado(s)').count()) === 1);
+  await abrir(page, erros, '/estoque', 'PICANHA NOVA TESTE', 'admin-estoque-insumo-novo');
+  check('"não lançar" não criou insumo', (await page.getByText('TAXA DE ENTREGA').count()) === 0);
   await abrir(page, erros, '/contas', 'NF 1234', 'admin-contas');
   check('parcela 1/2 listada', (await page.getByText('1/2').count()) > 0);
 

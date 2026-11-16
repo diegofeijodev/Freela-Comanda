@@ -20,7 +20,7 @@ const IAS: { id: ProvedorIa; nome: string; exemplo: string; onde: string }[] = [
 ];
 
 /**
- * Configurações → Leitura de PDF por IA: a empresa usa a chave de uma IA que ela já tem (ChatGPT, Gemini ou Claude).
+ * Configurações → Leitura de notas por IA (PDF e foto): a empresa usa a chave de uma IA que ela já tem (ChatGPT, Gemini ou Claude).
  * Salvar = o servidor lê um PDF de teste com a chave e só grava se der certo. A chave nunca volta para a tela.
  */
 export function IaChavePanel() {
@@ -58,9 +58,9 @@ export function IaChavePanel() {
   }
 
   return (
-    <Panel title="Leitura de PDF por IA">
+    <Panel title="Leitura de notas por IA (PDF e foto)">
       <p className="mb-3 text-sm text-muted-foreground">
-        Em Entrada de Notas e Contas a Pagar, a IA lê o PDF da nota ou do DDA e preenche os campos. Use a chave de uma IA que a
+        Em Entrada de Notas e Contas a Pagar, a IA lê o PDF ou a foto da nota (e o PDF do DDA) e preenche os campos. Use a chave de uma IA que a
         empresa já tenha: cada leitura é cobrada na conta dessa IA (alguns centavos).
       </p>
 
