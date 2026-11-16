@@ -10,10 +10,18 @@ import {
   IsString,
   IsUUID,
   MaxLength,
+  MinLength,
   ValidateNested,
 } from 'class-validator';
 import { IsDayString } from '../../../common/validation/is-day.decorator';
 import { FORMAS_PGTO } from '../../leitura-pdf/schemas';
+
+/** Insumo que ainda não existe no estoque: cadastrado dentro do próprio "Dar entrada". */
+export class NovoInsumoDto {
+  @IsString() @MinLength(1) @MaxLength(200) nome!: string;
+  @IsString() @MinLength(1) @MaxLength(20) unidade!: string;
+  @IsOptional() @IsString() @MaxLength(120) subgrupo?: string | null;
+}
 
 export class ItemNotaDto {
   @IsOptional() @IsString() @MaxLength(120) codigo?: string | null;
@@ -22,6 +30,7 @@ export class ItemNotaDto {
   @IsNumber() quantidade!: number;
   @IsNumber() valor_unitario!: number;
   @IsOptional() @IsUUID() item_estoque_id?: string | null;
+  @IsOptional() @ValidateNested() @Type(() => NovoInsumoDto) novo_insumo?: NovoInsumoDto | null;
   @IsOptional() @IsNumber() fator?: number;
 }
 
@@ -41,7 +50,7 @@ export class LancarNotaDto {
   @IsDayString() data_entrada!: string;
   @IsNumber() valor_total!: number;
   @IsIn([...FORMAS_PGTO]) forma_pagamento!: (typeof FORMAS_PGTO)[number];
-  @IsIn(['xml', 'pdf']) origem!: 'xml' | 'pdf';
+  @IsIn(['xml', 'pdf', 'foto']) origem!: 'xml' | 'pdf' | 'foto';
   @IsBoolean() atualizar_preco!: boolean;
 
   @IsArray()

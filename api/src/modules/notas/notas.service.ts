@@ -1,4 +1,6 @@
 import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
+import { normalizaNome } from '../../common/parse/normaliza';
 import { PrismaService } from '../../common/database/prisma.service';
 import { dayToDb } from '../../common/time/dates';
 import type { LancarNotaDto } from './dto/notas.dto';
@@ -34,6 +36,12 @@ export class NotasService {
     if (!aVista && (!dto.parcelas.length || dto.parcelas.some((p) => !p.vencimento))) {
       throw new BadRequestException({ code: 'VALIDATION_ERROR', message: 'Informe o vencimento de cada parcela' });
     }
+    if (dto.itens.some((l) => l.item_estoque_id && l.novo_insumo)) {
+      throw new BadRequestException({
+        code: 'VALIDATION_ERROR',
+        message: 'Escolha um insumo existente ou cadastre um novo, não os dois',
+      });
+    }
     const chave = dto.chave?.trim() || null;
     if (chave && (await this.prisma.notas_entrada.findUnique({ where: { chave }, select: { id: true } }))) {
       throw new ConflictException({ code: 'DUPLICADO', message: 'Esta nota já foi lançada' });
@@ -60,6 +68,7 @@ export class NotasService {
           },
           select: { id: true },
         });
+        const { ids: insumoIds, criados: insumosCriados } = await this.resolverNovosInsumos(tx, dto);
         await tx.notas_entrada_itens.createMany({
           data: dto.itens.map((l, k) => ({
             nota_id: nota.id,
@@ -69,7 +78,7 @@ export class NotasService {
             quantidade: l.quantidade,
             valor_unitario: l.valor_unitario,
             valor_total: l.quantidade * l.valor_unitario,
-            item_estoque_id: l.item_estoque_id || null,
+            item_estoque_id: l.item_estoque_id || (l.novo_insumo ? insumoIds.get(normalizaNome(l.novo_insumo.nome)) : null) || null,
             fator: l.fator || 1,
             ordem: k,
           })),
@@ -107,9 +116,57 @@ export class NotasService {
         if (cnpj && !(await tx.fornecedores.findFirst({ where: { cnpj }, select: { id: true } }))) {
           await tx.fornecedores.createMany({ data: [{ nome: dto.fornecedor_nome, cnpj }], skipDuplicates: true });
         }
-        return { id: nota.id, contas: aVista ? 0 : contas.length, a_vista: aVista };
+        return { id: nota.id, contas: aVista ? 0 : contas.length, a_vista: aVista, insumos_criados: insumosCriados };
       },
       { timeout: 60_000, maxWait: 10_000 },
     );
+  }
+
+  /**
+   * Cadastra, dentro da transação da nota, os insumos novos pedidos nas linhas. Nome já existente (comparado sem caixa/acento)
+   * é reaproveitado (e reativado); a mesma linha repetida na nota cria um só. O preço do insumo recém-criado vale já na criação.
+   */
+  private async resolverNovosInsumos(tx: Prisma.TransactionClient, dto: LancarNotaDto) {
+    const ids = new Map<string, string>();
+    let criados = 0;
+    const novos = dto.itens.filter((l) => l.novo_insumo);
+    if (!novos.length) return { ids, criados };
+    const existentes = await tx.itens_estoque.findMany({ select: { id: true, nome: true, ativo: true } });
+    const porNome = new Map(existentes.map((e) => [normalizaNome(e.nome), e]));
+    const subgrupos = new Map((await tx.subgrupos.findMany({ select: { nome: true } })).map((s) => [normalizaNome(s.nome), s.nome]));
+    for (const l of novos) {
+      const ni = l.novo_insumo!;
+      const chave = normalizaNome(ni.nome);
+      if (!chave || ids.has(chave)) continue;
+      const achado = porNome.get(chave);
+      if (achado) {
+        if (!achado.ativo) await tx.itens_estoque.update({ where: { id: achado.id }, data: { ativo: true } });
+        ids.set(chave, achado.id);
+        continue;
+      }
+      const fator = l.fator || 1;
+      const subgrupo = ni.subgrupo ? subgrupos.get(normalizaNome(ni.subgrupo)) : undefined;
+      try {
+        const novo = await tx.itens_estoque.create({
+          data: {
+            nome: ni.nome.trim(),
+            unidade: ni.unidade.trim().toUpperCase(),
+            ...(subgrupo ? { subgrupo } : {}),
+            preco_unitario: l.valor_unitario / fator,
+            fornecedor: dto.fornecedor_nome,
+            ...(fator > 1 ? { qtd_por_embalagem: fator, embalagem_compra: l.unidade?.trim().toUpperCase() || null } : {}),
+          },
+          select: { id: true },
+        });
+        ids.set(chave, novo.id);
+        criados++;
+      } catch (e) {
+        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+          throw new ConflictException({ code: 'DUPLICADO', message: 'Já existe um insumo com este nome' });
+        }
+        throw e;
+      }
+    }
+    return { ids, criados };
   }
 }

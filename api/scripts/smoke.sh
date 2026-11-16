@@ -179,6 +179,35 @@ NOTA3=$(echo "$NOTA" | sed "s/$CH/35261012345678000199550010000099971000099997/;
 req POST /v1/notas "$ADM" "$NOTA3"; check "boleto sem parcelas" "Informe o vencimento de cada parcela" "$(j .error.message)"
 req GET /v1/notas "$ADM"; check "notas lançadas" 2 "$(j length)"
 
+# nota por foto: "Dar entrada" cadastra o insumo que faltar
+nota_foto() { # $1=chave $2=itens(json) $3=forma $4=parcelas(json)
+  jq -nc --arg ch "$1" --argjson it "$2" --arg fp "${3:-pix}" --argjson pa "${4:-[]}" --arg d "$HOJE" \
+    '{chave:$ch,numero:"7001",fornecedor_nome:"Laticínios Smoke",data_entrada:$d,valor_total:178,forma_pagamento:$fp,origem:"foto",atualizar_preco:false,itens:$it,parcelas:$pa}'
+}
+NI='[{"descricao":"REQUEIJAO CX","unidade":"CX","quantidade":2,"valor_unitario":89,"fator":12,"novo_insumo":{"nome":"Requeijão Smoke","unidade":"un","subgrupo":"frios, laticinios e ovos"}}]'
+req POST /v1/notas "$ADM" "$(nota_foto 35261012345678000199550010000070011000070011 "$NI")"; check "nota por foto" 201 "$CODE"; check "insumo criado" 1 "$(j .insumos_criados)"
+check "insumo novo: unidade em maiúsculas" UN "$(sql "select unidade from itens_estoque where nome='Requeijão Smoke'")"
+check "insumo novo: preço por unidade" 7.4167 "$(sql "select round(preco_unitario,4)::float from itens_estoque where nome='Requeijão Smoke'")"
+check "insumo novo: unidades por embalagem" 12 "$(sql "select qtd_por_embalagem::int from itens_estoque where nome='Requeijão Smoke'")"
+check "insumo novo: fornecedor" "Laticínios Smoke" "$(sql "select fornecedor from itens_estoque where nome='Requeijão Smoke'")"
+check "insumo novo: subgrupo (nome gravado como na tabela)" "Frios, Laticínios e Ovos" "$(sql "select subgrupo from itens_estoque where nome='Requeijão Smoke'")"
+check "insumo novo: entrada no estoque" 24 "$(sql "select m.quantidade::float from movimentacoes m join itens_estoque i on i.id=m.item_estoque_id where i.nome='Requeijão Smoke'")"
+NI2='[{"descricao":"REQUEIJAO CX","unidade":"CX","quantidade":1,"valor_unitario":89,"fator":12,"novo_insumo":{"nome":"REQUEIJAO SMOKE","unidade":"un"}}]'
+req POST /v1/notas "$ADM" "$(nota_foto 35261012345678000199550010000070021000070021 "$NI2")"; check "insumo repetido pelo nome (outra caixa)" 0 "$(j .insumos_criados)"
+check "insumo não duplicou" 1 "$(sql "select count(*) from itens_estoque where lower(nome)='requeijão smoke'")"
+NI3='[{"descricao":"A","quantidade":1,"valor_unitario":5,"novo_insumo":{"nome":"Nata Smoke","unidade":"kg"}},{"descricao":"B","quantidade":1,"valor_unitario":5,"novo_insumo":{"nome":"  NATA  smoke ","unidade":"kg"}}]'
+req POST /v1/notas "$ADM" "$(nota_foto 35261012345678000199550010000070031000070031 "$NI3")"; check "mesmo nome em duas linhas" 1 "$(j .insumos_criados)"
+check "mesmo nome em duas linhas: 1 insumo" 1 "$(sql "select count(*) from itens_estoque where nome ilike 'nata%smoke%'")"
+NI4=$(echo "$NI" | jq -c ".[0].item_estoque_id=\"$(sql "select id from itens_estoque where nome='Picanha'")\"")
+req POST /v1/notas "$ADM" "$(nota_foto 35261012345678000199550010000070041000070041 "$NI4")"; check "existente + novo na mesma linha" 400 "$CODE"
+check "existente + novo: mensagem" "Escolha um insumo existente ou cadastre um novo, não os dois" "$(j .error.message)"
+NI5='[{"descricao":"Z","quantidade":1,"valor_unitario":5,"novo_insumo":{"nome":"Nao Deve Existir","unidade":"un"}}]'
+req POST /v1/notas "$ADM" "$(nota_foto 35261012345678000199550010000070051000070051 "$NI5" boleto)"; check "a prazo sem parcelas" 400 "$CODE"
+check "nada criado se a nota falha" 0 "$(sql "select count(*) from itens_estoque where nome='Nao Deve Existir'")"
+NI6='[{"descricao":"Y","quantidade":1,"valor_unitario":5,"novo_insumo":{"nome":"Smoke Sem Grupo","unidade":"un","subgrupo":"Grupo Inventado"}}]'
+req POST /v1/notas "$ADM" "$(nota_foto 35261012345678000199550010000070061000070061 "$NI6")"; check "subgrupo inexistente: nota" 201 "$CODE"
+check "subgrupo inexistente cai no padrão" Mercearia "$(sql "select subgrupo from itens_estoque where nome='Smoke Sem Grupo'")"
+
 # ---------- contas a pagar / DRE / caixa
 req GET /v1/plano-contas?ativo=true "$ADM"; PL=$(echo "$BODY" | jq -r '.[] | select(.conta=="ALUGUEL") | .id')
 req GET /v1/centros-custo?ativo=true "$ADM"; CC=$(j '.[0].id')
