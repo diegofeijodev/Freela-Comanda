@@ -128,3 +128,39 @@ status. `DELETE /v1/ia-chave` (admin) → status (volta para a chave do servidor
 — uma transação com as regras da tela do protótipo (insumos: upsert pelo nome; fichas: upsert do cabeçalho, troca dos ingredientes, `recalcular_baixas`;
 vendas: de-para novo, soma de linhas repetidas, "Substituir" apaga o período, repetidas ignoradas, linha com data inválida fica de fora)
 · `GET /v1/de-para` · `PUT /v1/de-para { produto_relatorio, item_cardapio_id|null }` → `{ vendas }` (o gatilho refaz as baixas).
+
+## §15 Certificado digital A1 (admin)
+
+Só admin (`@AdminOnly()`): **a loja não alcança nenhuma destas rotas** (nem a lista da loja em `permissoes-protecao.spec.ts` mudou). Nenhuma chama a SEFAZ.
+O arquivo `.pfx` e a senha entram só no `PUT` e **nunca** voltam, nem em log, erro ou Swagger; o servidor guarda chave PKCS#8, certificado e cadeia
+cifrados (AES-256-GCM, segredo `CERTIFICADO_SECRET`) e descarta o `.pfx` e a senha. Não existe rota para baixar o certificado.
+
+`GET /v1/certificado-digital` → `{ situacao, titular, cnpj, cnpj_confere, tipo, politica_oid, emissor, valido_de, valido_ate, dias_restantes, cadeia_conferida, enviado_em, enviado_por_nome, historico[] }`.
+- `situacao`, por precedência: `sem_segredo` (servidor sem `CERTIFICADO_SECRET`) > `ausente` (sem certificado) > `ilegivel` (não decifra: segredo trocado ou perdido) > `vencido` > `vencendo` (30 dias ou menos) > `valido`.
+  `dias_restantes`, `situacao` e `cnpj_confere` (`igual | mesma_raiz | diferente | empresa_sem_cnpj`) são calculados na leitura, com o CNPJ atual de Configurações. `tipo`: `A1 | SE-S | outro`.
+- `ausente` e `sem_segredo` trazem os demais campos `null`. `historico` = os últimos eventos, mais novos primeiro: `{ evento: enviado|substituido|removido, feito_por_nome, feito_em, valido_ate, cnpj, titular }` (nunca material).
+
+`PUT /v1/certificado-digital` — JSON `{ arquivo_base64, senha }` (não é multipart; base64 de até 90.000 caracteres ≈ 64 KB; senha de 1 a 128). Confere tudo antes de guardar e só então troca o
+certificado atual; falhou = nada muda. Devolve o corpo do GET. Recusas são 400 `{ error: { code, message } }` com frase fixa (nunca texto de biblioteca):
+
+| code | Quando |
+|---|---|
+| `CERTIFICADO_ARQUIVO` | não parece um .pfx/.p12 (ou .pfx sem bloco de MAC, ou com mais de 20 certificados) |
+| `CERTIFICADO_SENHA` | senha incorreta (o MAC não confere; senha com acento é tentada nas duas codificações) |
+| `CERTIFICADO_FORMATO` | não abriu por outro motivo (inclui erro inesperado) |
+| `CERTIFICADO_SEM_CHAVE` | sem chave privada (A3, token) |
+| `CERTIFICADO_VENCIDO` / `CERTIFICADO_AINDA_NAO_VALE` | fora da validade |
+| `CERTIFICADO_SEM_CNPJ` | não é de empresa (sem CNPJ) |
+| `EMPRESA_SEM_CNPJ` | falta o CNPJ em Configurações → Empresa |
+| `CERTIFICADO_OUTRO_CNPJ` | raiz do CNPJ diferente da empresa (mesma raiz, outro estabelecimento, passa com aviso) |
+| `CERTIFICADO_NAO_ICP` | sem sinal de ICP-Brasil |
+| `CERTIFICADO_CADEIA` | assinatura da cadeia falha com chave legível (adulterado) |
+
+Cadeia: emissor vencido, sem marca de AC ou com chave ilegível = cadeia **não conferida**: aceito, `cadeia_conferida = false` e aviso no painel. Corpo de validação do DTO: 400 com a frase do campo.
+503 `CERTIFICADO_SEM_SEGREDO` "O servidor ainda não está pronto para guardar certificados. Fale com o suporte do Freela Comanda." quando falta `CERTIFICADO_SECRET`.
+Enviar e remover usam trava consultiva de transação (dois admins ao mesmo tempo não se atropelam) e gravam o histórico na mesma transação.
+
+`DELETE /v1/certificado-digital` → apaga o certificado, grava `removido` no histórico e devolve o corpo do GET (`ausente`). Funciona mesmo sem `CERTIFICADO_SECRET`; sem certificado, não faz nada.
+
+**Porta interna** (sem rota): `CERTIFICADO_DIGITAL` (`certificado-digital.port.ts`), `emUso()` devolve `{ chavePrivada (KeyObject), certificado, cadeia, cnpj, validoAte, impressaoDigital }`,
+decifrando a cada chamada. Erros `CertificadoErro`: 503 `CERTIFICADO_NAO_CADASTRADO` / `CERTIFICADO_ILEGIVEL`; 422 `CERTIFICADO_VENCIDO` / `CERTIFICADO_OUTRO_CNPJ`. É o único caminho até a chave, para SEFAZ e NFC-e.

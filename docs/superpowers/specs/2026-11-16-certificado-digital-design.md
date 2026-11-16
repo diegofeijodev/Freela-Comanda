@@ -48,7 +48,9 @@ basicConstraints e nameConstraints no `verifyCertificateChain`, Ed25519, AES-GCM
   devolver DER, `pki.certificateToAsn1`, `pki.privateKeyToAsn1` e `pki.wrapRsaPrivateKey`. Não chama `certificateFromAsn1`, que só aceita
   chave RSA: SAN e políticas saem do ASN.1 de `x509.raw`.
 - Nada de `verify`, `verifyCertificateChain`, `pem.decode` de entrada, TLS ou http do forge.
+  - *alterado na implementação em 16/11/2026: o adaptador também usa as primitivas `pkcs12.generateKey`, `md.*` (sha1/256/384/512/md5) e `util.createBuffer` para conferir o MAC do .pfx por conta própria, antes de decifrar; a lista de funções do forge permitidas inclui essas.*
 - Entrada limitada a 64 KB, rota só de admin.
+  - *alterado na implementação em 16/11/2026: o adaptador recusa como arquivo inválido (`CERTIFICADO_ARQUIVO`) o .pfx sem bloco de MAC e o .pfx com mais de 20 certificados; o MAC tem teto de 1.000.000 de iterações.*
 - Novo alerta = subir a versão exata e rodar `npm audit` no PR.
 
 ## Como (decisões do construtor, marcadas como minhas)
@@ -57,6 +59,7 @@ basicConstraints e nameConstraints no `verifyCertificateChain`, Ed25519, AES-GCM
 - `cripto.ts` sai de `leitura-pdf/ia/` para `api/src/common/cripto/`, com o rótulo do HKDF como parâmetro. A IA mantém `erp-freela/ia-chave/v1`
   (a chave salva segue legível); o certificado usa `erp-freela/certificado-a1/v1`.
 - Segredo **próprio** `CERTIFICADO_SECRET` (≥ 32, `openssl rand -hex 32` no servidor), **sem cair no `JWT_SECRET`**: trocar o JWT após vazamento
+  - *alterado na implementação em 16/11/2026: sem `CERTIFICADO_SECRET`: enviar = 503 `CERTIFICADO_SEM_SEGREDO`, consultar = situação `sem_segredo`, e remover funciona.*
   de sessão não pode derrubar a emissão fiscal. Vai em `env.validation.ts` (opcional; ausente = `sem_segredo` e PUT 503), no compose de produção
   e no `.env.prod.example`. O dono o acrescenta ao `.env` antes de usar (script em `~/erp-deploy/` que só acrescenta se faltar).
 - Segredo trocado ou perdido → o GCM não confere → `ilegivel` → enviar o .pfx de novo. O Prisma põe argumentos na mensagem de erro, por isso só
@@ -84,10 +87,12 @@ basicConstraints e nameConstraints no `verifyCertificateChain`, Ed25519, AES-GCM
   `dias_restantes` e `cnpj_confere` são calculados na leitura (`todaySp()` + CNPJ atual de `configuracoes`, que pode mudar). O GET tenta
   decifrar só para classificar `ilegivel`.
 - `PUT` com JSON `{ arquivo_base64, senha }` (minha: o arquivo tem poucos KB e o DTO global valida; base64 ≤ 90.000 caracteres ≈ 64 KB, senha
+  - *alterado na implementação em 16/11/2026: confirmado: o envio é JSON com o arquivo em base64 e a senha. Enviar e remover usam trava consultiva de transação; no erro inesperado o log registra só a classe do erro e os quadros da pilha.*
   1–128). Confere, guarda e devolve o corpo do GET. `DELETE` apaga a linha, grava o histórico e devolve `ausente`.
 
 **Conferências no envio** (funções puras, `agora` injetado, na ordem da tabela de mensagens)
 - **Desembrulhar:** forge abre com a senha; a chave vem de `bag.key` ou, se o forge não conhece o tipo, de `bag.asn1` (ele devolve o PKCS#8 cru),
+  - *alterado na implementação em 16/11/2026: senha com caractere fora do ASCII é tentada nas duas codificações (como veio e como bytes UTF-8), sempre depois de o MAC conferir; senha só ASCII tem uma tentativa.*
   e vira `createPrivateKey({ format: 'der', type: 'pkcs8' })`. Os certificados vão em DER para `X509Certificate` (`bag.cert` reserializado, ou
   `bag.asn1` quando a chave não é RSA). Conferido nas fixtures: o SHA-256 desse DER é igual ao do `openssl x509 -fingerprint`. Se divergir com
   um certificado real, os bytes saem do `certValue` do bag. A folha é o certificado que não é AC, e `checkPrivateKey` confere o par.
@@ -151,12 +156,14 @@ basicConstraints e nameConstraints no `verifyCertificateChain`, Ed25519, AES-GCM
     qualquer candidato, de qualquer das duas fontes, que `verify(candidato.publicKey)` confirma, válido em `agora` e com `ca === true`. Repete
     até uma âncora, com no máximo 5 níveis. Não uso `checkIssued` para achar o emissor: ele também compara AKI/SKI e devolve `false` na cadeia
     adulterada (conferido), o que mandaria a fraude para o aviso em vez da recusa.
+    - *alterado na implementação em 16/11/2026: a busca tem profundidade máxima de 8 níveis, não 5.*
   - **Resultado:**
     - Fecha → `cadeia_conferida = true`.
     - Recusa `CERTIFICADO_CADEIA` só quando há no **.pfx** um emissor com o mesmo nome e nenhum candidato, de nenhuma das duas fontes, confirma.
       Um candidato do pacote que falha, sozinho, não recusa ninguém, porque o pacote pode estar velho.
     - Não fecha por outro motivo (AC mais nova que o pacote, v7) → aceita com `cadeia_conferida = false` e aviso âmbar no painel. Mas só se a
       folha tiver sinal de ICP (emissor com `O=ICP-Brasil` ou política `2.16.76.1.2.*`); sem nenhum → recusa `CERTIFICADO_NAO_ICP`.
+      *alterado na implementação em 16/11/2026: só assinatura que falha com chave legível é tratada como adulteração (`CERTIFICADO_CADEIA`); emissor vencido, sem marca de AC ou com chave ilegível = cadeia não conferida (aceito com aviso).*
     - Motivo do aceite com aviso: quem envia é o admin da própria empresa, a conferência que vale é a da SEFAZ (projeto 3), e recusar
       travaria o cadastro até um técnico atualizar o pacote.
 

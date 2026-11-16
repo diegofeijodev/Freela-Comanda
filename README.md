@@ -50,6 +50,12 @@ Na máquina do dono, sempre pelo teto de memória (`scripts/run-capped.sh`, ver 
 - **Nota por foto:** a leitura de foto real pela IA não é coberta por teste (nenhum teste faz rede). Depois de subir, fotografe uma nota de verdade
   em Entrada de Notas e confira itens, insumos indicados e sugestões de insumo novo.
 - Os leitores do ChatGPT e do Gemini nunca rodaram contra a API real; confira cada um com uma chave de verdade antes de depender dele.
+- **Certificado digital A1 (Configurações):**
+  - Criar `CERTIFICADO_SECRET` (32+ caracteres aleatórios) no `.env` do servidor ANTES do primeiro envio (`bash ~/erp-deploy/segredo-certificado.sh` faz isso) e guardar esse valor em lugar seguro: se ele mudar ou se perder, o certificado guardado fica ilegível e precisa ser enviado de novo.
+  - A tela do certificado e a faixa de aviso nunca foram abertas num navegador (a conferência automática não rodou por falta de memória na máquina de desenvolvimento): conferir no navegador antes de usar.
+  - Abrir o painel num Chrome com a senha de login salva e ver se o campo da senha do certificado vem preenchido sozinho (se vier, avisar: há correção prevista). Nunca aceitar quando o navegador oferecer salvar a senha do certificado.
+  - Nenhum e-CNPJ real foi testado (os testes usam certificados de teste fictícios): o primeiro envio do certificado verdadeiro é o teste real. Se for recusado, anotar a mensagem exata e olhar `cadeia_conferida` depois de aceito.
+  - O pacote de autoridades certificadoras do ITI embutido é de 16/11/2026 e envelhece: `api/scripts/atualizar-cadeia-icp.sh` o renova.
 
 ## Migração dos dados (pendente)
 
