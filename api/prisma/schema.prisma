@@ -38,6 +38,42 @@ model ia_chave {
   atualizado_por String?  @db.Uuid
 }
 
+/// Certificado digital A1 da empresa (uma linha, id = 1). `material_cifrado` = o .pfx + a senha, CIFRADOS (AES-256-GCM); nunca sai do servidor.
+/// As demais colunas são só os dados públicos do certificado, mostrados na tela de Configurações.
+model certificado_digital {
+  id                Int      @id @default(1)
+  material_cifrado  String
+  titular           String
+  cnpj              String   @db.Char(14)
+  tipo              String
+  politica_oid      String?
+  emissor           String
+  numero_serie      String
+  impressao_digital String   @db.Char(64)
+  valido_de         DateTime @db.Timestamptz(6)
+  valido_ate        DateTime @db.Timestamptz(6)
+  cadeia_conferida  Boolean
+  enviado_em        DateTime @default(now()) @db.Timestamptz(6)
+  enviado_por       String?  @db.Uuid
+  enviado_por_nome  String
+}
+
+/// Trilha de quem enviou, substituiu ou removeu o certificado. Guarda só dados públicos (nunca o material cifrado).
+model certificado_digital_historico {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  evento            String
+  cnpj              String   @db.Char(14)
+  titular           String
+  numero_serie      String
+  impressao_digital String   @db.Char(64)
+  valido_ate        DateTime @db.Timestamptz(6)
+  feito_por         String?  @db.Uuid
+  feito_por_nome    String
+  feito_em          DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([feito_em(sort: Desc)])
+}
+
 model configuracoes {
   id                    Int     @id @default(1)
   nome_unidade          String  @default("Chopp & Espeto Valinhos")

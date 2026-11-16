@@ -2,10 +2,10 @@
 import { BadRequestException } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 import type { PrismaService } from '../../../common/database/prisma.service';
-import { cifrar, decifrar, dicaDa } from '../ia/cripto';
+import { cifrar, decifrar } from '../../../common/cripto/cripto';
 import { GeminiLeitorPdf, paraSchemaGemini } from '../ia/gemini-leitor-pdf';
 import type { HttpIa } from '../ia/http-ia';
-import { IaChaveService, LeitorPorIa } from '../ia/ia-chave.service';
+import { dicaDa, IaChaveService, LeitorPorIa, ROTULO_IA_CHAVE } from '../ia/ia-chave.service';
 import { OpenAiLeitorPdf } from '../ia/openai-leitor-pdf';
 import { pdfDeTeste, SCHEMA_TESTE } from '../ia/pdf-teste';
 import { MSG, type PedidoLeitura } from '../leitor-pdf.port';
@@ -37,14 +37,14 @@ const geminiOk = (conteudo: unknown, finish = 'STOP') => ({
 
 describe('cifra da chave de IA', () => {
   it('ida e volta; segredo errado ou conteúdo mexido = null; a dica só mostra o fim', () => {
-    const c = cifrar(CHAVE_OPENAI, SEGREDO);
+    const c = cifrar(CHAVE_OPENAI, SEGREDO, ROTULO_IA_CHAVE);
     expect(c).not.toContain('abcdefghij');
-    expect(c).not.toBe(cifrar(CHAVE_OPENAI, SEGREDO)); // iv novo a cada vez
-    expect(decifrar(c, SEGREDO)).toBe(CHAVE_OPENAI);
-    expect(decifrar(c, 'outro-segredo-com-mais-de-16-xx')).toBeNull();
+    expect(c).not.toBe(cifrar(CHAVE_OPENAI, SEGREDO, ROTULO_IA_CHAVE)); // iv novo a cada vez
+    expect(decifrar(c, SEGREDO, ROTULO_IA_CHAVE)).toBe(CHAVE_OPENAI);
+    expect(decifrar(c, 'outro-segredo-com-mais-de-16-xx', ROTULO_IA_CHAVE)).toBeNull();
     const [v, iv, tag, ct] = c.split('.');
-    expect(decifrar([v, iv, tag, `A${ct!.slice(1)}`].join('.'), SEGREDO)).toBeNull();
-    expect(decifrar('lixo', SEGREDO)).toBeNull();
+    expect(decifrar([v, iv, tag, `A${ct!.slice(1)}`].join('.'), SEGREDO, ROTULO_IA_CHAVE)).toBeNull();
+    expect(decifrar('lixo', SEGREDO, ROTULO_IA_CHAVE)).toBeNull();
     expect(dicaDa(CHAVE_OPENAI)).toBe('••••1234');
   });
 });
@@ -215,7 +215,7 @@ describe('chave de IA da empresa', () => {
   it('IA_CHAVES_SECRET, quando existe, manda na cifra (não o JWT_SECRET)', async () => {
     const { svc, linha } = montar({ ...ENV, IA_CHAVES_SECRET: 'segredo-proprio-da-cifra-1234' }, openaiOk({ texto: 'x', numero: null }));
     await svc.salvar('openai', CHAVE_OPENAI, 'u1');
-    expect(decifrar(linha()!.chave_cifrada, 'segredo-proprio-da-cifra-1234')).toBe(CHAVE_OPENAI);
-    expect(decifrar(linha()!.chave_cifrada, SEGREDO)).toBeNull();
+    expect(decifrar(linha()!.chave_cifrada, 'segredo-proprio-da-cifra-1234', ROTULO_IA_CHAVE)).toBe(CHAVE_OPENAI);
+    expect(decifrar(linha()!.chave_cifrada, SEGREDO, ROTULO_IA_CHAVE)).toBeNull();
   });
 });

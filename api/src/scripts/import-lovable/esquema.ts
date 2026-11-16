@@ -251,8 +251,8 @@ export const TABELAS: readonly Tabela[] = [
 /** Tabelas de contas do Lovable que viram a nossa `users` (com `auth.users`); não são carregadas como tabela. */
 export const TABELAS_DE_CONTAS = ['profiles', 'user_roles'] as const;
 export const COLUNAS_USERS = ['id', 'email', 'nome', 'password_hash', 'perfil', 'created_at'] as const;
-/** Tabelas que só existem no nosso banco (fora da comparação com o Lovable). `ia_chave` = chave de IA da tela de Configurações (12/11). */
-export const TABELAS_SO_NOSSAS = ['users', '_prisma_migrations', 'ia_chave'] as const;
+/** Tabelas que só existem no nosso banco (fora da comparação com o Lovable). `ia_chave` = chave de IA da tela de Configurações (12/11); `certificado_digital*` = certificado A1 (16/11). */
+export const TABELAS_SO_NOSSAS = ['users', '_prisma_migrations', 'ia_chave', 'certificado_digital', 'certificado_digital_historico'] as const;
 
 /** A migração `regras` semeia estas três; a carga aceita exatamente esses seeds e os SUBSTITUI pelos do Lovable. */
 export const TABELAS_COM_SEED = ['configuracoes', 'sazonalidade', 'subgrupos'] as const;

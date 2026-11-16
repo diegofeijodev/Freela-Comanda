@@ -8,3 +8,6 @@ uploads/
 .prototype/
 *.tsbuildinfo
 .vercel/
+*.pfx
+*.p12
+!api/src/modules/certificado-digital/__tests__/fixtures/*

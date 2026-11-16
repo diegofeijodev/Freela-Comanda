@@ -1,13 +1,19 @@
 import { BadRequestException, Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { cifrar, decifrar } from '../../../common/cripto/cripto';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { ClaudeLeitorPdf } from '../claude-leitor-pdf';
 import { LeitorPdf, LeituraPdfErro, MSG } from '../leitor-pdf.port';
-import { cifrar, decifrar, dicaDa } from './cripto';
 import { GeminiLeitorPdf } from './gemini-leitor-pdf';
 import { HTTP_IA, HttpIa } from './http-ia';
 import { OpenAiLeitorPdf } from './openai-leitor-pdf';
 import { pdfDeTeste, SCHEMA_TESTE } from './pdf-teste';
+
+/** Rótulo do HKDF da chave de IA: NÃO mudar (uma chave já gravada deixaria de abrir). */
+export const ROTULO_IA_CHAVE = 'erp-freela/ia-chave/v1';
+
+/** `••••` + 4 últimos caracteres: a única parte da chave que sai do servidor. */
+export const dicaDa = (chave: string) => `••••${chave.slice(-4)}`;
 
 export const PROVEDORES = {
   anthropic: 'Claude (Anthropic)',
@@ -83,7 +89,7 @@ export class IaChaveService {
   async resolver(): Promise<{ provedor: Provedor; chave: string } | null> {
     const r = await this.prisma.ia_chave.findUnique({ where: { id: 1 } });
     if (r) {
-      const chave = decifrar(r.chave_cifrada, this.segredo());
+      const chave = decifrar(r.chave_cifrada, this.segredo(), ROTULO_IA_CHAVE);
       if (!chave || !LISTA_PROVEDORES.includes(r.provedor as Provedor)) {
         this.logger.error('a chave de IA salva não pôde ser decifrada (o segredo do servidor mudou?)');
         throw new LeituraPdfErro(MSG.chaveIlegivel, 503, 'PDF_CHAVE_ILEGIVEL');
@@ -115,7 +121,7 @@ export class IaChaveService {
   async salvar(p: Provedor, chave: string, quem: string): Promise<StatusIa> {
     const limpa = chave.trim();
     await this.testar(p, limpa);
-    const dados = { provedor: p, chave_cifrada: cifrar(limpa, this.segredo()), dica: dicaDa(limpa), atualizado_em: new Date(), atualizado_por: quem };
+    const dados = { provedor: p, chave_cifrada: cifrar(limpa, this.segredo(), ROTULO_IA_CHAVE), dica: dicaDa(limpa), atualizado_em: new Date(), atualizado_por: quem };
     await this.prisma.ia_chave.upsert({ where: { id: 1 }, create: { id: 1, ...dados }, update: dados });
     this.logger.log(`chave de IA salva: ${p} ${dicaDa(limpa)}`);
     return this.status();

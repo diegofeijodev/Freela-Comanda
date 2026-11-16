@@ -20,6 +20,9 @@ const envSchema = z.object({
   /** Vazio = deriva do JWT_SECRET (rótulo próprio no HKDF). Trocar o segredo usado obriga a cadastrar a chave de IA de novo. */
   IA_CHAVES_SECRET: z.preprocess(vazioComoAusente, z.string().min(16).optional()),
 
+  /** Cifra do certificado digital A1 (HKDF próprio, sem cair no JWT_SECRET). Vazia = recurso desligado. `openssl rand -hex 32` NO servidor. */
+  CERTIFICADO_SECRET: z.preprocess(vazioComoAusente, z.string().min(32).optional()),
+
   SWAGGER_ENABLED: z.string().optional(),
 
   /**
