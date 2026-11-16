@@ -1,3 +1,4 @@
+import { X509Certificate, createPrivateKey } from 'node:crypto';
 import { BadRequestException, Inject, Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Prisma } from '@prisma/client';
@@ -6,7 +7,8 @@ import { PrismaService } from '../../common/database/prisma.service';
 import { CADEIA_ICP, type CadeiaIcp } from './cadeia';
 import { compararCnpj } from './cnpj';
 import { conferirCertificado } from './conferencia';
-import { CertificadoRecusado, MSG_CERTIFICADO } from './mensagens';
+import { CertificadoErro, type CertificadoDigitalPort, type CertificadoEmUso, MSG_USO } from './certificado-digital.port';
+import { CertificadoRecusado, MSG_CERTIFICADO, msgOutroCnpj } from './mensagens';
 import { type CertificadoStatus, diasRestantes, type ItemHistorico, situacaoDe } from './situacao';
 
 /** Rótulo do HKDF do certificado: NÃO mudar (um certificado já gravado deixaria de abrir). */
@@ -22,6 +24,7 @@ function rastroSeguro(e: unknown): string {
   if (!(e instanceof Error)) return 'erro desconhecido';
   const pilha = e.stack ?? '';
   const i = e.message ? pilha.indexOf(e.message) : -1;
+  if (e.message && i < 0) return e.name; // posição da mensagem não achada: nenhum pedaço da pilha (pode ter dado sensível)
   const depoisDaMensagem = i >= 0 ? pilha.slice(i + e.message.length) : pilha; // mensagem de várias linhas também fica de fora
   const quadros = depoisDaMensagem.split('\n').filter((l) => /^\s+at /.test(l));
   return `${e.name}${quadros.length ? ` | ${quadros.join(' | ')}` : ''}`;
@@ -33,7 +36,7 @@ type Quem = { id: string; nome: string };
  * CIFRADOS na tabela `certificado_digital` (uma linha) e registra quem fez o quê. A senha e o arquivo original não são gravados.
  */
 @Injectable()
-export class CertificadoDigitalService {
+export class CertificadoDigitalService implements CertificadoDigitalPort {
   private readonly logger = new Logger(CertificadoDigitalService.name);
 
   constructor(
@@ -204,6 +207,37 @@ export class CertificadoDigitalService {
     });
     if (removido) this.logger.log(`certificado removido: ${removido}`);
     return this.status(agora);
+  }
+
+  /** Porta para SEFAZ/NFC-e: decifra a cada chamada (sem cache). Nada daqui vai para log nem para mensagem de erro. */
+  async emUso(agora: Date = new Date()): Promise<CertificadoEmUso> {
+    const linha = await this.prisma.certificado_digital.findUnique({ where: { id: 1 } });
+    if (!linha) throw new CertificadoErro(MSG_USO.naoCadastrado, 503, 'CERTIFICADO_NAO_CADASTRADO');
+    const temSegredo = this.segredo().length > 0;
+    const texto = temSegredo ? decifrar(linha.material_cifrado, this.segredo(), ROTULO_CERTIFICADO) : null;
+    const ilegivel = () => new CertificadoErro(MSG_USO.ilegivel, 503, 'CERTIFICADO_ILEGIVEL');
+    let material: { chavePrivada: CertificadoEmUso['chavePrivada']; certificado: X509Certificate; cadeia: X509Certificate[] };
+    try {
+      if (texto === null) throw new Error('ilegivel');
+      const m = JSON.parse(texto) as { chave_pkcs8_pem?: unknown; certificado_pem?: unknown; cadeia_pem?: unknown };
+      if (typeof m.chave_pkcs8_pem !== 'string' || typeof m.certificado_pem !== 'string' || !Array.isArray(m.cadeia_pem)) {
+        throw new Error('ilegivel');
+      }
+      material = {
+        chavePrivada: createPrivateKey(m.chave_pkcs8_pem),
+        certificado: new X509Certificate(m.certificado_pem),
+        cadeia: m.cadeia_pem.map((p) => new X509Certificate(String(p))),
+      };
+    } catch {
+      throw ilegivel(); // nunca repassa a mensagem da biblioteca (pode citar trecho da chave)
+    }
+    const situacao = situacaoDe({ temLinha: true, temSegredo, legivel: true, validoAte: linha.valido_ate, agora });
+    if (situacao === 'vencido') throw new CertificadoErro(MSG_USO.vencido(linha.valido_ate), 422, 'CERTIFICADO_VENCIDO');
+    const cnpjEmpresa = await this.cnpjDaEmpresa();
+    if (compararCnpj(linha.cnpj, cnpjEmpresa) === 'diferente') {
+      throw new CertificadoErro(msgOutroCnpj(linha.cnpj, linha.titular, cnpjEmpresa), 422, 'CERTIFICADO_OUTRO_CNPJ');
+    }
+    return { ...material, cnpj: linha.cnpj, validoAte: linha.valido_ate, impressaoDigital: linha.impressao_digital };
   }
 
   /** base64 estrito (nada de data URL nem texto solto); vazio ou inválido = "não parece um certificado". */
