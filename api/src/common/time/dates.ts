@@ -9,6 +9,12 @@ export function todaySp(date: Date = new Date()): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: SP_TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
 }
 
+/** Data em Brasília como "DD/MM/AAAA" (para frases de tela). */
+export function dataBrSp(d: Date): string {
+  const [a, m, dia] = todaySp(d).split('-');
+  return `${dia}/${m}/${a}`;
+}
+
 /** Data "só dia" válida: formato "YYYY-MM-DD" E dia que existe no calendário ("2026-02-31" não passa). */
 export const isDateString = (value: unknown): value is string => {
   if (typeof value !== 'string' || !DATE_RE.test(value)) return false;
