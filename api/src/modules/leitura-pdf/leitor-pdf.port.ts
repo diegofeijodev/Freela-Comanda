@@ -4,9 +4,17 @@
  */
 export const LEITOR_PDF = Symbol('LEITOR_PDF');
 
+export type MimeArquivo = 'application/pdf' | 'image/jpeg' | 'image/png' | 'image/webp';
+
+export interface ArquivoLeitura {
+  base64: string;
+  mime: MimeArquivo;
+  nome: string;
+}
+
 export interface PedidoLeitura {
-  pdfBase64: string;
-  nomeArquivo: string;
+  /** Um PDF ou 1 a 4 imagens, na ordem em que a IA deve ler. */
+  arquivos: ArquivoLeitura[];
   /** Instruções do protótipo (o "instructions" do gateway da Lovable), em pt-BR. */
   instrucoes: string;
   /** A frase do usuário que acompanha o arquivo. */

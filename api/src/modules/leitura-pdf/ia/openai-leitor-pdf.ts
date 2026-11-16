@@ -28,7 +28,11 @@ export class OpenAiLeitorPdf implements LeitorPdf {
         {
           role: 'user',
           content: [
-            { type: 'file', file: { filename: p.nomeArquivo || 'arquivo.pdf', file_data: `data:application/pdf;base64,${p.pdfBase64}` } },
+            ...p.arquivos.map((a) =>
+              a.mime === 'application/pdf'
+                ? { type: 'file', file: { filename: a.nome || 'arquivo.pdf', file_data: `data:application/pdf;base64,${a.base64}` } }
+                : { type: 'image_url', image_url: { url: `data:${a.mime};base64,${a.base64}` } },
+            ),
             { type: 'text', text: p.pedido },
           ],
         },

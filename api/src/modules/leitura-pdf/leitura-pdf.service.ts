@@ -24,8 +24,7 @@ export class LeituraPdfService {
 
   async lerNota(pdfBase64: string, nome: string) {
     const r = (await this.leitor.ler({
-      pdfBase64,
-      nomeArquivo: nome || 'nota.pdf',
+      arquivos: [{ base64: pdfBase64, mime: 'application/pdf', nome: nome || 'nota.pdf' }],
       instrucoes: INSTRUCOES_NOTA,
       pedido: 'Extraia os dados desta nota fiscal.',
       schema: SCHEMA_NOTA,
@@ -38,8 +37,7 @@ export class LeituraPdfService {
 
   async lerDDA(pdfBase64: string, nome: string) {
     const r = (await this.leitor.ler({
-      pdfBase64,
-      nomeArquivo: nome || 'dda.pdf',
+      arquivos: [{ base64: pdfBase64, mime: 'application/pdf', nome: nome || 'dda.pdf' }],
       instrucoes: INSTRUCOES_DDA,
       pedido: 'Extraia os boletos deste DDA.',
       schema: SCHEMA_DDA,

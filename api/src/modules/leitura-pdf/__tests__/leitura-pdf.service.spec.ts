@@ -34,7 +34,7 @@ describe('leitura de PDF', () => {
     expect(r.data_emissao).toBe('2026-10-20');
     expect(r.parcelas).toEqual([{ numero: '1', vencimento: '2026-11-20', valor: 10 }]);
     expect(leitor.pedidos[0]!.schema).toBe(SCHEMA_NOTA);
-    expect(leitor.pedidos[0]!.nomeArquivo).toBe('nf.pdf');
+    expect(leitor.pedidos[0]!.arquivos).toEqual([{ base64: 'JVBERi0=', mime: 'application/pdf', nome: 'nf.pdf' }]);
   });
 
   it('DDA: devolve a lista de boletos', async () => {
@@ -42,7 +42,7 @@ describe('leitura de PDF', () => {
     const r = await new LeituraPdfService(leitor).lerDDA('JVBERi0=', '');
     expect(r).toEqual([{ beneficiario: 'B', cnpj: null, vencimento: '2026-11-10', valor: 5, linha_digitavel: null }]);
     expect(leitor.pedidos[0]!.schema).toBe(SCHEMA_DDA);
-    expect(leitor.pedidos[0]!.nomeArquivo).toBe('dda.pdf');
+    expect(leitor.pedidos[0]!.arquivos).toEqual([{ base64: 'JVBERi0=', mime: 'application/pdf', nome: 'dda.pdf' }]);
   });
 
   it('resposta sem itens vira a mensagem de PDF ilegível', async () => {

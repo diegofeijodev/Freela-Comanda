@@ -99,8 +99,7 @@ export class IaChaveService {
     let r: unknown;
     try {
       r = await this.leitor(p, chave).ler({
-        pdfBase64: pdfDeTeste(),
-        nomeArquivo: 'teste.pdf',
+        arquivos: [{ base64: pdfDeTeste(), mime: 'application/pdf', nome: 'teste.pdf' }],
         instrucoes: 'Você lê PDFs e devolve exatamente o que está escrito neles.',
         pedido: 'Qual é o texto deste PDF e qual número de 4 dígitos aparece nele?',
         schema: SCHEMA_TESTE,

@@ -25,7 +25,7 @@ function httpFalso(...respostas: { status: number; corpo: unknown }[]) {
   return { http, pedidos };
 }
 
-const pedido: PedidoLeitura = { pdfBase64: 'JVBERi0=', nomeArquivo: 'nf.pdf', instrucoes: 'leia', pedido: 'extraia', schema: SCHEMA_NOTA };
+const pedido: PedidoLeitura = { arquivos: [{ base64: 'JVBERi0=', mime: 'application/pdf', nome: 'nf.pdf' }], instrucoes: 'leia', pedido: 'extraia', schema: SCHEMA_NOTA };
 const openaiOk = (conteudo: unknown, finish = 'stop') => ({
   status: 200,
   corpo: { choices: [{ finish_reason: finish, message: { content: JSON.stringify(conteudo), refusal: null } }] },

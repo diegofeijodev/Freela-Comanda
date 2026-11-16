@@ -1,6 +1,15 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { Logger } from '@nestjs/common';
-import { LeitorPdf, LeituraPdfErro, MSG, PedidoLeitura, pdfIlegivel } from './leitor-pdf.port';
+import { ArquivoLeitura, LeitorPdf, LeituraPdfErro, MSG, PedidoLeitura, pdfIlegivel } from './leitor-pdf.port';
+
+/** Blocos de conteúdo da Anthropic para os arquivos: PDF = `document`, imagem = `image` (mesma ordem da lista). */
+export function blocosClaude(arquivos: ArquivoLeitura[]): unknown[] {
+  return arquivos.map((a) =>
+    a.mime === 'application/pdf'
+      ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: a.base64 }, title: a.nome }
+      : { type: 'image', source: { type: 'base64', media_type: a.mime, data: a.base64 } },
+  );
+}
 
 /**
  * Leitura de PDF pela API da Anthropic (o protótipo usava o gateway de IA da Lovable): PDF em base64 como bloco `document`
@@ -37,9 +46,9 @@ export class ClaudeLeitorPdf implements LeitorPdf {
           {
             role: 'user',
             content: [
-              { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: p.pdfBase64 }, title: p.nomeArquivo },
+              ...blocosClaude(p.arquivos),
               { type: 'text', text: p.pedido },
-            ],
+            ] as Anthropic.Beta.Messages.BetaContentBlockParam[],
           },
         ],
       });

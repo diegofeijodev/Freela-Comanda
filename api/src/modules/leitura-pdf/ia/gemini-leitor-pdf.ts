@@ -55,7 +55,7 @@ export class GeminiLeitorPdf implements LeitorPdf {
     if (!this.chave) throw new LeituraPdfErro(MSG.naoConfigurada, 503, 'PDF_NAO_CONFIGURADO');
     const corpo = {
       systemInstruction: { parts: [{ text: p.instrucoes }] },
-      contents: [{ role: 'user', parts: [{ inlineData: { mimeType: 'application/pdf', data: p.pdfBase64 } }, { text: p.pedido }] }],
+      contents: [{ role: 'user', parts: [...p.arquivos.map((a) => ({ inlineData: { mimeType: a.mime, data: a.base64 } })), { text: p.pedido }] }],
       generationConfig: { responseMimeType: 'application/json', responseSchema: paraSchemaGemini(p.schema) },
     };
     let res: Awaited<ReturnType<HttpIa>>;
