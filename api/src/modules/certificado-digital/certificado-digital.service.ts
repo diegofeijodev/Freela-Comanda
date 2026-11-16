@@ -13,6 +13,19 @@ import { type CertificadoStatus, diasRestantes, type ItemHistorico, situacaoDe }
 export const ROTULO_CERTIFICADO = 'erp-freela/certificado-a1/v1';
 
 const HISTORICO_MAX = 5;
+/** Trava consultiva de transação: enviar e remover se enfileiram, e o histórico sempre descreve o que de fato aconteceu. */
+export const CHAVE_TRAVA_CERTIFICADO = 7_011_161_201;
+const travar = (tx: Prisma.TransactionClient) => tx.$executeRaw`SELECT pg_advisory_xact_lock(${CHAVE_TRAVA_CERTIFICADO}::bigint)`;
+
+/** Classe do erro e quadros da pilha SEM a primeira linha (ela traz a mensagem, que pode ter dado sensível). */
+function rastroSeguro(e: unknown): string {
+  if (!(e instanceof Error)) return 'erro desconhecido';
+  const pilha = e.stack ?? '';
+  const i = e.message ? pilha.indexOf(e.message) : -1;
+  const depoisDaMensagem = i >= 0 ? pilha.slice(i + e.message.length) : pilha; // mensagem de várias linhas também fica de fora
+  const quadros = depoisDaMensagem.split('\n').filter((l) => /^\s+at /.test(l));
+  return `${e.name}${quadros.length ? ` | ${quadros.join(' | ')}` : ''}`;
+}
 type Quem = { id: string; nome: string };
 
 /**
@@ -114,7 +127,7 @@ export class CertificadoDigitalService {
         this.logger.warn(`certificado recusado: ${e.code}`);
         throw new BadRequestException({ code: e.code, message: e.message });
       }
-      this.logger.warn('certificado recusado: CERTIFICADO_FORMATO');
+      this.logger.warn(`certificado recusado: CERTIFICADO_FORMATO (${rastroSeguro(e)})`);
       throw new BadRequestException({ code: 'CERTIFICADO_FORMATO', message: MSG_CERTIFICADO.formato });
     }
 
@@ -144,6 +157,7 @@ export class CertificadoDigitalService {
       enviado_por_nome: quem.nome,
     };
     const evento = await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      await travar(tx);
       const antes = await tx.certificado_digital.findUnique({ where: { id: 1 } });
       await tx.certificado_digital.upsert({ where: { id: 1 }, create: { id: 1, ...dados }, update: dados });
       const ev = antes ? 'substituido' : 'enviado';
@@ -162,15 +176,17 @@ export class CertificadoDigitalService {
       });
       return ev;
     });
-    this.logger.log(`certificado ${evento}: ${c.impressaoDigital} por ${quem.id}`);
+    this.logger.log(`certificado ${evento}: ${c.impressaoDigital}`);
     return this.status(agora);
   }
 
   async remover(quem: Quem, agora: Date = new Date()): Promise<CertificadoStatus> {
     const removido = await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      await travar(tx);
       const antes = await tx.certificado_digital.findUnique({ where: { id: 1 } });
       if (!antes) return null;
-      await tx.certificado_digital.deleteMany({ where: { id: 1 } });
+      const { count } = await tx.certificado_digital.deleteMany({ where: { id: 1 } });
+      if (count === 0) return null;
       await tx.certificado_digital_historico.create({
         data: {
           evento: 'removido',
@@ -186,7 +202,7 @@ export class CertificadoDigitalService {
       });
       return antes.impressao_digital;
     });
-    if (removido) this.logger.log(`certificado removido: ${removido} por ${quem.id}`);
+    if (removido) this.logger.log(`certificado removido: ${removido}`);
     return this.status(agora);
   }
 

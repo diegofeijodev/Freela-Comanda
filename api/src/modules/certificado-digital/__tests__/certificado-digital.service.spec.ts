@@ -21,9 +21,11 @@ const QUEM = { id: 'u1', nome: 'Ana' };
 function montar(env: Record<string, string> = { CERTIFICADO_SECRET: SEGREDO }, cnpj = '12.345.678/0001-95') {
   const est: { linha: any; hist: any[]; cnpj: string } = { linha: null, hist: [], cnpj };
   const topo = { upsertChamado: 0, createChamado: 0 };
+  const ordem: string[] = [];
   const tx = {
+    $executeRaw: async () => void ordem.push('trava'),
     certificado_digital: {
-      findUnique: async () => est.linha,
+      findUnique: async () => (ordem.push('leitura'), est.linha),
       upsert: async ({ create, update }: any) => (est.linha = est.linha ? { ...est.linha, ...update } : create),
       deleteMany: async () => ((est.linha = null), { count: 1 }),
     },
@@ -55,7 +57,7 @@ function montar(env: Record<string, string> = { CERTIFICADO_SECRET: SEGREDO }, c
     },
   } as unknown as PrismaService;
   const config = { get: (k: string) => env[k] } as unknown as ConfigService;
-  return { svc: new CertificadoDigitalService(prisma, config, ICP), est, topo, falha };
+  return { svc: new CertificadoDigitalService(prisma, config, ICP), est, topo, falha, ordem };
 }
 
 const recusa = async (p: Promise<unknown>) => {
@@ -121,6 +123,40 @@ describe('CertificadoDigitalService', () => {
     expect(JSON.stringify(r)).not.toContain('senha-de-teste');
     expect(logs.join('\n')).not.toContain('senha-de-teste');
     expect(logs.join('\n')).toContain('certificado recusado: CERTIFICADO_FORMATO');
+  });
+
+  it('erro inesperado: o log leva a classe e a pilha, nunca a mensagem', async () => {
+    const { svc } = montar();
+    jest.spyOn(adapter, 'abrirPfx').mockImplementation(() => {
+      throw new TypeError('falhou com SEGREDO-123\n    at fingido (SEGREDO-123)');
+    });
+    await recusa(svc.enviar(b64('valido.pfx'), SENHA, QUEM, AGORA));
+    const log = logs.join('\n');
+    expect(log).toContain('TypeError');
+    expect(log).toContain('certificado recusado: CERTIFICADO_FORMATO');
+    expect(log).not.toContain('SEGREDO-123');
+  });
+
+  it('o log não leva o id de quem fez', async () => {
+    const { svc } = montar();
+    await svc.enviar(b64('valido.pfx'), SENHA, { id: 'ID-DO-USUARIO-9', nome: 'Ana' }, AGORA);
+    await svc.remover({ id: 'ID-DO-USUARIO-9', nome: 'Ana' }, AGORA);
+    expect(logs.length).toBeGreaterThan(0);
+    expect(logs.join('\n')).not.toContain('ID-DO-USUARIO-9');
+  });
+
+  it('enviar e remover começam pela trava; remover grava o que foi apagado e uma única vez', async () => {
+    const { svc, est, ordem } = montar();
+    await svc.enviar(b64('valido.pfx'), SENHA, QUEM, AGORA);
+    await svc.enviar(b64('mesma-raiz-filial.pfx'), SENHA, QUEM, AGORA);
+    expect(ordem.slice(0, 2)).toEqual(['trava', 'leitura']);
+    ordem.length = 0;
+    await svc.remover(QUEM, AGORA);
+    expect(ordem.slice(0, 2)).toEqual(['trava', 'leitura']);
+    expect(est.hist.at(-1)).toMatchObject({ evento: 'removido', cnpj: '12345678000276' });
+    await svc.remover(QUEM, AGORA);
+    await svc.remover(QUEM, AGORA);
+    expect(est.hist.filter((h) => h.evento === 'removido')).toHaveLength(1);
   });
 
   it('base64 inválido ou vazio = CERTIFICADO_ARQUIVO', async () => {

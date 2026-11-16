@@ -335,10 +335,13 @@ TXTB64=$(printf 'isto não é um certificado' | base64 -w0)
 req PUT /v1/certificado-digital "$ADM" "{\"arquivo_base64\":\"$TXTB64\",\"senha\":\"x\"}"; check "arquivo de texto: 400" 400 "$CODE"
 check "arquivo de texto: code" CERTIFICADO_ARQUIVO "$(j .error.code)"
 req DELETE /v1/certificado-digital "$ADM"; check "remover certificado" 200 "$CODE"
+check "removido: dados do certificado que estava em uso (a filial)" 12345678000276 "$(j '.historico[0].cnpj')"
 check "removido: situação" ausente "$(j .situacao)"; check "removido: histórico" 3 "$(j '.historico | length')"
 check "removido: 1º evento" removido "$(j '.historico[0].evento')"
 req DELETE /v1/certificado-digital "$ADM"; check "remover de novo" 200 "$CODE"; check "histórico não cresce" 3 "$(j '.historico | length')"
 check "histórico no banco" 3 "$(sql "select count(*) from certificado_digital_historico")"
+check "uma única linha removido (duplo toque não duplica)" 1 "$(sql "select count(*) from certificado_digital_historico where evento='removido'")"
+check "removido grava a filial" 12345678000276 "$(sql "select cnpj from certificado_digital_historico where evento='removido'")"
 req GET /v1/configuracoes "$LOJA"; check "loja lê config sem certificado" 0 "$(echo "$BODY" | grep -c BEGIN)"
 rm -f "$PDF" "$TXT" "$JPG" "$OUT"
 
