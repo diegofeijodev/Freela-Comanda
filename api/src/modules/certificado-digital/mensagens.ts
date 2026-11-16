@@ -1,7 +1,7 @@
 import { dataBrSp } from '../../common/time/dates';
 import { formatarCnpj, normalizarCnpj } from './cnpj';
 
-/** Os `code` 400 do cadastro de certificado (tabela fechada do desenho; o 503 de segredo ausente fica no serviço). */
+/** Os `code` 400 do cadastro de certificado (frases do plano/UX §6; o 503 de segredo ausente fica no serviço). */
 export type CodigoRecusa =
   | 'CERTIFICADO_ARQUIVO'
   | 'CERTIFICADO_SENHA'
@@ -30,16 +30,18 @@ export const MSG_CERTIFICADO: Record<
   'arquivo' | 'senha' | 'formato' | 'semChave' | 'semCnpj' | 'empresaSemCnpj' | 'naoIcp' | 'cadeia' | 'semSegredo',
   string
 > = {
-  arquivo: 'Este arquivo não é um certificado A1 (.pfx ou .p12).',
-  senha: 'Senha do certificado incorreta.',
-  formato: 'Não consegui abrir este certificado. Exporte o .pfx de novo e tente outra vez.',
+  arquivo: 'Este arquivo não parece um certificado digital. Escolha o arquivo .pfx ou .p12 que o contador enviou.',
+  senha: 'Senha do certificado incorreta. Digite de novo.',
+  formato: 'Não consegui abrir este certificado. Peça ao contador para gerar o arquivo de novo.',
   semChave:
-    'Este arquivo não tem a chave privada. Use o A1 (.pfx exportado com a chave); certificado em token ou cartão (A3) não serve.',
-  semCnpj: 'Este certificado não é de empresa (e-CNPJ): não encontrei CNPJ nele.',
-  empresaSemCnpj: 'Preencha o CNPJ da empresa (painel Empresa) antes de enviar o certificado.',
-  naoIcp: 'Este certificado não é da ICP-Brasil; a SEFAZ não aceita.',
-  cadeia: 'A cadeia deste certificado não confere. Exporte o .pfx de novo ou fale com a certificadora.',
-  semSegredo: 'O servidor ainda não está pronto para guardar certificados. Avise o suporte.',
+    'Este arquivo não serve: falta a parte secreta do certificado. Peça ao contador o certificado A1 (arquivo), não o de cartão ou token.',
+  semCnpj: 'Este certificado não é de empresa: não encontrei um CNPJ nele. Peça o certificado da empresa, não o seu pessoal.',
+  empresaSemCnpj:
+    'Preencha o CNPJ da empresa no quadro Empresa, toque em Salvar (no alto da página) e envie o certificado de novo.',
+  naoIcp:
+    'Este certificado não foi emitido por uma certificadora brasileira credenciada; a SEFAZ não aceita. Peça outro ao contador.',
+  cadeia: 'Este certificado parece alterado ou incompleto. Peça ao contador ou à certificadora um arquivo novo.',
+  semSegredo: 'O servidor ainda não está pronto para guardar certificados. Fale com o suporte do Freela Comanda.',
 };
 
 export const msgVencido = (d: Date): string => `Este certificado venceu em ${dataBrSp(d)}. Envie o certificado renovado.`;

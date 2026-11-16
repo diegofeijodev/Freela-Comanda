@@ -83,4 +83,6 @@ pfx fora fora-da-icp.pfx
 # senha com acento: o OpenSSL grava em UTF-8; a biblioteca do app pode ler em latin1 (ver pkcs12.adapter.ts)
 openssl pkcs12 -export -inkey a1.key -in a1.pem -certfile cadeia.pem -passout 'pass:açaí-de-teste' -out "$OUT/senha-acentuada.pfx"
 openssl pkcs12 -export -inkey a1.key -in a1.pem -certfile cadeia.pem -passout 'pass:açaí-de-teste' -legacy -out "$OUT/senha-acentuada-legado.pfx"
+# sem bloco de MAC (sem prova de senha nem de integridade): o app recusa como FORMATO
+openssl pkcs12 -export -inkey a1.key -in a1.pem -certfile cadeia.pem -passout $P -nomac -out "$OUT/sem-mac.pfx"
 ls "$OUT"

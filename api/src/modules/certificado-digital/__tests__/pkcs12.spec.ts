@@ -2,7 +2,7 @@ import { createHash, X509Certificate } from 'node:crypto';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { dataBrSp } from '../../../common/time/dates';
-import { abrirPfx, lerCamposX509, type PfxAberto } from '../pkcs12.adapter';
+import { abrirPfx, classificarErroForge, lerCamposX509, type PfxAberto } from '../pkcs12.adapter';
 
 const fx = (nome: string): Buffer => readFileSync(join(__dirname, 'fixtures', nome));
 const SENHA = 'senha-de-teste';
@@ -54,6 +54,43 @@ describe('abrirPfx', () => {
     ['PEM', fx('raiz-teste.pem')],
   ])('%s = ARQUIVO', (_n, buf) => {
     expect(() => abrirPfx(buf, SENHA)).toThrow(expect.objectContaining({ code: 'CERTIFICADO_ARQUIVO' }));
+  });
+
+  it.each([
+    ['senha certa', SENHA],
+    ['senha errada', 'errada'],
+    ['senha acentuada', ACENTUADA],
+  ])('.pfx sem MAC (%s) = FORMATO, antes de qualquer senha', (_n, senha) => {
+    expect(() => abrirPfx(fx('sem-mac.pfx'), senha)).toThrow(expect.objectContaining({ code: 'CERTIFICADO_FORMATO' }));
+  });
+
+  it('arquivo truncado (perdeu o bloco de MAC) = ARQUIVO ou FORMATO, nunca SENHA', () => {
+    const inteiro = fx('valido.pfx');
+    // (cortar só o fim, no meio do HMAC, é indistinguível de senha errada no PKCS#12: dá SENHA, e é aceito)
+    for (const corte of [20, 200, Math.floor(inteiro.length / 2)]) {
+      expect(() => abrirPfx(inteiro.subarray(0, corte), SENHA)).toThrow(
+        expect.objectContaining({ code: expect.stringMatching(/^CERTIFICADO_(ARQUIVO|FORMATO)$/) }),
+      );
+    }
+  });
+
+  it('arquivo adulterado com a senha acentuada certa = SENHA (o MAC não confere, não se chega à reabertura sem MAC)', () => {
+    const b = Buffer.from(fx('senha-acentuada.pfx'));
+    b[b.length - 5] ^= 0xff; // dentro do macData/authSafe
+    expect(() => abrirPfx(b, ACENTUADA)).toThrow(expect.objectContaining({ code: expect.stringMatching(/^CERTIFICADO_(SENHA|FORMATO|ARQUIVO)$/) }));
+  });
+
+  describe('classificação dos erros do forge (textos da versão fixada)', () => {
+    it.each([
+      ['PKCS#12 MAC could not be verified. Invalid password?', 'senha'],
+      ['Cannot read PKCS#12 PFX. ASN.1 object is not an PKCS#12 PFX.', 'arquivo'],
+      ['Only PKCS#12 PFX in password integrity mode supported.', 'formato'],
+      ['PKCS#12 uses unsupported MAC algorithm: 1.2.3', 'formato'],
+      ['Failed to decrypt PKCS#12 SafeContents.', 'depoisDoMac'],
+      ['Too few bytes to parse DER.', 'depoisDoMac'], // padding falso que passou: outro erro depois do MAC
+    ])('%s -> %s', (msg, esperado) => {
+      expect(classificarErroForge(new Error(msg))).toBe(esperado);
+    });
   });
 
   describe('lerCamposX509', () => {

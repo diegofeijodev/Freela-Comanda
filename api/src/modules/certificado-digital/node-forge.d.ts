@@ -14,6 +14,7 @@ declare module 'node-forge' {
     const Class: { UNIVERSAL: number; APPLICATION: number; CONTEXT_SPECIFIC: number; PRIVATE: number };
     const Type: {
       BOOLEAN: number;
+      INTEGER: number;
       OCTETSTRING: number;
       OID: number;
       UTF8: number;
