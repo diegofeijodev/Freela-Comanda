@@ -50,7 +50,7 @@ basicConstraints e nameConstraints no `verifyCertificateChain`, Ed25519, AES-GCM
 - Nada de `verify`, `verifyCertificateChain`, `pem.decode` de entrada, TLS ou http do forge.
   - *alterado na implementação em 16/11/2026: o adaptador também usa as primitivas `pkcs12.generateKey`, `md.*` (sha1/256/384/512/md5) e `util.createBuffer` para conferir o MAC do .pfx por conta própria, antes de decifrar; a lista de funções do forge permitidas inclui essas.*
 - Entrada limitada a 64 KB, rota só de admin.
-  - *alterado na implementação em 16/11/2026: o adaptador recusa como arquivo inválido (`CERTIFICADO_ARQUIVO`) o .pfx sem bloco de MAC e o .pfx com mais de 20 certificados; o MAC tem teto de 1.000.000 de iterações.*
+  - *alterado na implementação em 16/11/2026: o adaptador recusa com `CERTIFICADO_FORMATO` o .pfx sem bloco de MAC e o .pfx com mais de 20 certificados; o MAC tem teto de 1.000.000 de iterações.*
 - Novo alerta = subir a versão exata e rodar `npm audit` no PR.
 
 ## Como (decisões do construtor, marcadas como minhas)

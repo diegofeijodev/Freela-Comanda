@@ -38,7 +38,7 @@ model ia_chave {
   atualizado_por String?  @db.Uuid
 }
 
-/// Certificado digital A1 da empresa (uma linha, id = 1). `material_cifrado` = o .pfx + a senha, CIFRADOS (AES-256-GCM); nunca sai do servidor.
+/// Certificado digital A1 da empresa (uma linha, id = 1). `material_cifrado` = chave privada + certificado + cadeia, CIFRADOS (AES-256-GCM), sem a senha e sem o .pfx; nunca sai do servidor.
 /// As demais colunas são só os dados públicos do certificado, mostrados na tela de Configurações.
 model certificado_digital {
   id                Int      @id @default(1)

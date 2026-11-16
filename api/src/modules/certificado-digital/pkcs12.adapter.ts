@@ -187,8 +187,9 @@ const bytes = (n: No | undefined): string => (n && typeof n.value === 'string' ?
 const oidDe = (n: No | undefined): string => (n ? forge.asn1.derToOid(bytes(n)) : '');
 
 function texto(n: No): string {
+  // O forge já entrega o BMPString decodificado (cada caractere = 1 unidade UTF-16): não converter de novo.
+  if (n.type === forge.asn1.Type.BMPSTRING) return typeof n.value === 'string' ? n.value : '';
   const b = Buffer.from(bytes(n), 'binary');
-  if (n.type === forge.asn1.Type.BMPSTRING) return Buffer.from(b).swap16().toString('utf16le');
   if (n.type === forge.asn1.Type.UTF8) return b.toString('utf8');
   return b.toString('latin1');
 }

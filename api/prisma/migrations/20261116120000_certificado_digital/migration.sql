@@ -1,5 +1,5 @@
 -- Certificado digital A1 da empresa (Configurações → Certificado digital). Tabelas próprias: não existem no Lovable.
--- `material_cifrado` = .pfx + senha cifrados no servidor; o resto são dados públicos do certificado.
+-- `material_cifrado` = chave privada + certificado + cadeia cifrados no servidor (sem senha e sem o .pfx); o resto são dados públicos do certificado.
 CREATE TABLE "certificado_digital" (
     "id" INTEGER NOT NULL DEFAULT 1,
     "material_cifrado" TEXT NOT NULL,

@@ -19,6 +19,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PlanoContas } from "@/components/plano-contas";
 import { IaChavePanel } from "@/components/ia-chave-panel";
 import { CertificadoPanel } from "@/components/certificado-panel";
+import { ErrorBoundary } from "@/components/error-boundary";
 import { CERTIFICADO_QUERY_KEY } from "@/hooks/use-certificado";
 import { useMe } from "@/lib/auth";
 
@@ -79,7 +80,17 @@ export default function Config() {
         </div>
       </Panel>
       {me?.perfil === "admin" && <IaChavePanel />}
-      {me?.perfil === "admin" && <CertificadoPanel />}
+      {me?.perfil === "admin" && (
+        <ErrorBoundary
+          fallback={
+            <Panel title="Certificado digital (A1)">
+              <p className="text-sm text-muted-foreground">Não consegui mostrar o certificado agora. Recarregue a página.</p>
+            </Panel>
+          }
+        >
+          <CertificadoPanel />
+        </ErrorBoundary>
+      )}
       <Panel title="Geral">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <div><Label className="text-xs text-muted-foreground">Dia do inventário/compra</Label>

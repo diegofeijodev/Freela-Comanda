@@ -131,6 +131,23 @@ describe('abrirPfx', () => {
         serialNumberSujeito: null,
       });
     });
+    it('titular em BMPString (o forge já decodifica): lido sem ser convertido de novo, mesmo com número ímpar de letras', () => {
+      // Os tipos mínimos do forge não cobrem a criação de certificado: só aqui, no teste, usamos a biblioteca solta.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const F = forge as any;
+      const chave = F.pki.privateKeyFromPem(abrirPfx(fx('valido.pfx'), SENHA).chave.export({ type: 'pkcs8', format: 'pem' }) as string);
+      const cert = F.pki.createCertificate();
+      cert.publicKey = F.pki.setRsaPublicKey(chave.n, chave.e);
+      cert.serialNumber = '01';
+      cert.validity.notBefore = new Date('2026-01-01T00:00:00Z');
+      cert.validity.notAfter = new Date('2027-01-01T00:00:00Z');
+      const attrs = [{ type: '2.5.4.3', value: 'Açaí Ltda', valueTagClass: forge.asn1.Type.BMPSTRING }]; // 9 letras: com swap16 lançava
+      cert.setSubject(attrs);
+      cert.setIssuer(attrs);
+      cert.sign(chave, F.md.sha256.create());
+      const der = Buffer.from(F.asn1.toDer(F.pki.certificateToAsn1(cert)).getBytes(), 'binary');
+      expect(lerCamposX509(der).cnSujeito).toBe('Açaí Ltda');
+    });
     it('SAN em PrintableString', () => {
       expect(campos('mesma-raiz-filial.pfx').cnpjSan).toBe('12345678000276');
     });

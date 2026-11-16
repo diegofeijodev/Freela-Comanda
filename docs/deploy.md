@@ -16,12 +16,16 @@ Os scripts ficam fora do repositório, em `~/erp-deploy/` (o dono roda cada um c
 2. **DNS (Locaweb):** `A api → IP do EC2`. Conferir com `dig +short api.freelacomanda.com.br`.
 3. **Servidor (uma vez):** `bash ~/erp-deploy/preparar-servidor.sh` — confere memória livre, cria `/opt/erp-freela` e o `.env` (600) com
    `POSTGRES_PASSWORD`/`JWT_SECRET` gerados NO servidor (`openssl rand -hex 32`). Nunca sobrescreve um `.env` existente.
-3b. **Segredo do certificado (antes da API e ANTES do primeiro envio de certificado):** `bash ~/erp-deploy/segredo-certificado.sh` — acrescenta `CERTIFICADO_SECRET`
-   (`openssl rand -hex 32`, gerado NO servidor, nunca sai dele) ao `.env` se faltar e recria a API sem build. Se já houver valor, não mexe. Pontos de atenção:
+3b. **Segredo do certificado (antes do primeiro envio de certificado; rodar só no dia da subida, liberado pelo dono, e nunca enquanto houver regra de não fazer deploy):**
+   `bash ~/erp-deploy/segredo-certificado.sh` — acrescenta `CERTIFICADO_SECRET` (`openssl rand -hex 32`, gerado NO servidor) ao `.env` se faltar.
+   Por padrão SÓ grava a variável e NÃO reinicia nada: o `up -d --build` do passo 4 recria o contêiner, e a variável chega a ele pelo `env_file: .env`
+   do serviço `api` (mesmo com um compose antigo). Antes de regravar, o script faz a cópia `.env.bak-AAAAMMDD-HHMMSS` (600) no mesmo diretório, escreve
+   num temporário, confere que ele tem todas as linhas do original mais a nova e só então substitui; qualquer falha interrompe antes de tocar no `.env`.
+   Se já houver valor, não mexe. Opção `--reiniciar`: recria só a API (`--no-deps`) e confere o segredo carregado; NÃO usar junto de outro deploy. Pontos de atenção:
    - Sem a variável, a tela do certificado diz "O servidor ainda não está pronto…" (enviar = 503 `CERTIFICADO_SEM_SEGREDO`).
-   - **Guarde esse valor em lugar seguro.** Trocar ou perder o segredo deixa o certificado guardado ilegível ("não pode ser lido") e obriga a enviar o .pfx de novo.
+   - O segredo fica só no servidor. Faça uma cópia segura DO ARQUIVO `.env` do servidor por um meio seguro. Se o valor se perder ou mudar, o certificado guardado
+     fica ilegível ("não pode ser lido") e precisa ser enviado de novo.
    - Nunca copiar dump do banco e `.env` juntos (o dump leva o certificado cifrado; o `.env` leva a chave que o abre).
-   - O `docker-compose.prod.yml` do servidor precisa estar atualizado (declara `CERTIFICADO_SECRET`); sem isso a variável do `.env` não chega ao contêiner.
 4. **API:** `bash ~/erp-deploy/subir-api.sh` — backup do banco + imagem de volta (a partir da 2ª subida), cópia da árvore LIMPA do `master`,
    `docker compose -f docker-compose.prod.yml up -d --build` (o contêiner roda `prisma migrate deploy`) e espera `/health`.
 5. **nginx + HTTPS:** `bash ~/erp-deploy/https-api.sh` — instala `docs/deploy/nginx-api-erp.conf` como `erp-freela-api`, `nginx -t`, reload e

@@ -138,16 +138,16 @@ cifrados (AES-256-GCM, segredo `CERTIFICADO_SECRET`) e descarta o `.pfx` e a sen
 `GET /v1/certificado-digital` → `{ situacao, titular, cnpj, cnpj_confere, tipo, politica_oid, emissor, valido_de, valido_ate, dias_restantes, cadeia_conferida, enviado_em, enviado_por_nome, historico[] }`.
 - `situacao`, por precedência: `sem_segredo` (servidor sem `CERTIFICADO_SECRET`) > `ausente` (sem certificado) > `ilegivel` (não decifra: segredo trocado ou perdido) > `vencido` > `vencendo` (30 dias ou menos) > `valido`.
   `dias_restantes`, `situacao` e `cnpj_confere` (`igual | mesma_raiz | diferente | empresa_sem_cnpj`) são calculados na leitura, com o CNPJ atual de Configurações. `tipo`: `A1 | SE-S | outro`.
-- `ausente` e `sem_segredo` trazem os demais campos `null`. `historico` = os últimos eventos, mais novos primeiro: `{ evento: enviado|substituido|removido, feito_por_nome, feito_em, valido_ate, cnpj, titular }` (nunca material).
+- Sem certificado gravado (`ausente`, ou `sem_segredo` sem linha no banco) os demais campos vêm `null`. Com certificado gravado, mesmo em `sem_segredo`, a consulta devolve titular, CNPJ, validade etc. (vêm das colunas em claro); só não dá para decifrar o material. `historico` = os últimos eventos, mais novos primeiro: `{ evento: enviado|substituido|removido, feito_por_nome, feito_em, valido_ate, cnpj, titular }` (nunca material).
 
 `PUT /v1/certificado-digital` — JSON `{ arquivo_base64, senha }` (não é multipart; base64 de até 90.000 caracteres ≈ 64 KB; senha de 1 a 128). Confere tudo antes de guardar e só então troca o
 certificado atual; falhou = nada muda. Devolve o corpo do GET. Recusas são 400 `{ error: { code, message } }` com frase fixa (nunca texto de biblioteca):
 
 | code | Quando |
 |---|---|
-| `CERTIFICADO_ARQUIVO` | não parece um .pfx/.p12 (ou .pfx sem bloco de MAC, ou com mais de 20 certificados) |
+| `CERTIFICADO_ARQUIVO` | não parece um .pfx/.p12 |
 | `CERTIFICADO_SENHA` | senha incorreta (o MAC não confere; senha com acento é tentada nas duas codificações) |
-| `CERTIFICADO_FORMATO` | não abriu por outro motivo (inclui erro inesperado) |
+| `CERTIFICADO_FORMATO` | não abriu por outro motivo: .pfx sem bloco de MAC, .pfx com mais de 20 certificados, ou erro inesperado |
 | `CERTIFICADO_SEM_CHAVE` | sem chave privada (A3, token) |
 | `CERTIFICADO_VENCIDO` / `CERTIFICADO_AINDA_NAO_VALE` | fora da validade |
 | `CERTIFICADO_SEM_CNPJ` | não é de empresa (sem CNPJ) |
