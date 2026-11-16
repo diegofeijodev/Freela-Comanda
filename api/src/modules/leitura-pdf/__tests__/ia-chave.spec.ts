@@ -36,6 +36,15 @@ const geminiOk = (conteudo: unknown, finish = 'STOP') => ({
 });
 
 describe('cifra da chave de IA', () => {
+  /** Gerado pelo código ANTES da cifra ser movida para `common/cripto`. */
+  const ENVELOPE_IA_ANTIGO = 'v1.k--djqVE-o57838p.uL653fD2FqNieJzQi2LA7Q.B-k5W8ypxaOGijfPphsVeBZ0uVPlkePy_cylWi-BOgcL';
+
+  it('o rótulo da cifra não muda e a chave de IA já gravada continua decifrável', () => {
+    // Trocar este valor torna ilegível a chave de IA já gravada em produção (PDF_CHAVE_ILEGIVEL).
+    expect(ROTULO_IA_CHAVE).toBe('erp-freela/ia-chave/v1');
+    expect(decifrar(ENVELOPE_IA_ANTIGO, 'segredo-de-teste-com-mais-de-16', ROTULO_IA_CHAVE)).toBe('sk-proj-vetor-fixo-1234567890abcd');
+  });
+
   it('ida e volta; segredo errado ou conteúdo mexido = null; a dica só mostra o fim', () => {
     const c = cifrar(CHAVE_OPENAI, SEGREDO, ROTULO_IA_CHAVE);
     expect(c).not.toContain('abcdefghij');
