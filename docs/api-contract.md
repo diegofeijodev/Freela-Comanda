@@ -86,17 +86,17 @@ com teórico e contagens) · `PATCH /v1/inventario-itens/:id/final { final, just
 `GET /v1/notas?limite=30` · `GET /v1/notas/existe?chave=` → `{ existe }` · `GET /v1/vinculos?cnpj=` · `POST /v1/notas` — UMA transação:
 `{ chave?, numero?, serie?, fornecedor_nome, fornecedor_cnpj?, data_emissao?, data_entrada, valor_total, forma_pagamento, origem: xml|pdf|foto, atualizar_preco,
 itens[{ codigo?, descricao, unidade?, quantidade, valor_unitario, item_estoque_id?, novo_insumo?{ nome, unidade, subgrupo? }, fator? }], parcelas[{ vencimento, valor }] }` → `{ id, contas, a_vista, insumos_criados }`.
-`novo_insumo` cadastra o insumo DENTRO da mesma transação (rollback junto se a nota falhar); nome já existente (sem caixa/acento) é reaproveitado, e a mesma linha repetida cria um só; `insumos_criados` conta só os realmente criados. Linha com `item_estoque_id` E `novo_insumo` = 400 "Escolha um insumo existente ou cadastre um novo, não os dois"; nome repetido na corrida = 409 "Já existe um insumo com este nome".
+`novo_insumo` cadastra o insumo DENTRO da mesma transação (rollback junto se a nota falhar); nome já existente (sem caixa/acento) é reaproveitado (insumo inativo com esse nome é REATIVADO), e a mesma linha repetida cria um só; `insumos_criados` conta só os realmente criados. Linha com `item_estoque_id` E `novo_insumo` = 400 "Escolha um insumo existente ou cadastre um novo, não os dois"; nome repetido na corrida = 409 "Já existe um insumo com este nome". O preço do insumo recém-criado é gravado mesmo com "Atualizar preço" desmarcado (valor ÷ `fator`); `valor_unitario` ≤ 0 cria o insumo sem preço, e `fator` ≤ 0 ou inválido conta como 1. A `chave` recebida é reduzida a dígitos antes de conferir duplicidade e gravar (sem nenhum dígito = sem chave).
 À vista (pix/dinheiro/débito/transferência) = 1 conta já paga; senão 1 conta por parcela ("Informe o vencimento de cada parcela"). 409 "Esta nota já foi lançada".
 
 ## §12 Leitura de PDF e de foto por IA (admin, multipart)
 
-`POST /v1/notas/ler-foto` — 1 a 4 imagens da MESMA nota (JPEG, PNG ou WebP, ≤ 10 MB cada; o tipo vem dos primeiros bytes, não do nome). Devolve a mesma `NotaLida`
+`POST /v1/notas/ler-foto` — 1 a 4 imagens da MESMA nota (JPEG, PNG ou WebP, ≤ 10 MB cada e, somadas, até 20 MB por requisição, o teto do nginx; o tipo vem dos primeiros bytes, não do nome). Devolve a mesma `NotaLida`
 do `ler-pdf`; cada item traz, além dos campos da nota, `item_estoque_id` (insumo do estoque que a IA indicou, ou `null`), `novo` (`{ nome, unidade, subgrupo }` quando
 não há insumo parecido: sugestão de cadastro; `null` quando há `item_estoque_id`) e `fator` (unidades do estoque por unidade comprada, 1 se inválido). A IA recebe a lista
 de insumos ativos e de subgrupos no pedido; nome que ela inventa e não existe no estoque vira `novo`. `ler-pdf` devolve os mesmos campos extras. Erros próprios da foto:
 400 "Envie até 4 fotos da mesma nota.", 400 "O arquivo não é uma imagem (JPG, PNG ou WebP).", 400 "Arquivo vazio ou grande demais (máx. 10 MB)"; sem chave de IA,
-503 `PDF_NAO_CONFIGURADO` "Leitura de nota não configurada: cadastre a chave de uma IA em Configurações." (a de PDF mantém "Leitura de PDF…"). Os demais erros
+503 `PDF_NAO_CONFIGURADO` "Leitura de nota não configurada: cadastre a chave de uma IA em Configurações." (a de PDF mantém "Leitura de PDF…"); 502 `PDF_INDISPONIVEL` "Não foi possível ler a foto agora."; 422 `PDF_ILEGIVEL` "Não consegui identificar os dados desta foto.". A `chave` lida pela IA (foto e PDF) é reduzida a dígitos e só sai com exatamente 44 (senão `null`; o dígito verificador não é conferido); `data_emissao` e `vencimento` que não sejam um dia real saem `''`. Os demais erros
 (`PDF_*`, 429, 502, 422) são os abaixo. A leitura nunca grava nada: o insumo novo só nasce no `POST /v1/notas` (§11).
 
 ### PDF (1 arquivo ≤ 10 MB)

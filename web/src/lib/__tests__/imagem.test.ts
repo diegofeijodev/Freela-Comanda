@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ehImagem, MAX_FOTOS, medidasReduzidas, reduzirImagem } from '../imagem';
+import { ehImagem, MAX_FOTOS, medidasReduzidas, pareceImagem, reduzirImagem } from '../imagem';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -8,6 +8,19 @@ describe('medidasReduzidas', () => {
   it('reduz retrato para 2000 no maior lado', () => expect(medidasReduzidas(3000, 4000)).toEqual({ w: 1500, h: 2000 }));
   it('nunca aumenta', () => expect(medidasReduzidas(800, 600)).toEqual({ w: 800, h: 600 }));
   it('arredonda para inteiro', () => expect(medidasReduzidas(3001, 2000)).toEqual({ w: 2000, h: 1333 }));
+});
+
+describe('pareceImagem', () => {
+  it('heic sem tipo, outro image/* e extensões de imagem seguem como foto', () => {
+    expect(pareceImagem(new File(['x'], 'IMG_1.HEIC', { type: '' }))).toBe(true);
+    expect(pareceImagem(new File(['x'], 'a', { type: 'image/gif' }))).toBe(true);
+    for (const n of ['a.heif', 'a.bmp', 'a.jpg', 'a.jpeg', 'a.png', 'a.webp']) expect(pareceImagem(new File(['x'], n, { type: '' }))).toBe(true);
+  });
+  it('xml e pdf não são foto', () => {
+    expect(pareceImagem(new File(['x'], 'nota.xml', { type: 'text/xml' }))).toBe(false);
+    expect(pareceImagem(new File(['x'], 'nota.pdf', { type: 'application/pdf' }))).toBe(false);
+    expect(pareceImagem(new File(['x'], 'nota.xml', { type: '' }))).toBe(false);
+  });
 });
 
 describe('ehImagem', () => {

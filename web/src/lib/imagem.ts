@@ -11,6 +11,9 @@ export function medidasReduzidas(w: number, h: number, max = MAX_LADO): { w: num
 
 export const ehImagem = (f: File): boolean => ['image/jpeg', 'image/png', 'image/webp'].includes(f.type);
 
+/** Parece foto (tipo image/* ou extensão de imagem, mesmo com o tipo vazio): segue pelo caminho da foto, que dá a frase certa se o navegador não abrir. */
+export const pareceImagem = (f: File): boolean => f.type.startsWith('image/') || /\.(heic|heif|gif|bmp|jpe?g|png|webp)$/i.test(f.name);
+
 /** Reduz a foto no navegador (maior lado 2000 px) e recodifica em JPEG, já com a orientação aplicada. */
 export async function reduzirImagem(f: File): Promise<File> {
   let bitmap: ImageBitmap;

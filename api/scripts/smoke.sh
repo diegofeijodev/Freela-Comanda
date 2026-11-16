@@ -212,6 +212,13 @@ check "rollback não deixa nota gravada" 0 "$(sql "select count(*) from notas_en
 NI6='[{"descricao":"Y","quantidade":1,"valor_unitario":5,"novo_insumo":{"nome":"Smoke Sem Grupo","unidade":"un","subgrupo":"Grupo Inventado"}}]'
 req POST /v1/notas "$ADM" "$(nota_foto 35261012345678000199550010000070061000070061 "$NI6")"; check "subgrupo inexistente: nota" 201 "$CODE"
 check "subgrupo inexistente cai no padrão" Mercearia "$(sql "select subgrupo from itens_estoque where nome='Smoke Sem Grupo'")"
+# chave formatada com espaços = a mesma nota já lançada (só dígitos)
+CHF="35 2610 1234 5678 0001 9955 0010 0000 7001 1000 0700 11"
+req POST /v1/notas "$ADM" "$(nota_foto "$CHF" "$NI")"; check "chave com espaços: nota repetida" "Esta nota já foi lançada" "$(j .error.message)"
+# valor zero no insumo novo: cria sem preço
+NI8='[{"descricao":"BRINDE","quantidade":1,"valor_unitario":0,"fator":0,"novo_insumo":{"nome":"Brinde Smoke","unidade":"un"}}]'
+req POST /v1/notas "$ADM" "$(nota_foto 35261012345678000199550010000070081000070081 "$NI8")"; check "insumo novo com valor zero" 201 "$CODE"
+check "insumo novo com valor zero: sem preço" 1 "$(sql "select count(*) from itens_estoque where nome='Brinde Smoke' and preco_unitario is null")"
 
 # ---------- contas a pagar / DRE / caixa
 req GET /v1/plano-contas?ativo=true "$ADM"; PL=$(echo "$BODY" | jq -r '.[] | select(.conta=="ALUGUEL") | .id')

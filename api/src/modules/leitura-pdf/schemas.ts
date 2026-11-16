@@ -75,7 +75,7 @@ export const SCHEMA_NOTA_SUGESTAO = {
 
 export const INSTRUCOES_NOTA_SUGESTAO =
   INSTRUCOES_NOTA +
-  ' Você também recebe a lista de insumos do estoque e os subgrupos existentes. Em cada item, devolva em "insumo" o nome EXATO de um item da lista ' +
+  ' Você também recebe a lista de insumos do estoque e os subgrupos existentes. Em cada item, devolva em "insumo" o nome EXATO de um item da lista, só o nome, sem a unidade entre parênteses, ' +
   'quando o produto da nota for esse insumo, e null quando não houver. Quando for null, preencha "novo_nome" (nome limpo e curto, sem marca nem embalagem quando fizer sentido), ' +
   '"novo_unidade" (KG, L, UN...) e "novo_subgrupo" (um da lista de subgrupos). "fator" = quantas unidades do estoque há em uma unidade da nota ' +
   '(ex.: "CX C/12" = 12); use 1 quando não der para saber.';

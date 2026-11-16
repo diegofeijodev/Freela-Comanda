@@ -6,7 +6,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { Plus, Trash2 } from "lucide-react";
 import { lancarNota, lerFotoNota, lerPdfNota, listarItensEstoque, listarSubgrupos, notaExiste, notasRecentes, vinculos } from "@/lib/erp-api";
-import { ehImagem, MAX_FOTOS, reduzirImagem } from "@/lib/imagem";
+import { MAX_FOTOS, pareceImagem, reduzirImagem } from "@/lib/imagem";
 import { PageHeader, Panel, Tag } from "@/components/ui-kit";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,7 +24,9 @@ const NOVO = "__novo__";
 type Insumo = { id: string; nome: string; unidade: string };
 
 
-const somaDias = (iso: string, d: number) => { const x = new Date(iso + "T12:00:00"); x.setDate(x.getDate() + d); return isoDate(x); };
+const diaValido = (s: string | null | undefined) => !!s && /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(new Date(s + "T12:00:00").getTime());
+// Data vazia ou inválida (emissão ilegível, data de entrada apagada) não quebra a tela: conta a partir de hoje.
+const somaDias = (iso: string, d: number) => { const x = new Date((diaValido(iso) ? iso : isoDate(new Date())) + "T12:00:00"); x.setDate(x.getDate() + d); return isoDate(x); };
 
 export default function Notas() {
   const qc = useQueryClient();
@@ -44,7 +46,7 @@ export default function Notas() {
 
   async function carregar(arquivos: File[]) {
     if (!arquivos.length) return;
-    const fotos = arquivos.every(ehImagem);
+    const fotos = arquivos.every(pareceImagem);
     if (arquivos.length > 1 && (!fotos || arquivos.length > MAX_FOTOS)) return void toast.error("Envie até 4 fotos da mesma nota.");
     setLendo(true);
     try {
@@ -77,7 +79,7 @@ export default function Notas() {
         };
       }));
       const forma = lida.forma_pagamento in FORMAS ? lida.forma_pagamento : "outros";
-      setParcelas(lida.parcelas?.length ? lida.parcelas : A_VISTA.includes(forma) ? [] : [{ numero: "1", vencimento: somaDias(lida.data_emissao || isoDate(new Date()), 30), valor: lida.valor_total }]);
+      setParcelas(lida.parcelas?.length ? lida.parcelas : A_VISTA.includes(forma) ? [] : [{ numero: "1", vencimento: somaDias(diaValido(lida.data_emissao) ? lida.data_emissao : entrada, 30), valor: lida.valor_total }]);
       setNota({ ...lida, forma_pagamento: forma });
       setOrigem(fotos ? "foto" : isPdf ? "pdf" : "xml");
       toast.success(`${lida.itens.length} itens lidos`);
@@ -141,7 +143,7 @@ export default function Notas() {
               <div><Label>Fornecedor</Label><Input value={nota.emitente_nome} onChange={(e) => setNota({ ...nota, emitente_nome: e.target.value })} /></div>
               <div><Label>CNPJ</Label><Input value={nota.emitente_cnpj ?? ""} onChange={(e) => setNota({ ...nota, emitente_cnpj: e.target.value.replace(/\D/g, "") || null })} /></div>
               <div><Label>Número / série</Label><Input value={`${nota.numero ?? ""}${nota.serie ? " / " + nota.serie : ""}`} onChange={(e) => setNota({ ...nota, numero: e.target.value.split("/")[0].trim() })} /></div>
-              <div><Label>Emissão</Label><Input value={dataBR(nota.data_emissao)} disabled /></div>
+              <div><Label>Emissão</Label><Input type="date" value={nota.data_emissao ?? ""} onChange={(e) => setNota({ ...nota, data_emissao: e.target.value })} /></div>
               <div><Label>Data de entrada</Label><Input type="date" value={entrada} onChange={(e) => setEntrada(e.target.value)} /></div>
               <div><Label>Valor total</Label><Input value={String(nota.valor_total).replace(".", ",")} onChange={(e) => setNota({ ...nota, valor_total: parseNum(e.target.value) ?? 0 })} /></div>
               <div><Label>Forma de pagamento</Label>

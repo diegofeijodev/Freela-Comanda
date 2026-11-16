@@ -25,6 +25,24 @@ describe('limparItens', () => {
     expect(r).not.toHaveProperty('insumo');
   });
 
+  it('insumo devolvido com a unidade ("Tomate (KG)") casa pelo nome', () => {
+    const [r] = limparItens([{ ...base, insumo: 'Tomate (KG)' }], insumos, subs);
+    expect(r!.item_estoque_id).toBe('i1');
+    expect(r!.novo).toBeNull();
+  });
+
+  it('nome real terminado em parênteses continua casando pelo nome inteiro', () => {
+    const lista = [{ id: 'q1', nome: 'Queijo (fatiado)' }, { id: 'q2', nome: 'Queijo' }];
+    expect(limparItens([{ ...base, insumo: 'Queijo (fatiado)' }], lista, subs)[0]!.item_estoque_id).toBe('q1');
+    expect(limparItens([{ ...base, insumo: 'Queijo (fatiado) (KG)' }], lista, subs)[0]!.item_estoque_id).toBe('q1');
+  });
+
+  it('item null ou não-objeto da IA é descartado', () => {
+    const r = limparItens([null, 'x', { ...base, insumo: 'TOMATE' }] as unknown as ItemIa[], insumos, subs);
+    expect(r).toHaveLength(1);
+    expect(r[0]!.item_estoque_id).toBe('i1');
+  });
+
   it('insumo inexistente sugere cadastro; nome cai na descrição', () => {
     const [r] = limparItens([{ ...base, insumo: 'Inexistente' }], insumos, subs);
     expect(r!.item_estoque_id).toBeNull();

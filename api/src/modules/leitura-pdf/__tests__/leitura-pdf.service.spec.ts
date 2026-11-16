@@ -72,6 +72,21 @@ describe('leitura de PDF', () => {
     );
   });
 
+  it('data de emissão ilegível vira ""; dd/mm/aaaa é convertida; vencimento inválido também vira ""', async () => {
+    const nota = (data_emissao: string, venc = '2026-11-20') => new LeitorFalso({ data_emissao, itens: [], parcelas: [{ numero: '1', vencimento: venc, valor: 1 }] });
+    const a = await servico(nota('ilegível', '31/02/2026')).lerNota(PDF);
+    expect(a.data_emissao).toBe('');
+    expect(a.parcelas).toEqual([{ numero: '1', vencimento: '', valor: 1 }]);
+    expect((await servico(nota('31/12/2026')).lerNota(PDF)).data_emissao).toBe('2026-12-31');
+  });
+
+  it('chave: só dígitos e só com 44; senão null', async () => {
+    const lida = async (chave: unknown) => ((await servico(new LeitorFalso({ chave, data_emissao: '2026-10-20', itens: [] })).lerNota(PDF)) as { chave?: unknown }).chave;
+    expect(await lida('35 2610 1234 5678 0001 9955 0010 0000 7001 1000 0700 11')).toBe('35261012345678000199550010000070011000070011');
+    expect(await lida('3526101234567800019955001000007001100007001')).toBeNull();
+    expect(await lida(null)).toBeNull();
+  });
+
   it('DDA: devolve a lista de boletos', async () => {
     const leitor = new LeitorFalso({ boletos: [{ beneficiario: 'B', cnpj: null, vencimento: '2026-11-10T00:00', valor: 5, linha_digitavel: null }] });
     const r = await servico(leitor).lerDDA('JVBERi0=', '');

@@ -2,7 +2,7 @@ import { BadRequestException, Controller, HttpCode, HttpException, Post, Req } f
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { FastifyRequest } from 'fastify';
 import { AdminOnly } from '../../common/decorators/permissao.decorator';
-import { LeituraPdfErro, MSG, type ArquivoLeitura, type MimeArquivo } from './leitor-pdf.port';
+import { LeituraPdfErro, type ArquivoLeitura, type MimeArquivo } from './leitor-pdf.port';
 import { LeituraPdfService } from './leitura-pdf.service';
 
 type Parte = { filename: string; toBuffer: () => Promise<Buffer>; file: { truncated: boolean } };
@@ -92,8 +92,11 @@ export class LeituraPdfController {
     const arquivos = await lerImagens(req);
     return this.svc.lerNota(arquivos).catch((e: unknown) => {
       // Só a frase muda: a de PDF não serve para foto (status e code ficam).
-      if (e instanceof LeituraPdfErro && e.message === MSG.naoConfigurada) {
+      if (e instanceof LeituraPdfErro && e.code === 'PDF_NAO_CONFIGURADO') {
         throw new HttpException({ code: e.code, message: 'Leitura de nota não configurada: cadastre a chave de uma IA em Configurações.' }, e.status);
+      }
+      if (e instanceof LeituraPdfErro && e.code === 'PDF_INDISPONIVEL') {
+        throw new HttpException({ code: e.code, message: 'Não foi possível ler a foto agora.' }, e.status);
       }
       return comoHttp(e);
     });

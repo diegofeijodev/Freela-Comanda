@@ -42,7 +42,7 @@ export class NotasService {
         message: 'Escolha um insumo existente ou cadastre um novo, não os dois',
       });
     }
-    const chave = dto.chave?.trim() || null;
+    const chave = dto.chave?.replace(/\D/g, '') || null;
     if (chave && (await this.prisma.notas_entrada.findUnique({ where: { chave }, select: { id: true } }))) {
       throw new ConflictException({ code: 'DUPLICADO', message: 'Esta nota já foi lançada' });
     }
@@ -144,7 +144,7 @@ export class NotasService {
         ids.set(chave, achado.id);
         continue;
       }
-      const fator = l.fator || 1;
+      const fator = typeof l.fator === 'number' && Number.isFinite(l.fator) && l.fator > 0 ? l.fator : 1;
       const subgrupo = ni.subgrupo ? subgrupos.get(normalizaNome(ni.subgrupo)) : undefined;
       try {
         const novo = await tx.itens_estoque.create({
@@ -152,7 +152,7 @@ export class NotasService {
             nome: ni.nome.trim(),
             unidade: ni.unidade.trim().toUpperCase(),
             ...(subgrupo ? { subgrupo } : {}),
-            preco_unitario: l.valor_unitario / fator,
+            ...(l.valor_unitario > 0 ? { preco_unitario: l.valor_unitario / fator } : {}),
             fornecedor: dto.fornecedor_nome,
             ...(fator > 1 ? { qtd_por_embalagem: fator, embalagem_compra: l.unidade?.trim().toUpperCase() || null } : {}),
           },
