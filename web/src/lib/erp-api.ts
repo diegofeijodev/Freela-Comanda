@@ -248,6 +248,37 @@ export const statusIa = () => get<StatusIa>('/v1/ia-chave');
 export const salvarChaveIa = (provedor: ProvedorIa, chave: string) => put<StatusIa>('/v1/ia-chave', { provedor, chave });
 export const removerChaveIa = () => del<StatusIa>('/v1/ia-chave');
 
+// ---------- certificado digital A1 (admin). O arquivo e a senha só vão no envio e nunca voltam; datas chegam como string ISO.
+export type SituacaoCertificado = 'ausente' | 'sem_segredo' | 'ilegivel' | 'vencido' | 'vencendo' | 'valido';
+export type ItemHistoricoCertificado = {
+  evento: 'enviado' | 'substituido' | 'removido';
+  feito_por_nome: string;
+  feito_em: string;
+  valido_ate: string;
+  cnpj: string;
+  titular: string;
+};
+export type CertificadoStatus = {
+  situacao: SituacaoCertificado;
+  titular: string | null;
+  cnpj: string | null;
+  cnpj_confere: 'igual' | 'mesma_raiz' | 'diferente' | 'empresa_sem_cnpj' | null;
+  tipo: 'A1' | 'SE-S' | 'outro' | null;
+  politica_oid: string | null;
+  emissor: string | null;
+  valido_de: string | null;
+  valido_ate: string | null;
+  dias_restantes: number | null;
+  cadeia_conferida: boolean | null;
+  enviado_em: string | null;
+  enviado_por_nome: string | null;
+  historico: ItemHistoricoCertificado[];
+};
+export const statusCertificado = () => get<CertificadoStatus>('/v1/certificado-digital');
+export const enviarCertificado = (arquivo_base64: string, senha: string) =>
+  put<CertificadoStatus>('/v1/certificado-digital', { arquivo_base64, senha });
+export const removerCertificado = () => del<CertificadoStatus>('/v1/certificado-digital');
+
 // ---------- configurações e cadastros
 export const getConfig = () => get<Config>('/v1/configuracoes');
 export const salvarConfig = (patchConfig: Partial<Config>) => patch<Config>('/v1/configuracoes', patchConfig);

@@ -46,3 +46,11 @@ export function errMsg(error: unknown, fallback = 'Erro inesperado'): string {
   if (error instanceof Error && error.message) return error.message;
   return fallback;
 }
+
+/** O `error.code` da API (`{ error: { code, message } }`); `'SEM_CONEXAO'` quando o axios nem recebeu resposta; `null` nos demais casos. */
+export function errCode(error: unknown): string | null {
+  if (!axios.isAxiosError(error)) return null;
+  if (!error.response) return 'SEM_CONEXAO';
+  const code = error.response.data?.error?.code;
+  return typeof code === 'string' && code.length > 0 ? code : null;
+}

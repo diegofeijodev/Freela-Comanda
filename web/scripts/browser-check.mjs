@@ -4,6 +4,7 @@
 import { createRequire } from 'node:module';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 
 const require = createRequire(import.meta.url);
@@ -150,6 +151,76 @@ async function abrir(page, erros, caminho, texto, nome) {
   check('visão do admin com contagens', await page.getByText('Sem quantidade final').waitFor({ timeout: 20_000 }).then(() => true, () => false));
   await page.screenshot({ path: join(SHOTS, 'admin-inventario-visao.png'), fullPage: true });
   check('admin sem erro de console no fim', erros.length === 0, erros.join(' | '));
+  await ctx.close();
+}
+
+// ---------------- ADMIN: certificado digital (A1) em Configurações, celular 360x800
+{
+  const fx = (nome) => fileURLToPath(new URL(`../../api/src/modules/certificado-digital/__tests__/fixtures/${nome}`, import.meta.url));
+  const { ctx, page, erros } = await sessao('admin@erpfreela.local', { width: 360, height: 800 });
+  await page.goto(`${BASE}/configuracoes`, { waitUntil: 'networkidle', timeout: 180_000 });
+  const painel = page.locator('#certificado-digital');
+  check('certificado: painel aparece', await painel.getByText('Nenhum certificado guardado').waitFor({ timeout: 60_000 }).then(() => true, () => false));
+  // O CNPJ conferido é o SALVO: grava pelo quadro Empresa + "Salvar" do topo.
+  await page.getByPlaceholder('00.000.000/0000-00').fill('12.345.678/0001-95');
+  await page.getByRole('button', { name: 'Salvar', exact: true }).first().click();
+  check('certificado: CNPJ da empresa salvo', await page.getByText('Configurações salvas').first().waitFor({ timeout: 20_000 }).then(() => true, () => false));
+
+  const guardar = painel.getByRole('button', { name: 'Conferir e guardar certificado' });
+  const senha = page.locator('#certificado-senha');
+  check('certificado: botão desabilitado sem arquivo e senha', await guardar.isDisabled());
+  await page.setInputFiles('#certificado-arquivo', fx('valido.pfx'));
+  check('certificado: só com arquivo ainda desabilitado', await guardar.isDisabled());
+  await senha.fill('errada');
+  check('certificado: com arquivo e senha habilita', await guardar.isEnabled());
+  for (let i = 1; i <= 2; i++) {
+    if (i === 2) await senha.fill('errada');
+    await guardar.click();
+    check(`certificado: senha errada (${i}ª vez) avisa`, await painel.getByRole('alert').getByText('Senha do certificado incorreta. Digite de novo.').waitFor({ timeout: 30_000 }).then(() => true, () => false));
+    await page.waitForFunction(() => document.activeElement?.id === 'certificado-senha' && document.activeElement.value === '', null, { timeout: 10_000 }).then(
+      () => check(`certificado: senha vazia e com foco (${i}ª vez)`, true),
+      () => check(`certificado: senha vazia e com foco (${i}ª vez)`, false),
+    );
+    check(`certificado: nome do arquivo segue visível (${i}ª vez)`, await painel.getByText('valido.pfx').isVisible());
+  }
+  await senha.fill('senha-de-teste');
+  await guardar.click();
+  check('certificado: toast de guardado', await page.getByText('Certificado guardado.').first().waitFor({ timeout: 30_000 }).then(() => true, () => false));
+  check('certificado: mostra o CNPJ', await painel.getByText('CNPJ 12.345.678/0001-95', { exact: true }).isVisible());
+  check('certificado: aviso da cadeia', await painel.getByText('não consegui conferir a emissora').isVisible());
+  check('certificado: senha não está no HTML', !(await page.content()).includes('senha-de-teste'));
+  check('certificado: sem rolagem lateral em 360', await page.evaluate(() => document.documentElement.scrollWidth <= 360));
+  await painel.getByText('Ver histórico').click();
+  check('certificado: histórico mostra "Enviado por"', await painel.locator('details li').first().getByText('Enviado por').isVisible());
+  await painel.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(SHOTS, 'admin-certificado-360.png'), fullPage: true });
+
+  // Substituir por um certificado de outro CNPJ: recusa e o atual segue intacto.
+  await painel.getByRole('button', { name: 'Substituir certificado' }).click();
+  await page.setInputFiles('#certificado-arquivo', fx('outro-cnpj.pfx'));
+  await page.locator('#certificado-senha').fill('senha-de-teste');
+  await painel.getByRole('button', { name: 'Conferir e trocar certificado' }).click();
+  check('certificado: troca recusada diz que o atual não mudou', await painel.getByRole('alert').getByText('O certificado atual não foi alterado.').waitFor({ timeout: 30_000 }).then(() => true, () => false));
+  check('certificado: CNPJ antigo ainda visível', await painel.getByText('CNPJ 12.345.678/0001-95', { exact: true }).isVisible());
+  await painel.getByRole('button', { name: 'Cancelar' }).click();
+
+  // Remover: foco em "Manter certificado", Esc fecha, confirmar apaga.
+  await painel.getByRole('button', { name: 'Remover', exact: true }).click();
+  const dialogo = page.getByRole('alertdialog');
+  await dialogo.waitFor();
+  check('certificado: foco inicial em "Manter certificado"', (await page.evaluate(() => document.activeElement?.textContent)) === 'Manter certificado');
+  await page.keyboard.press('Escape');
+  check('certificado: Esc fecha o diálogo', await dialogo.waitFor({ state: 'hidden', timeout: 10_000 }).then(() => true, () => false));
+  await painel.getByRole('button', { name: 'Remover', exact: true }).click();
+  await dialogo.getByRole('button', { name: 'Remover certificado' }).click();
+  check('certificado: toast de removido', await page.getByText('Certificado removido.').first().waitFor({ timeout: 30_000 }).then(() => true, () => false));
+  check('certificado: volta a "Nenhum certificado guardado"', await painel.getByText('Nenhum certificado guardado').waitFor({ timeout: 20_000 }).then(() => true, () => false));
+
+  const storage = await page.evaluate(() => ({ local: Object.keys(localStorage), sessao: sessionStorage.length }));
+  check('certificado: localStorage só com authUser e sessionStorage vazio', storage.local.length === 1 && storage.local[0] === 'authUser' && storage.sessao === 0, JSON.stringify(storage));
+  // As recusas (400) viram "Failed to load resource" no console do navegador: é esperado, não é erro da tela.
+  const reais = erros.filter((e) => !/Failed to load resource/.test(e));
+  check('certificado: sem erro de console', reais.length === 0, reais.join(' | '));
   await ctx.close();
 }
 
