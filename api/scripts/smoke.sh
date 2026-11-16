@@ -251,7 +251,16 @@ req DELETE /v1/ia-chave "$ADM"; check "remover sem chave" 200 "$CODE"
 CODE=$(curl -s -o "$OUT" -w '%{http_code}' -H "authorization: Bearer $ADM" -F "arquivo=@$TXT" "$BASE/v1/dda/ler-pdf"); BODY=$(cat "$OUT")
 check "arquivo que não é PDF" "O arquivo não é um PDF." "$(j .error.message)"
 CODE=$(curl -s -o "$OUT" -w '%{http_code}' -H "authorization: Bearer $LOJA" -F "arquivo=@$PDF" "$BASE/v1/notas/ler-pdf"); check "loja não lê PDF" 403 "$CODE"
-rm -f "$PDF" "$TXT" "$OUT"
+# foto da nota: JPEG mínimo válido (só importa o começo FF D8 FF)
+JPG=$(mktemp --suffix=.jpg); printf '\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xd9' > "$JPG"
+CODE=$(curl -s -o "$OUT" -w '%{http_code}' -H "authorization: Bearer $ADM" -F "arquivo=@$JPG;type=image/jpeg" "$BASE/v1/notas/ler-foto"); BODY=$(cat "$OUT")
+check "foto sem chave" "Leitura de nota não configurada: cadastre a chave de uma IA em Configurações." "$(j .error.message)"; check "foto sem chave: 503" 503 "$CODE"
+CODE=$(curl -s -o "$OUT" -w '%{http_code}' -H "authorization: Bearer $ADM" -F "arquivo=@$TXT" "$BASE/v1/notas/ler-foto"); BODY=$(cat "$OUT")
+check "arquivo que não é imagem" "O arquivo não é uma imagem (JPG, PNG ou WebP)." "$(j .error.message)"
+CODE=$(curl -s -o "$OUT" -w '%{http_code}' -H "authorization: Bearer $ADM" -F "a=@$JPG" -F "b=@$JPG" -F "c=@$JPG" -F "d=@$JPG" -F "e=@$JPG" "$BASE/v1/notas/ler-foto"); BODY=$(cat "$OUT")
+check "cinco fotos" "Envie até 4 fotos da mesma nota." "$(j .error.message)"; check "cinco fotos: 400" 400 "$CODE"
+CODE=$(curl -s -o "$OUT" -w '%{http_code}' -H "authorization: Bearer $LOJA" -F "arquivo=@$JPG" "$BASE/v1/notas/ler-foto"); check "loja não lê foto" 403 "$CODE"
+rm -f "$PDF" "$TXT" "$JPG" "$OUT"
 
 echo "smoke: $ok ok, $falhas falha(s)"
 [ "$falhas" -eq 0 ]

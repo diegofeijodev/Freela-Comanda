@@ -12,7 +12,7 @@ export function blocosClaude(arquivos: ArquivoLeitura[]): unknown[] {
 }
 
 /**
- * Leitura de PDF pela API da Anthropic (o protótipo usava o gateway de IA da Lovable): PDF em base64 como bloco `document`
+ * Leitura de PDF ou foto pela API da Anthropic (o protótipo usava o gateway de IA da Lovable): PDF em base64 como bloco `document`
  * e resposta restrita ao JSON Schema do protótipo (`output_config.format`). Esforço baixo, como o `reasoning.effort: "low"`
  * de lá. `fallbacks: 'default'`: se o modelo recusar por política, a própria API refaz o pedido no modelo recomendado.
  */

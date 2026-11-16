@@ -41,7 +41,7 @@ async function bootstrap() {
   });
 
   // PDF da nota fiscal / do DDA para a leitura por IA: um arquivo, 10 MB (o próprio protótipo dizia "máx. 10 MB").
-  await app.register(multipart as never, { limits: { fileSize: 10 * 1024 * 1024, files: 1 } });
+  await app.register(multipart as never, { limits: { fileSize: 10 * 1024 * 1024, files: 4 } });
 
   const config = app.get(ConfigService);
 

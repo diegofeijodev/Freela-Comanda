@@ -2,10 +2,11 @@ import { BadRequestException, Controller, HttpCode, HttpException, Post, Req } f
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { FastifyRequest } from 'fastify';
 import { AdminOnly } from '../../common/decorators/permissao.decorator';
-import { LeituraPdfErro } from './leitor-pdf.port';
+import { LeituraPdfErro, MSG, type ArquivoLeitura, type MimeArquivo } from './leitor-pdf.port';
 import { LeituraPdfService } from './leitura-pdf.service';
 
-type Multipart = { file: () => Promise<{ filename: string; toBuffer: () => Promise<Buffer>; file: { truncated: boolean } } | undefined> };
+type Parte = { filename: string; toBuffer: () => Promise<Buffer>; file: { truncated: boolean } };
+type Multipart = { files: () => AsyncIterableIterator<Parte>; file: () => Promise<{ filename: string; toBuffer: () => Promise<Buffer>; file: { truncated: boolean } } | undefined> };
 
 const grandeDemais = () => new BadRequestException({ code: 'ARQUIVO_INVALIDO', message: 'Arquivo vazio ou grande demais (máx. 10 MB)' });
 
@@ -32,6 +33,40 @@ async function lerPdf(req: FastifyRequest): Promise<{ base64: string; nome: stri
   return { base64: buf.toString('base64'), nome };
 }
 
+const MAX_FOTOS = 4;
+const muitasFotos = () => new BadRequestException({ code: 'ARQUIVO_INVALIDO', message: `Envie até ${MAX_FOTOS} fotos da mesma nota.` });
+
+/** Tipo da imagem pelos primeiros bytes (JPEG, PNG ou WebP); null se for outra coisa. */
+function mimeImagem(b: Buffer): MimeArquivo | null {
+  if (b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'image/jpeg';
+  if (b.length >= 4 && b[0] === 0x89 && b.subarray(1, 4).toString('latin1') === 'PNG') return 'image/png';
+  if (b.length >= 12 && b.subarray(0, 4).toString('latin1') === 'RIFF' && b.subarray(8, 12).toString('latin1') === 'WEBP') return 'image/webp';
+  return null;
+}
+
+/** Lê de 1 a 4 imagens do multipart (o limite de 10 MB por arquivo e de 4 arquivos é do registro do multipart no main.ts). */
+async function lerImagens(req: FastifyRequest): Promise<ArquivoLeitura[]> {
+  const r = req as unknown as Multipart & { isMultipart?: () => boolean };
+  if (!r.isMultipart?.()) throw grandeDemais();
+  const out: ArquivoLeitura[] = [];
+  try {
+    for await (const parte of r.files()) {
+      if (out.length >= MAX_FOTOS) throw muitasFotos();
+      const buf = await parte.toBuffer();
+      if (parte.file.truncated || !buf.length) throw grandeDemais();
+      const mime = mimeImagem(buf);
+      if (!mime) throw new BadRequestException({ code: 'ARQUIVO_INVALIDO', message: 'O arquivo não é uma imagem (JPG, PNG ou WebP).' });
+      out.push({ base64: buf.toString('base64'), mime, nome: parte.filename || `foto-${out.length + 1}` });
+    }
+  } catch (e) {
+    if (e instanceof HttpException) throw e;
+    if ((e as { code?: string }).code === 'FST_FILES_LIMIT') throw muitasFotos();
+    throw grandeDemais();
+  }
+  if (!out.length) throw grandeDemais();
+  return out;
+}
+
 function comoHttp(e: unknown): never {
   if (e instanceof LeituraPdfErro) throw new HttpException({ code: e.code, message: e.message }, e.status);
   throw e;
@@ -48,7 +83,20 @@ export class LeituraPdfController {
   @Post('notas/ler-pdf')
   async lerNota(@Req() req: FastifyRequest) {
     const { base64, nome } = await lerPdf(req);
-    return this.svc.lerNota(base64, nome).catch(comoHttp);
+    return this.svc.lerNota([{ base64, mime: 'application/pdf', nome: nome || 'nota.pdf' }]).catch(comoHttp);
+  }
+
+  @HttpCode(200)
+  @Post('notas/ler-foto')
+  async lerFoto(@Req() req: FastifyRequest) {
+    const arquivos = await lerImagens(req);
+    return this.svc.lerNota(arquivos).catch((e: unknown) => {
+      // Só a frase muda: a de PDF não serve para foto (status e code ficam).
+      if (e instanceof LeituraPdfErro && e.message === MSG.naoConfigurada) {
+        throw new HttpException({ code: e.code, message: 'Leitura de nota não configurada: cadastre a chave de uma IA em Configurações.' }, e.status);
+      }
+      return comoHttp(e);
+    });
   }
 
   @HttpCode(200)

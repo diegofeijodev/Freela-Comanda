@@ -1,7 +1,8 @@
 import { ClaudeLeitorPdf } from '../claude-leitor-pdf';
 import { LeituraPdfErro, MSG, type LeitorPdf, type PedidoLeitura } from '../leitor-pdf.port';
 import { iso, LeituraPdfService } from '../leitura-pdf.service';
-import { SCHEMA_DDA, SCHEMA_NOTA } from '../schemas';
+import { SCHEMA_DDA, SCHEMA_NOTA_SUGESTAO } from '../schemas';
+import type { PrismaService } from '../../../common/database/prisma.service';
 
 /** Leitor falso: nenhum teste faz rede. Guarda o pedido para conferir esquema/instruções. */
 class LeitorFalso implements LeitorPdf {
@@ -15,6 +16,13 @@ class LeitorFalso implements LeitorPdf {
     return this.resposta;
   }
 }
+
+const prismaFalso = {
+  itens_estoque: { findMany: async () => [{ id: 'i1', nome: 'Tomate', unidade: 'KG' }] },
+  subgrupos: { findMany: async () => [{ nome: 'Hortifruti' }] },
+} as unknown as PrismaService;
+const servico = (l: LeitorPdf) => new LeituraPdfService(l, prismaFalso);
+const PDF = [{ base64: 'JVBERi0=', mime: 'application/pdf' as const, nome: 'nf.pdf' }];
 
 describe('leitura de PDF', () => {
   it('nota: usa o esquema do protótipo e corrige datas dd/mm/aaaa', async () => {
@@ -30,23 +38,50 @@ describe('leitura de PDF', () => {
       itens: [{ codigo: null, descricao: 'A', unidade: 'UN', quantidade: 1, valor_unitario: 10, valor_total: 10 }],
       parcelas: [{ numero: '1', vencimento: '20/11/2026', valor: 10 }],
     });
-    const r = await new LeituraPdfService(leitor).lerNota('JVBERi0=', 'nf.pdf');
+    const r = await servico(leitor).lerNota(PDF);
     expect(r.data_emissao).toBe('2026-10-20');
     expect(r.parcelas).toEqual([{ numero: '1', vencimento: '2026-11-20', valor: 10 }]);
-    expect(leitor.pedidos[0]!.schema).toBe(SCHEMA_NOTA);
+    expect(leitor.pedidos[0]!.schema).toBe(SCHEMA_NOTA_SUGESTAO);
     expect(leitor.pedidos[0]!.arquivos).toEqual([{ base64: 'JVBERi0=', mime: 'application/pdf', nome: 'nf.pdf' }]);
+  });
+
+  it('nota: itens saem limpos, com o insumo indicado pela IA', async () => {
+    const leitor = new LeitorFalso({
+      data_emissao: '2026-10-20',
+      itens: [{ codigo: null, descricao: 'TOMATE', unidade: 'KG', quantidade: 1, valor_unitario: 1, valor_total: 1, insumo: 'tomate', novo_nome: null, novo_unidade: null, novo_subgrupo: null, fator: 1 }],
+    });
+    const r = await servico(leitor).lerNota(PDF);
+    expect(r.itens[0]).toMatchObject({ item_estoque_id: 'i1', novo: null, fator: 1 });
+  });
+
+  it('foto: 2 imagens seguem no pedido, junto com o catálogo', async () => {
+    const leitor = new LeitorFalso({ itens: [] });
+    const fotos = [
+      { base64: 'AA', mime: 'image/jpeg' as const, nome: 'a.jpg' },
+      { base64: 'BB', mime: 'image/png' as const, nome: 'b.png' },
+    ];
+    await servico(leitor).lerNota(fotos);
+    expect(leitor.pedidos[0]!.arquivos).toHaveLength(2);
+    expect(leitor.pedidos[0]!.pedido).toContain('- Tomate (KG)');
+    expect(leitor.pedidos[0]!.pedido).toContain('Hortifruti');
+  });
+
+  it('foto sem itens: mensagem de foto', async () => {
+    await expect(servico(new LeitorFalso({ foo: 1 })).lerNota([{ base64: 'AA', mime: 'image/jpeg', nome: 'a.jpg' }])).rejects.toEqual(
+      new LeituraPdfErro('Não consegui identificar os dados desta foto.', 422, 'PDF_ILEGIVEL'),
+    );
   });
 
   it('DDA: devolve a lista de boletos', async () => {
     const leitor = new LeitorFalso({ boletos: [{ beneficiario: 'B', cnpj: null, vencimento: '2026-11-10T00:00', valor: 5, linha_digitavel: null }] });
-    const r = await new LeituraPdfService(leitor).lerDDA('JVBERi0=', '');
+    const r = await servico(leitor).lerDDA('JVBERi0=', '');
     expect(r).toEqual([{ beneficiario: 'B', cnpj: null, vencimento: '2026-11-10', valor: 5, linha_digitavel: null }]);
     expect(leitor.pedidos[0]!.schema).toBe(SCHEMA_DDA);
     expect(leitor.pedidos[0]!.arquivos).toEqual([{ base64: 'JVBERi0=', mime: 'application/pdf', nome: 'dda.pdf' }]);
   });
 
   it('resposta sem itens vira a mensagem de PDF ilegível', async () => {
-    await expect(new LeituraPdfService(new LeitorFalso({ foo: 1 })).lerNota('x', 'a.pdf')).rejects.toThrow(
+    await expect(servico(new LeitorFalso({ foo: 1 })).lerNota(PDF)).rejects.toThrow(
       'Não consegui identificar os dados deste PDF.',
     );
   });

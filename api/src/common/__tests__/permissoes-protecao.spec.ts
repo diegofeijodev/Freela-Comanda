@@ -76,6 +76,14 @@ describe('proteção das rotas (substitui as políticas RLS do Supabase)', () =>
     ]);
   });
 
+  it('a leitura de nota e de DDA por IA é só do admin', () => {
+    expect(todas.filter((r) => r.rota.includes('/ler-'))).toEqual([
+      { rota: 'POST /v1/notas/ler-pdf', marca: 'admin' },
+      { rota: 'POST /v1/notas/ler-foto', marca: 'admin' },
+      { rota: 'POST /v1/dda/ler-pdf', marca: 'admin' },
+    ]);
+  });
+
   it('só estas rotas são públicas', () => {
     expect(todas.filter((r) => r.marca === 'public').map((r) => r.rota).sort()).toEqual(
       ['GET /health', 'GET /v1/auth/existe-admin', 'POST /v1/auth/login', 'POST /v1/auth/primeiro-acesso'].sort(),

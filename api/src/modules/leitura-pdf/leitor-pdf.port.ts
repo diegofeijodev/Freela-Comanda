@@ -1,5 +1,5 @@
 /**
- * Porta da leitura de PDF por IA (spec, decisão 6). Produção = a IA cuja chave a empresa cadastrou em Configurações
+ * Porta da leitura de PDF e de foto de nota por IA (spec, decisão 6). Produção = a IA cuja chave a empresa cadastrou em Configurações
  * (Claude, ChatGPT ou Gemini; sem ela, a ANTHROPIC_API_KEY do servidor); testes injetam um falso — nenhum teste faz rede.
  */
 export const LEITOR_PDF = Symbol('LEITOR_PDF');
