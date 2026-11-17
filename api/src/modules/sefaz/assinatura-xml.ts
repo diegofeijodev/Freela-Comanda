@@ -80,7 +80,10 @@ function emitir(el: NoXml, ns: string, topo: boolean, partes: string[]): void {
   partes.push('</', el.nodeName, '>'); // nunca <x/>
 }
 
-/** C14N 2001 inclusiva (sem comentários), restrita ao subconjunto da Decisão 3; fora dele = AssinaturaErro. Saída em UTF-8 ao digerir. */
+/**
+ * C14N 2001 inclusiva (sem comentários), restrita ao subconjunto da Decisão 3; fora dele = AssinaturaErro. Saída em UTF-8 ao digerir.
+ * Recebe o nó já lido: quem lê o texto recusa antes os literais U+0085/U+2028/U+2029 (ver `QUEBRA_XML_11`).
+ */
 export function canonicalizar(el: NoXml): string {
   try {
     conferirAncestrais(el);
@@ -95,16 +98,22 @@ export function canonicalizar(el: NoXml): string {
 // `Id` vai em `URI="#…"` e na busca de `Id="…"` no texto: só o que um xs:ID de NF-e/evento usa, sem nada a escapar
 const ID_SEGURO = /^[A-Za-z_][A-Za-z0-9_.-]*$/;
 
+// O xmldom troca U+0085, U+2028 e U+2029 LITERAIS por `\n` antes de ler (fim de linha do XML 1.1). A SEFAZ lê como XML 1.0 e
+// os mantém: o digest cobriria um `\n` que não está no texto enviado. As referências (`&#x2028;`) não são trocadas e passam.
+const QUEBRA_XML_11 = /[\u0085\u2028\u2029]/;
+
 const comId = (raiz: ReturnType<typeof lerXml>, id: string): NoXml[] => elementos(raiz, '*').filter((e) => e.getAttribute('Id') === id);
 
 /**
  * Assina o elemento cujo `Id` é `idDoElemento` e devolve o XML com a `Signature` logo depois do `</nome>` que o fecha (Decisão 4),
  * sem reserializar o resto do texto. Recusa (AssinaturaErro): `Id` ausente ou repetido, elemento com descendente de mesmo nome,
- * fora do subconjunto da C14N, chave que não é RSA.
+ * fora do subconjunto da C14N, chave que não é RSA, U+0085/U+2028/U+2029 literais no texto.
  */
 export function assinarXmlEnveloped(xml: string, idDoElemento: string, cert: CertificadoEmUso): string {
   try {
     if (!ID_SEGURO.test(idDoElemento) || cert.chavePrivada.asymmetricKeyType !== 'rsa') throw new AssinaturaErro();
+    if (QUEBRA_XML_11.test(xml)) throw new AssinaturaErro(); // antes do lerXml, que os apagaria
+
     const alvos = comId(lerXml(xml), idDoElemento);
     if (alvos.length !== 1) throw new AssinaturaErro();
     const el = alvos[0];

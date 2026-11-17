@@ -1,4 +1,4 @@
-import { generateKeyPairSync, X509Certificate } from 'node:crypto';
+import { createHash, generateKeyPairSync, verify, X509Certificate } from 'node:crypto';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 // Oráculo: xml-crypto 6.4.0 (devDependency exata), importado SÓ em arquivos de __tests__. Nenhum teste faz rede: a chave e o
@@ -150,11 +150,33 @@ describe('assinarXmlEnveloped', () => {
     ['Id em aspas simples', montar(`<infEvento Id='${ID}'>${CAMPOS}</infEvento>`)],
     ['XML inválido', `<evento xmlns="${NFE}"><infEvento Id="${ID}"></evento>`],
     ['DOCTYPE', `<!DOCTYPE evento []>${EVENTO}`],
+    // literais: o xmldom os troca por \n antes de ler (regra do XML 1.1); o digest cobriria um \n que não está no texto enviado
+    ['U+0085 (NEL) literal dentro do elemento', comInf(`<xJust>Devolvido\u0085na porta</xJust>`)],
+    ['U+2028 (LS) literal dentro do elemento', comInf(`<xJust>Devolvido\u2028na porta</xJust>`)],
+    ['U+2029 (PS) literal dentro do elemento', comInf(`<xJust>Devolvido\u2029na porta</xJust>`)],
+    ['CR seguido de U+0085 literal dentro do elemento', comInf(`<xJust>Devolvido\r\u0085na porta</xJust>`)],
   ])('recusa: %s, com a frase fixa', (_caso, xml, id = ID) => {
     const erro = recusa(() => assinarXmlEnveloped(xml, id, CLIENTE));
     expect(erro.message).toBe(FRASE);
     expect(erro.message).not.toContain('infEvento');
     expect(erro.message).not.toContain('<');
+  });
+
+  it('C14N escrita à mão: o digest e a assinatura batem com o texto canônico montado sem o xmldom', () => {
+    // a referência &#x2028; (não o caractere literal) é XML 1.0 válido: a C14N a escreve como o próprio caractere
+    const xml = `<evento xmlns="urn:teste" versao="1.00"><infEvento b="2" Id="ID1" a="x&amp;y"><c>é &lt; z&#x2028;w</c><d/></infEvento></evento>`;
+    const c14n = '<infEvento xmlns="urn:teste" Id="ID1" a="x&amp;y" b="2"><c>é &lt; z\u2028w</c><d></d></infEvento>';
+    const assinado = assinarXmlEnveloped(xml, 'ID1', CLIENTE);
+    const digest = createHash('sha1').update(c14n, 'utf8').digest('base64');
+    expect(valor(assinado, 'DigestValue')).toBe(digest);
+    const signedInfo =
+      `<SignedInfo xmlns="${XMLDSIG.ns}"><CanonicalizationMethod Algorithm="${XMLDSIG.c14n}"></CanonicalizationMethod>` +
+      `<SignatureMethod Algorithm="${XMLDSIG.rsaSha1}"></SignatureMethod><Reference URI="#ID1"><Transforms>` +
+      `<Transform Algorithm="${XMLDSIG.enveloped}"></Transform><Transform Algorithm="${XMLDSIG.c14n}"></Transform></Transforms>` +
+      `<DigestMethod Algorithm="${XMLDSIG.sha1}"></DigestMethod><DigestValue>${digest}</DigestValue></Reference></SignedInfo>`;
+    const sv = Buffer.from(valor(assinado, 'SignatureValue') ?? '', 'base64');
+    expect(verify('RSA-SHA1', Buffer.from(signedInfo, 'utf8'), CLIENTE.certificado.publicKey, sv)).toBe(true);
+    expect(assinado).toContain('z&#x2028;w'); // o texto enviado não muda
   });
 
   it('recusa chave que não é RSA (a assinatura declarada é rsa-sha1)', () => {
