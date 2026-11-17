@@ -96,7 +96,15 @@ const ids = { a: randomUUID(), b: randomUUID(), c: randomUUID(), d: randomUUID()
 /** As 5 notas do smoke: (a) falta lançar, (b) cancelada depois de lançada, (c) parece lançada, (d) denegada sem XML, (e) saída. */
 function semear(t: TabelasSefaz, ambiente: string) {
   t.sefaz_documentos.push(
-    linhaCom('sefaz_documentos', { id: ids.doc, ambiente, cnpj: NOSSO, nsu: 1n, schema: 'procNFe_v4.00.xsd', tipo: 'procNFe', xml: '<nfeProc>K880</nfeProc>' }),
+    linhaCom('sefaz_documentos', {
+      id: ids.doc,
+      ambiente,
+      cnpj: NOSSO,
+      nsu: 1n,
+      schema: 'procNFe_v4.00.xsd',
+      tipo: 'procNFe',
+      xml: '<nfeProc>K880</nfeProc>',
+    }),
   );
   const nota = (id: string, chave: string, emit: string, numero: string, serie: string, sit: string, emitida: Date | null, x = {}) =>
     t.notas_sefaz.push(
@@ -115,7 +123,12 @@ function semear(t: TabelasSefaz, ambiente: string) {
         ...x,
       }),
     );
-  nota(ids.a, K880, FORN, '880', '1', 'autorizada', dia('10'), { documento_completo_id: ids.doc, tp_nf: 1, fin_nfe: 1, valor_total: '123.45' });
+  nota(ids.a, K880, FORN, '880', '1', 'autorizada', dia('10'), {
+    documento_completo_id: ids.doc,
+    tp_nf: 1,
+    fin_nfe: 1,
+    valor_total: '123.45',
+  });
   nota(ids.b, VETOR, EMIT, '4411', '1', 'cancelada', dia('11'), { cancelada_em: dia('12') });
   nota(ids.c, KPARECE, EMIT, '4411', '1', 'autorizada', dia('12'));
   nota(ids.d, K15, FORN, '15', '2', 'denegada', null);
@@ -123,7 +136,13 @@ function semear(t: TabelasSefaz, ambiente: string) {
 }
 
 const LANCADAS = [
-  lancada({ id: 'l-novo', chave: '35261112ABC34501DE35550010000044111000044124', numero: '000.004.411', created_at: '2026-11-05T15:00:00.000Z', origem: 'xml' }),
+  lancada({
+    id: 'l-novo',
+    chave: '35261112ABC34501DE35550010000044111000044124',
+    numero: '000.004.411',
+    created_at: '2026-11-05T15:00:00.000Z',
+    origem: 'xml',
+  }),
   lancada({ id: 'l-vetor', chave: VETOR, created_at: '2026-11-03T15:00:00.000Z' }),
 ];
 
@@ -198,7 +217,10 @@ describe('CaixaSefazService', () => {
     });
 
     it('certificado de outra empresa (erro da porta): 422 CERTIFICADO_OUTRO_CNPJ', async () => {
-      const { svc } = montar({ certErro: new CertificadoErro('Certificado de outra empresa.', 422, 'CERTIFICADO_OUTRO_CNPJ'), linha: null });
+      const { svc } = montar({
+        certErro: new CertificadoErro('Certificado de outra empresa.', 422, 'CERTIFICADO_OUTRO_CNPJ'),
+        linha: null,
+      });
       expect(await recusa(svc.configurar(true, QUEM, AGORA))).toMatchObject({ status: 422, code: 'CERTIFICADO_OUTRO_CNPJ' });
     });
 
@@ -340,16 +362,40 @@ describe('CaixaSefazService', () => {
       });
       const consulta = randomUUID();
       t.sefaz_lacunas.push(
-        linhaCom('sefaz_lacunas', { ambiente: 'producao', cnpj: NOSSO, nsu_de: 10n, nsu_ate: 14n, causa: 'outro_sistema', consulta_id: consulta }),
-        linhaCom('sefaz_lacunas', { ambiente: 'producao', cnpj: NOSSO, nsu_de: 20n, nsu_ate: 20n, causa: 'resposta_perdida', consulta_id: consulta }),
         linhaCom('sefaz_lacunas', {
-          ambiente: 'producao', cnpj: NOSSO, nsu_de: 30n, nsu_ate: 39n, causa: 'outro_sistema', consulta_id: consulta, preenchida_em: AGORA,
+          ambiente: 'producao',
+          cnpj: NOSSO,
+          nsu_de: 10n,
+          nsu_ate: 14n,
+          causa: 'outro_sistema',
+          consulta_id: consulta,
+        }),
+        linhaCom('sefaz_lacunas', {
+          ambiente: 'producao',
+          cnpj: NOSSO,
+          nsu_de: 20n,
+          nsu_ate: 20n,
+          causa: 'resposta_perdida',
+          consulta_id: consulta,
+        }),
+        linhaCom('sefaz_lacunas', {
+          ambiente: 'producao',
+          cnpj: NOSSO,
+          nsu_de: 30n,
+          nsu_ate: 39n,
+          causa: 'outro_sistema',
+          consulta_id: consulta,
+          preenchida_em: AGORA,
         }),
       );
       for (let i = 0; i < 7; i++) {
         t.sefaz_distribuicao_historico.push(
           linhaCom('sefaz_distribuicao_historico', {
-            ambiente: 'producao', cnpj: NOSSO, evento: 'ligada', situacao: 'ok', feito_em: new Date(AGORA.getTime() - i * 3_600_000),
+            ambiente: 'producao',
+            cnpj: NOSSO,
+            evento: 'ligada',
+            situacao: 'ok',
+            feito_em: new Date(AGORA.getTime() - i * 3_600_000),
           }),
         );
       }
@@ -371,8 +417,24 @@ describe('CaixaSefazService', () => {
       const { svc, t } = montar({ semear: true, lancadas: LANCADAS, linha: { ultima_consulta_em: AGORA } });
       const ciclo = randomUUID();
       t.sefaz_consultas.push(
-        linhaCom('sefaz_consultas', { ciclo_id: ciclo, ambiente: 'producao', cnpj: NOSSO, origem: 'agendada', ult_nsu_enviado: 0n, iniciada_em: new Date(AGORA.getTime() - 60_000), resultado: 'respondida' }),
-        linhaCom('sefaz_consultas', { ciclo_id: ciclo, ambiente: 'producao', cnpj: NOSSO, origem: 'agendada', ult_nsu_enviado: 5n, iniciada_em: new Date(AGORA.getTime() - 30_000), resultado: 'respondida' }),
+        linhaCom('sefaz_consultas', {
+          ciclo_id: ciclo,
+          ambiente: 'producao',
+          cnpj: NOSSO,
+          origem: 'agendada',
+          ult_nsu_enviado: 0n,
+          iniciada_em: new Date(AGORA.getTime() - 60_000),
+          resultado: 'respondida',
+        }),
+        linhaCom('sefaz_consultas', {
+          ciclo_id: ciclo,
+          ambiente: 'producao',
+          cnpj: NOSSO,
+          origem: 'agendada',
+          ult_nsu_enviado: 5n,
+          iniciada_em: new Date(AGORA.getTime() - 30_000),
+          resultado: 'respondida',
+        }),
       );
       t.notas_sefaz[0]!.criada_em = new Date(AGORA.getTime() - 3_600_000); // antiga
       const s = await aberta(svc);
@@ -435,7 +497,11 @@ describe('CaixaSefazService', () => {
       const { svc, t } = montar({ semear: true });
       const base = t.notas_sefaz[0]!;
       for (let i = 0; i < 510; i++) {
-        t.notas_sefaz.push({ ...base, id: randomUUID(), chave: `35261111222333000181550010${String(i).padStart(9, '0')}1000000000`.slice(0, 44) });
+        t.notas_sefaz.push({
+          ...base,
+          id: randomUUID(),
+          chave: `35261111222333000181550010${String(i).padStart(9, '0')}1000000000`.slice(0, 44),
+        });
       }
       expect((await svc.listar('todas', 600)).length).toBe(500);
       expect((await svc.listar('todas', 0)).length).toBe(1);
@@ -514,7 +580,11 @@ describe('CaixaSefazService', () => {
         ignorada: { em: AGORA.toISOString(), por_nome: 'Ana', motivo: 'nao_e_compra', texto: null },
       });
       expect(t.notas_sefaz.find((n) => n.id === ids.e)).toMatchObject({
-        ignorada_em: AGORA, ignorada_por: QUEM.id, ignorada_por_nome: 'Ana', motivo_ignorar: 'nao_e_compra', motivo_texto: null,
+        ignorada_em: AGORA,
+        ignorada_por: QUEM.id,
+        ignorada_por_nome: 'Ana',
+        motivo_ignorar: 'nao_e_compra',
+        motivo_texto: null,
       });
       const log = logs.find((l) => l.includes('"acao":"ignorar"'))!;
       expect(JSON.parse(log)).toEqual({ evento: 'sefaz.caixa', acao: 'ignorar', id: ids.e, motivo: 'nao_e_compra', usuario_id: QUEM.id });
@@ -522,7 +592,11 @@ describe('CaixaSefazService', () => {
       const volta = await svc.reabrir(ids.e, QUEM);
       expect(volta).toMatchObject({ situacao: 'falta_lancar', ignorada: null });
       expect(t.notas_sefaz.find((n) => n.id === ids.e)).toMatchObject({
-        ignorada_em: null, ignorada_por: null, ignorada_por_nome: null, motivo_ignorar: null, motivo_texto: null,
+        ignorada_em: null,
+        ignorada_por: null,
+        ignorada_por_nome: null,
+        motivo_ignorar: null,
+        motivo_texto: null,
       });
       expect(JSON.parse(logs.find((l) => l.includes('"acao":"reabrir"'))!)).toMatchObject({ id: ids.e, usuario_id: QUEM.id });
     });
