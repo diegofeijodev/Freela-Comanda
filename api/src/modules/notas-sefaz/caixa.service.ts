@@ -47,8 +47,7 @@ const TX = { maxWait: 10_000, timeout: 30_000 };
 const FRASE = {
   naoCadastrado: 'Envie o certificado digital da empresa no quadro acima para ligar a busca.',
   vencido: (d: Date) => `O certificado digital venceu em ${dataBrSp(d)}. Envie o renovado para a busca voltar.`,
-  aviso280:
-    'A SEFAZ pode recusar este certificado (código 280). Se a busca falhar, peça ao contador um certificado A1 de empresa novo.',
+  aviso280: 'A SEFAZ pode recusar este certificado (código 280). Se a busca falhar, peça ao contador um certificado A1 de empresa novo.',
   homologacao: 'Nota de teste (homologação) não entra no estoque.',
   cancelada: 'Esta nota foi cancelada pelo fornecedor e não entra no estoque.',
   semXml: 'A SEFAZ ainda não liberou o XML desta nota. Dê entrada pelo arquivo ou pela foto.',
@@ -81,7 +80,12 @@ export type SituacaoBuscaResposta =
       certificado: { ok: boolean; code: string | null; mensagem: string | null; avisos: string[] };
       contagem: { falta_lancar: number; parece_lancada: number; cancelada_depois_de_lancada: number };
       canceladas_depois: { id: string; numero: string; serie: string; emitente_nome: string }[];
-      historico: { evento: 'ligada' | 'desligada' | 'parada_automatica'; feito_por_nome: string | null; feito_em: string; c_stat: number | null }[];
+      historico: {
+        evento: 'ligada' | 'desligada' | 'parada_automatica';
+        feito_por_nome: string | null;
+        feito_em: string;
+        c_stat: number | null;
+      }[];
     };
 
 export type NotaSefazLinha = {
@@ -182,7 +186,9 @@ export class CaixaSefazService {
       bloqueado_ate: iso(linha?.bloqueado_ate ?? null),
       em_andamento: !!linha?.em_andamento_desde && agora.getTime() - linha.em_andamento_desde.getTime() <= EM_ANDAMENTO_MAX_MS,
       lacunas: lacunas.reduce((s, l) => s + Number(l.nsu_ate - l.nsu_de + 1n), 0),
-      dias_sem_buscar: linha?.ultima_consulta_em ? Math.max(0, Math.floor((agora.getTime() - linha.ultima_consulta_em.getTime()) / DIA_MS)) : null,
+      dias_sem_buscar: linha?.ultima_consulta_em
+        ? Math.max(0, Math.floor((agora.getTime() - linha.ultima_consulta_em.getTime()) / DIA_MS))
+        : null,
       ligada_por_nome: linha?.busca_ligada ? (linha.alterada_por_nome ?? null) : null,
       ligada_em: linha?.busca_ligada ? iso(linha.alterada_em) : null,
       outro_cnpj_ou_modo: outroCnpjOuModo,
@@ -326,9 +332,18 @@ export class CaixaSefazService {
     const nota = await this.achar(id, { ambiente, cnpj });
     await this.prisma.notas_sefaz.update({
       where: { id: nota.id },
-      data: { ignorada_em: null, ignorada_por: null, ignorada_por_nome: null, motivo_ignorar: null, motivo_texto: null, atualizada_em: agora },
+      data: {
+        ignorada_em: null,
+        ignorada_por: null,
+        ignorada_por_nome: null,
+        motivo_ignorar: null,
+        motivo_texto: null,
+        atualizada_em: agora,
+      },
     });
-    this.logger.log(JSON.stringify({ evento: 'sefaz.caixa', acao: 'reabrir', id: nota.id, motivo: nota.motivo_ignorar, usuario_id: quem.id }));
+    this.logger.log(
+      JSON.stringify({ evento: 'sefaz.caixa', acao: 'reabrir', id: nota.id, motivo: nota.motivo_ignorar, usuario_id: quem.id }),
+    );
     return this.linhaDe(id, { ambiente, cnpj });
   }
 
