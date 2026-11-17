@@ -6,28 +6,25 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Ban, CheckCircle2, CircleAlert, Copy, EyeOff, Loader2 } from 'lucide-react';
 import {
-  buscarSefazAgora, listarNotasSefaz, reabrirNotaSefaz, ignorarNotaSefaz, xmlNotaSefaz,
+  buscarSefazAgora, listarNotasSefaz, reabrirNotaSefaz, ignorarNotaSefaz, responderDeNovoSefaz, xmlNotaSefaz,
   type NotaSefaz, type SituacaoBuscaSefaz, type SituacaoSefazLigada,
 } from '@/lib/erp-api';
 import { errCode, errMsg } from '@/lib/db';
 import { brl } from '@/lib/format';
 import { formatarCnpj } from '@/lib/certificado';
 import {
-  acoesDaNota, emissaoSp, estadoBuscar, linhaEspera, linhaProxima, linhaUltimaBusca, tagDaNota, TEXTO_ACAO, toastBuscaFeita,
-  type AcaoNota, type TagNota,
+  acoesDaNota, emissaoSp, estadoBuscar, linhaEspera, linhaPrazo, linhaProxima, linhaResposta, linhaUltimaBusca, tagDaNota, TEXTO_ACAO,
+  textoPorQue, toastBuscaFeita, type AcaoNota, type TagNota,
 } from '@/lib/notas-sefaz';
 import { SITUACAO_SEFAZ_KEY } from '@/hooks/use-notas-sefaz';
 import { Tag } from '@/components/ui-kit';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { NotasSefazIgnorar } from '@/components/notas-sefaz-ignorar';
+import { NotasSefazIgnorar, type AlvoIgnorar } from '@/components/notas-sefaz-ignorar';
 import { cn } from '@/lib/utils';
 
 type Filtro = 'a_conferir' | 'todas';
 
-const POR_QUE =
-  'A SEFAZ entrega só o resumo da nota (fornecedor, valor e data) até a empresa confirmar que a recebeu, e este sistema ainda não faz essa confirmação. ' +
-  'Por isso, para dar entrada, envie o XML, o PDF ou a foto. Se o seu contador ou o portal da SEFAZ já confirmou o recebimento, a nota completa pode aparecer aqui.';
 const DESLIGADA = 'A busca de notas na SEFAZ está desligada. As notas já recebidas continuam na lista.';
 const VAZIO = 'A SEFAZ passa a separar as notas deste CNPJ a partir da primeira busca; as emitidas antes não aparecem aqui. A busca roda sozinha, de hora em hora. Enquanto isso, lance notas pela aba Lançar nota.';
 
@@ -71,28 +68,64 @@ function TagSituacao({ tag, abrirPorQue }: { tag: TagNota; abrirPorQue(): void }
   );
 }
 
-function Acoes({ nota, modoTeste, ocupado, onAcao, compacto }: {
-  nota: NotaSefaz; modoTeste: boolean; ocupado: boolean; onAcao(a: AcaoNota, n: NotaSefaz): void; compacto?: boolean;
+const ICONES_RESPOSTA = { Loader2, CheckCircle2, Ban, CircleAlert } as const;
+const COR_PRAZO = { neutro: 'text-foreground', warn: 'text-amber-700 dark:text-amber-400', muted: 'text-muted-foreground' } as const;
+
+/**
+ * O prazo para responder à SEFAZ e a situação da resposta (UX §8), sob a tag. As duas vêm do que o servidor manda na nota (`resposta`,
+ * null sem a variável no servidor); "Tentar de novo" só no que falhou. A linha da resposta é anunciada quando muda (`aria-live`).
+ */
+function RespostaDaNota({ nota, agora, ocupado, onTentarDeNovo }: { nota: NotaSefaz; agora: Date; ocupado: boolean; onTentarDeNovo(n: NotaSefaz): void }) {
+  const r = nota.resposta;
+  if (!r) return null;
+  const prazo = linhaPrazo(r, agora);
+  const resp = linhaResposta(r);
+  const Icone = resp ? ICONES_RESPOSTA[resp.icone] : null;
+  return (
+    <div className="min-w-0 space-y-1 text-sm">
+      {prazo && (
+        <p className={cn('flex min-w-0 items-start gap-1.5 break-words', COR_PRAZO[prazo.tom], prazo.tom === 'warn' && 'font-medium')}>
+          {prazo.tom === 'warn' && <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />}
+          <span className="min-w-0">{prazo.texto}</span>
+        </p>
+      )}
+      <div aria-live="polite" className="min-w-0 space-y-1">
+        {resp && Icone && (
+          <p className="flex min-w-0 items-start gap-1.5 break-words text-xs text-muted-foreground">
+            <Icone className={cn('mt-0.5 h-3.5 w-3.5 shrink-0', resp.icone === 'Loader2' && 'motion-safe:animate-spin')} aria-hidden />
+            <span className="min-w-0">{resp.texto}</span>
+          </p>
+        )}
+      </div>
+      {resp?.tentarDeNovo && (
+        <Button type="button" variant="outline" className="h-11 w-full whitespace-normal sm:w-auto" disabled={ocupado} onClick={() => onTentarDeNovo(nota)}>
+          Tentar de novo
+        </Button>
+      )}
+    </div>
+  );
+}
+
+function Acoes({ nota, modoTeste, respostasLigadas, ocupado, onAcao, compacto }: {
+  nota: NotaSefaz; modoTeste: boolean; respostasLigadas: boolean; ocupado: boolean; onAcao(a: AcaoNota, n: NotaSefaz): void; compacto?: boolean;
 }) {
   // No modo de teste as notas são de mentira: nunca oferece "Conferir".
-  const { primaria, secundarias } = acoesDaNota(modoTeste ? { ...nota, pode_conferir: false } : nota);
+  const { primaria, secundarias } = acoesDaNota(modoTeste ? { ...nota, pode_conferir: false } : nota, respostasLigadas);
   if (!primaria) return null;
   const altura = compacto ? 'h-10' : 'h-11 w-full sm:w-auto';
   const destaque = primaria === 'conferir' || primaria === 'lancar_por_arquivo' || primaria === 'mesma_nota';
+  // Celular: uma coluna, na ordem da UX §8 (primária, Ignorar…, Não reconheço…, Copiar chave); de sm para cima, numa linha que quebra.
   return (
     <div className={cn('flex gap-2', compacto ? 'flex-wrap' : 'flex-col sm:flex-row sm:flex-wrap')}>
       <Button type="button" variant={destaque ? 'default' : 'outline'} className={cn(altura, 'whitespace-normal')} disabled={ocupado} onClick={() => onAcao(primaria, nota)}>
         {ocupado && primaria === 'conferir' ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />Abrindo…</> : TEXTO_ACAO[primaria]}
       </Button>
-      {secundarias.length > 0 && (
-        <div className={cn('flex gap-2', compacto ? 'flex-wrap' : '')}>
-          {secundarias.map((a) => (
-            <Button key={a} type="button" variant="outline" className={cn(compacto ? 'h-10' : 'h-11 flex-1 sm:flex-none', 'whitespace-normal')} disabled={ocupado} onClick={() => onAcao(a, nota)}>
-              {TEXTO_ACAO[a]}
-            </Button>
-          ))}
-        </div>
-      )}
+      {secundarias.map((a) => (
+        <Button key={a} type="button" variant="outline" className={cn(altura, 'whitespace-normal')} disabled={ocupado} onClick={() => onAcao(a, nota)}>
+          {a === 'nao_reconheco' && <Ban className="mr-2 h-4 w-4 shrink-0" aria-hidden />}
+          {TEXTO_ACAO[a]}
+        </Button>
+      ))}
     </div>
   );
 }
@@ -111,7 +144,7 @@ export function NotasSefazAba({ situacao, focarId, onConferir, onLancarPorArquiv
   const [erroBusca, setErroBusca] = useState<{ code: string | null; msg: string } | null>(null);
   const [erroAcao, setErroAcao] = useState<string | null>(null);
   const [ocupado, setOcupado] = useState<string | null>(null);
-  const [alvoIgnorar, setAlvoIgnorar] = useState<NotaSefaz | null>(null);
+  const [alvoIgnorar, setAlvoIgnorar] = useState<AlvoIgnorar | null>(null);
   const [porQueAberto, setPorQueAberto] = useState(false);
   const porQueRef = useRef<HTMLDetailsElement>(null);
   const emAndamentoAntes = useRef(situacao.em_andamento);
@@ -148,6 +181,8 @@ export function NotasSefazAba({ situacao, focarId, onConferir, onLancarPorArquiv
   }, [focarId, filtro, lista.isSuccess, lista.data, onFocoFeito]);
 
   const modoTeste = situacao.ambiente === 'homologacao';
+  // Respostas à SEFAZ: só com a variável no servidor (`disponivel`) e o quadro ligado. `pode_responder` da nota não olha isso (UX §8).
+  const respostasLigadas = situacao.respostas?.disponivel === true && situacao.respostas.ligadas === true;
   const estado = estadoBuscar(situacao, agora);
   const buscando = estado === 'buscando' || pendente;
   const parada = situacao.situacao.startsWith('parada_');
@@ -174,10 +209,17 @@ export function NotasSefazAba({ situacao, focarId, onConferir, onLancarPorArquiv
     }
   }
 
-  function desfazer(id: string) {
-    reabrirNotaSefaz(id).then(() => recarregar(), (e) => setErroAcao(errMsg(e)));
+  // `avisou`: o Ignorar pediu uma resposta à SEFAZ. O servidor espera 60 s antes de enviar e o "Desfazer" a cancela; se ela já saiu (raro),
+  // a nota volta para a lista mas a resposta continua (a nota devolvida ainda tem a resposta final): o toast diz isso.
+  function desfazer(id: string, avisou: boolean) {
+    reabrirNotaSefaz(id).then((n) => {
+      const f = n.resposta?.final;
+      if (avisou && f && f.estado !== 'cancelada') toast.warning('A resposta já tinha ido para a SEFAZ e não dá para desfazer aqui. A nota voltou para a lista.', { duration: 8000 });
+      return recarregar();
+    }, (e) => setErroAcao(errMsg(e)));
   }
-  const avisoDesfazer = (texto: string, id: string) => toast.success(texto, { duration: 8000, action: { label: 'Desfazer', onClick: () => desfazer(id) } });
+  const avisoDesfazer = (texto: string, id: string, avisou = false) =>
+    toast.success(texto, { duration: 8000, action: { label: 'Desfazer', onClick: () => desfazer(id, avisou) } });
 
   async function executar(n: NotaSefaz, fn: () => Promise<void>) {
     if (acaoEmCurso.current) return;
@@ -195,6 +237,14 @@ export function NotasSefazAba({ situacao, focarId, onConferir, onLancarPorArquiv
       case 'voltar_lista':
         return void executar(n, async () => { await reabrirNotaSefaz(n.id); await recarregar(); toast.success('Nota de volta à lista.'); });
       case 'mesma_nota':
+        // Com as respostas ligadas e a nota respondível, "É a mesma nota" também confirma a compra na SEFAZ (como lançar a nota).
+        if (respostasLigadas && n.resposta?.pode_responder) {
+          return void executar(n, async () => {
+            await ignorarNotaSefaz(n.id, 'lancada_de_outro_jeito', undefined, true);
+            await recarregar();
+            avisoDesfazer('Nota marcada como já lançada. A confirmação vai para a SEFAZ em alguns minutos.', n.id, true);
+          });
+        }
         return void executar(n, async () => { await ignorarNotaSefaz(n.id, 'lancada_de_outro_jeito'); await recarregar(); avisoDesfazer('Nota ignorada.', n.id); });
       case 'lancar_mesmo_assim':
         return n.pode_conferir && !modoTeste ? void conferir() : onLancarPorArquivo();
@@ -203,11 +253,16 @@ export function NotasSefazAba({ situacao, focarId, onConferir, onLancarPorArquiv
       case 'lancar_por_arquivo':
         return onLancarPorArquivo();
       case 'ignorar':
-        return setAlvoIgnorar(n);
+        return setAlvoIgnorar({ nota: n });
+      case 'nao_reconheco':
+        return setAlvoIgnorar({ nota: n, motivoInicial: 'nao_reconheco' });
       case 'copiar_chave':
         return void navigator.clipboard.writeText(n.chave).then(() => toast.success('Chave copiada.'), () => setErroAcao('Não consegui copiar a chave.'));
     }
   }
+
+  const tentarDeNovo = (n: NotaSefaz) =>
+    void executar(n, async () => { await responderDeNovoSefaz(n.id); await recarregar(); toast.success('Resposta de volta à fila.'); });
 
   function abrirPorQue() {
     setPorQueAberto(true);
@@ -269,7 +324,7 @@ export function NotasSefazAba({ situacao, focarId, onConferir, onLancarPorArquiv
 
       <details ref={porQueRef} open={porQueAberto} onToggle={(e) => setPorQueAberto(e.currentTarget.open)} className="text-sm">
         <summary className="flex min-h-11 cursor-pointer items-center text-primary">Por quê?</summary>
-        <p className="mt-1 break-words text-muted-foreground">{POR_QUE}</p>
+        <p className="mt-1 break-words text-muted-foreground">{textoPorQue(respostasLigadas)}</p>
       </details>
 
       <div className="flex flex-wrap gap-2" role="group" aria-label="Filtro das notas">
@@ -325,7 +380,8 @@ export function NotasSefazAba({ situacao, focarId, onConferir, onLancarPorArquiv
                 </div>
                 <p className="text-sm text-muted-foreground">NF {n.numero} · série {n.serie} · {emissaoSp(n.emitida_em)}</p>
                 <TagSituacao tag={tagDaNota(n)} abrirPorQue={abrirPorQue} />
-                <Acoes nota={n} modoTeste={modoTeste} ocupado={ocupado === n.id} onAcao={aoAcionar} />
+                <RespostaDaNota nota={n} agora={agora} ocupado={ocupado === n.id} onTentarDeNovo={tentarDeNovo} />
+                <Acoes nota={n} modoTeste={modoTeste} respostasLigadas={respostasLigadas} ocupado={ocupado === n.id} onAcao={aoAcionar} />
               </li>
             ))}
           </ul>
@@ -345,8 +401,11 @@ export function NotasSefazAba({ situacao, focarId, onConferir, onLancarPorArquiv
                     <td className="pr-2">{n.numero} / {n.serie}</td>
                     <td className="pr-2">{emissaoSp(n.emitida_em)}</td>
                     <td className="pr-2 text-right">{n.valor_total === null ? '—' : brl(n.valor_total)}</td>
-                    <td className="max-w-[18rem] py-2 pl-4"><TagSituacao tag={tagDaNota(n)} abrirPorQue={abrirPorQue} /></td>
-                    <td className="py-2"><Acoes nota={n} modoTeste={modoTeste} ocupado={ocupado === n.id} onAcao={aoAcionar} compacto /></td>
+                    <td className="max-w-[18rem] space-y-1 py-2 pl-4">
+                      <TagSituacao tag={tagDaNota(n)} abrirPorQue={abrirPorQue} />
+                      <RespostaDaNota nota={n} agora={agora} ocupado={ocupado === n.id} onTentarDeNovo={tentarDeNovo} />
+                    </td>
+                    <td className="py-2"><Acoes nota={n} modoTeste={modoTeste} respostasLigadas={respostasLigadas} ocupado={ocupado === n.id} onAcao={aoAcionar} compacto /></td>
                   </tr>
                 ))}
               </tbody>
@@ -356,9 +415,14 @@ export function NotasSefazAba({ situacao, focarId, onConferir, onLancarPorArquiv
       )}
 
       <NotasSefazIgnorar
-        nota={alvoIgnorar}
+        alvo={alvoIgnorar}
+        respostasLigadas={respostasLigadas}
         onFechar={() => setAlvoIgnorar(null)}
-        onIgnorada={(n) => { setAlvoIgnorar(null); void recarregar(); avisoDesfazer('Nota ignorada.', n.id); }}
+        onIgnorada={(n, avisou) => {
+          setAlvoIgnorar(null);
+          void recarregar();
+          avisoDesfazer(avisou ? 'Nota ignorada. A resposta vai para a SEFAZ em alguns minutos.' : 'Nota ignorada.', n.id, avisou);
+        }}
       />
     </div>
   );

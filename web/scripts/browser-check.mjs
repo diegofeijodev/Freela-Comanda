@@ -411,14 +411,20 @@ const caixas = await Promise.all(['Substituir certificado', 'Remover'].map((n) =
   await page.goto(`${BASE}/configuracoes`, { waitUntil: 'networkidle', timeout: 180_000 });
   check('sefaz painel: servidor desligado mostra a frase', await painel.getByText('A busca de notas na SEFAZ não está ativada neste servidor. Fale com o suporte do Freela Comanda se quiser usá-la.').waitFor({ timeout: 30_000 }).then(() => true, () => false));
   check('sefaz painel: servidor desligado não tem "Ligar a busca"', (await painel.getByRole('button', { name: /Ligar a busca/ }).count()) === 0);
+  const quadro = page.locator('#respostas-sefaz');
+  const FRASE_RESP_INDISPONIVEL = 'As respostas à SEFAZ não estão ativadas neste servidor. Fale com o suporte do Freela Comanda se quiser usá-las.';
+  check('sefaz respostas: servidor desligado mostra a frase', await quadro.getByText(FRASE_RESP_INDISPONIVEL).waitFor({ timeout: 30_000 }).then(() => true, () => false));
+  check('sefaz respostas: servidor desligado não tem "Ligar as respostas"', (await quadro.getByRole('button', { name: /Ligar as respostas/ }).count()) === 0);
 
   // 2) Estado simulado em memória. Registrado antes do reload que o usa.
   const cert = { ok: true, code: null, mensagem: null, avisos: [] };
+  // Sem SEFAZ_MANIFESTACAO: `disponivel = false` e o resto vazio (como a API manda).
+  const RESP = { disponivel: false, ligadas: false, situacao: 'ok', mensagem: null, pausa_ate: null, ligadas_por_nome: null, ligadas_em: null, na_fila: 0, falharam: 0, prazos_perto: [] };
   const desligadaComCert = {
     ambiente: 'producao', cnpj: '12345678000199', busca_ligada: false, situacao: 'ok', mensagem: null, aviso: null, ultima_consulta: null,
     primeira_consulta_em: null, proxima_consulta_em: null, bloqueado_ate: null, em_andamento: false, lacunas: 0, dias_sem_buscar: null,
     ligada_por_nome: null, ligada_em: null, outro_cnpj_ou_modo: false, certificado: cert,
-    contagem: { falta_lancar: 0, parece_lancada: 0, cancelada_depois_de_lancada: 0 }, canceladas_depois: [], historico: [],
+    contagem: { falta_lancar: 0, parece_lancada: 0, cancelada_depois_de_lancada: 0 }, canceladas_depois: [], historico: [], respostas: RESP,
   };
   let est = desligadaComCert;
   const corsSefaz = { 'access-control-allow-origin': new URL(BASE).origin, 'access-control-allow-headers': 'authorization, content-type', 'access-control-allow-methods': 'GET, POST, PUT, OPTIONS' };
@@ -434,6 +440,11 @@ const caixas = await Promise.all(['Substituir certificado', 'Remover'].map((n) =
         : { ...est, busca_ligada: false };
       return route.fulfill({ status: 200, contentType: 'application/json', headers: corsSefaz, body: JSON.stringify(est) });
     }
+    if (req.method() === 'PUT' && req.url().endsWith('/respostas')) {
+      const ligadas = JSON.parse(req.postData() ?? '{}').ligadas === true;
+      est = { ...est, respostas: { ...est.respostas, ligadas, situacao: 'ok', mensagem: null, ligadas_por_nome: ligadas ? 'Admin' : null, ligadas_em: ligadas ? new Date().toISOString() : null } };
+      return route.fulfill({ status: 200, contentType: 'application/json', headers: corsSefaz, body: JSON.stringify(est) });
+    }
     if (req.method() === 'GET' && req.url().endsWith('/situacao')) return route.fulfill({ status: 200, contentType: 'application/json', headers: corsSefaz, body: JSON.stringify(est) });
     return route.fulfill({ status: 404, contentType: 'application/json', headers: corsSefaz, body: JSON.stringify({ error: { code: 'NAO_SIMULADO', message: 'Não simulado.' } }) });
   });
@@ -441,6 +452,8 @@ const caixas = await Promise.all(['Substituir certificado', 'Remover'].map((n) =
 
   // 3) Desligada com certificado: confirmação, foco, Esc, ligar.
   check('sefaz painel: tag "Desligada"', await painel.getByText('Desligada', { exact: true }).waitFor({ timeout: 30_000 }).then(() => true, () => false));
+  check('sefaz respostas: sem a variável, só a frase', (await quadro.getByText(FRASE_RESP_INDISPONIVEL).count()) === 1);
+  check('sefaz respostas: sem a variável, nenhum botão e nenhuma tag', (await quadro.getByRole('button').count()) === 0 && (await quadro.getByText(/^(Ligadas|Desligadas|Paradas|Esperando a SEFAZ)$/).count()) === 0);
   const ligar = painel.getByRole('button', { name: 'Ligar a busca', exact: true });
   await ligar.scrollIntoViewIfNeeded();
   await ligar.click();
@@ -474,6 +487,72 @@ const caixas = await Promise.all(['Substituir certificado', 'Remover'].map((n) =
   check('sefaz painel: sem certificado desabilita o botão', await painel.getByRole('button', { name: 'Ligar a busca', exact: true }).isDisabled());
   check('sefaz painel: sem certificado tem o link para o certificado', (await painel.getByRole('link', { name: 'Ir para o certificado' }).count()) === 1);
 
+  // 5b) Respostas à SEFAZ (UX §8), com a variável simulada (`disponivel`): desligadas, ligar (diálogo), ligadas, desligar, esperando e paradas.
+  // A API do navegador segue sem SEFAZ_MANIFESTACAO: nada é ligado de verdade (o PUT também é simulado).
+  const SP = 'America/Sao_Paulo';
+  const dataSpP = (iso) => new Intl.DateTimeFormat('pt-BR', { timeZone: SP, day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(iso));
+  const horaSpP = (iso) => { const p = Object.fromEntries(new Intl.DateTimeFormat('pt-BR', { timeZone: SP, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(iso)).map((x) => [x.type, x.value])); return `${p.hour}h${p.minute}`; };
+  const simQ = (l, t = 30_000) => l.waitFor({ timeout: t }).then(() => true, () => false);
+  const RESP_ON = { ...RESP, disponivel: true };
+  est = { ...desligadaComCert, respostas: RESP_ON };
+  await page.reload({ waitUntil: 'networkidle', timeout: 180_000 });
+  check('sefaz respostas: tag "Desligadas"', await simQ(quadro.getByText('Desligadas', { exact: true })));
+  check('sefaz respostas: abertura do quadro', (await quadro.getByText(/^Com as respostas ligadas, o Freela Comanda avisa a SEFAZ, em nome da empresa/).count()) === 1);
+  check('sefaz respostas: "Ligue só depois de o seu contador concordar." em negrito', (await quadro.locator('strong', { hasText: 'Ligue só depois de o seu contador concordar.' }).count()) === 1);
+  check('sefaz respostas: linha fixa desligadas', (await quadro.getByText('Com as respostas desligadas, nada é enviado à SEFAZ. O que estava na fila espera até você ligar de novo.').count()) === 1);
+  const ligarResp = quadro.getByRole('button', { name: 'Ligar as respostas', exact: true });
+  await ligarResp.scrollIntoViewIfNeeded();
+  await ligarResp.click();
+  check('sefaz respostas: diálogo "Ligar as respostas à SEFAZ?"', await simQ(dlg.getByText('Ligar as respostas à SEFAZ?', { exact: true }), 10_000));
+  check('sefaz respostas: diálogo fala do prazo de 90 dias e do contador', (await dlg.getByText(/resposta\s+final em até 90 dias da data dela/).count()) === 1 && (await dlg.locator('strong', { hasText: 'Ligue só depois de o seu contador concordar.' }).count()) === 1);
+  check('sefaz respostas: foco inicial em "Agora não"', await page.evaluate(() => document.activeElement?.textContent?.trim() === 'Agora não'));
+  await page.screenshot({ path: join(SHOTS, 'admin-respostas-sefaz-dialogo-360.png') });
+  await page.keyboard.press('Escape');
+  check('sefaz respostas: Esc fecha o diálogo sem ligar', await dlg.waitFor({ state: 'detached', timeout: 10_000 }).then(() => true, () => false) && !pedidosSefaz.some((x) => x === 'PUT /v1/notas-sefaz/respostas'));
+  await ligarResp.click();
+  await dlg.getByRole('button', { name: 'Ligar as respostas', exact: true }).click();
+  check('sefaz respostas: toast de ligadas', await simQ(page.getByText('Respostas ligadas. As primeiras saem em até 5 minutos.').first()));
+  check('sefaz respostas: tag "Ligadas"', await simQ(quadro.getByText('Ligadas', { exact: true })));
+  check('sefaz respostas: mostra "Ligadas por Admin em"', (await quadro.getByText(/^Ligadas por Admin em \d{2}\/\d{2}\/\d{4} às \d{2}h\d{2}$/).count()) === 1);
+  await quadro.getByRole('button', { name: 'Desligar as respostas' }).click();
+  check('sefaz respostas: desligar tem toast com "Desfazer" e sem diálogo', await simQ(page.getByText('Respostas desligadas.', { exact: true }).first()) && (await page.getByRole('button', { name: 'Desfazer' }).count()) >= 1 && (await page.getByRole('alertdialog').count()) === 0);
+  check('sefaz respostas: desligar volta a tag "Desligadas"', await simQ(quadro.getByText('Desligadas', { exact: true })));
+  // Ligadas com dados: fila, prazo e falhas.
+  const prazoA = new Date(Date.now() + 9 * 24 * 3_600_000).toISOString();
+  const prazoB = new Date(Date.now() + 10 * 24 * 3_600_000).toISOString();
+  est = {
+    ...desligadaComCert,
+    respostas: {
+      ...RESP_ON, ligadas: true, ligadas_por_nome: 'Diego', ligadas_em: new Date().toISOString(), na_fila: 3, falharam: 1,
+      prazos_perto: [{ id: 'a', numero: '4411', serie: '1', emitente_nome: 'ATACADÃO S.A.', prazo_final: prazoA }, { id: 'b', numero: '4412', serie: '1', emitente_nome: 'ATACADÃO S.A.', prazo_final: prazoB }],
+    },
+  };
+  await page.reload({ waitUntil: 'networkidle', timeout: 180_000 });
+  check('sefaz respostas: "3 respostas na fila"', await simQ(quadro.getByText('3 respostas na fila', { exact: true })));
+  check('sefaz respostas: "2 notas precisam de resposta até …"', (await quadro.getByText(`2 notas precisam de resposta até ${dataSpP(prazoA)}`, { exact: true }).count()) === 1);
+  check('sefaz respostas: "1 resposta não foi enviada"', (await quadro.getByText('1 resposta não foi enviada', { exact: true }).count()) === 1);
+  const lResp = await quemPassaDaBorda(page, 360);
+  check('sefaz respostas: sem rolagem lateral em 360 (ligadas com dados)', lResp.scroll <= 360, JSON.stringify(lResp));
+  await quadro.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(SHOTS, 'admin-respostas-sefaz-ligadas-360.png'), fullPage: true });
+  // Esperando a SEFAZ: pausa no futuro, caixa âmbar com a frase do servidor como vem.
+  const pausa = new Date(Date.now() + 40 * 60_000).toISOString();
+  const fraseEspera = `A SEFAZ está fora do ar. As respostas saem de novo às ${horaSpP(pausa)}.`;
+  est = { ...desligadaComCert, respostas: { ...RESP_ON, ligadas: true, ligadas_por_nome: 'Diego', ligadas_em: new Date().toISOString(), pausa_ate: pausa, mensagem: fraseEspera } };
+  await page.reload({ waitUntil: 'networkidle', timeout: 180_000 });
+  check('sefaz respostas: tag "Esperando a SEFAZ"', await simQ(quadro.getByText('Esperando a SEFAZ', { exact: true })));
+  check('sefaz respostas: espera em caixa de status com a frase', (await quadro.locator('[role="status"]').getByText(fraseEspera, { exact: true }).count()) === 1);
+  // Paradas: caixa vermelha (alerta) e "Ligar as respostas de novo".
+  const fraseParada = 'A SEFAZ bloqueou as respostas duas vezes em 24 horas. Por segurança, elas foram desligadas. Fale com o suporte do Freela Comanda antes de ligar de novo.';
+  est = { ...desligadaComCert, respostas: { ...RESP_ON, situacao: 'parada_656', mensagem: fraseParada } };
+  await page.reload({ waitUntil: 'networkidle', timeout: 180_000 });
+  check('sefaz respostas: tag "Paradas"', await simQ(quadro.getByText('Paradas', { exact: true })));
+  check('sefaz respostas: parada em alerta com a frase', (await quadro.locator('[role="alert"]').getByText(fraseParada, { exact: true }).count()) === 1);
+  const deNovo = quadro.getByRole('button', { name: 'Ligar as respostas de novo' });
+  check('sefaz respostas: "Ligar as respostas de novo" com 44 px', (await deNovo.count()) === 1 && ((await deNovo.boundingBox())?.height ?? 0) >= 44);
+  await quadro.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(SHOTS, 'admin-respostas-sefaz-paradas-360.png'), fullPage: true });
+
   // 6) Medidas e captura.
   const larguraSefaz = await quemPassaDaBorda(page, 360);
   check('sefaz painel: sem rolagem lateral em 360', larguraSefaz.scroll <= 360, JSON.stringify(larguraSefaz));
@@ -486,6 +565,8 @@ const caixas = await Promise.all(['Substituir certificado', 'Remover'].map((n) =
   // 7) Nada ligou de verdade: o banco do navegador não tem nenhuma consulta.
   const consultas = execFileSync('docker', ['exec', 'erp-freela-postgres', 'psql', '-U', 'erpfreela', '-d', PGDB, '-t', '-A', '-c', 'select count(*) from sefaz_distribuicao']).toString().trim();
   check('sefaz painel: nenhuma consulta no banco (a busca nunca ligou de verdade)', consultas === '0', consultas);
+  const respostasNoBanco = execFileSync('docker', ['exec', 'erp-freela-postgres', 'psql', '-U', 'erpfreela', '-d', PGDB, '-t', '-A', '-c', "select (select count(*) from sefaz_manifestacao) || '/' || (select count(*) from sefaz_manifestacoes)"]).toString().trim();
+  check('sefaz respostas: sefaz_manifestacao e sefaz_manifestacoes vazias (as respostas nunca ligaram de verdade)', respostasNoBanco === '0/0', respostasNoBanco);
   await ctx.close();
 
   // 8) Loja: nada do painel em Configurações.
@@ -515,7 +596,8 @@ const caixas = await Promise.all(['Substituir certificado', 'Remover'].map((n) =
   const parecida = { id: UID(90), numero: '880', serie: '1', fornecedor_nome: 'LATICÍNIOS K', data_emissao: '2026-11-14', data_entrada: '2026-11-15', valor_total: 80, origem: 'foto', created_at: '2026-11-15T12:00:00Z' };
   const nova = (n, p) => ({
     id: UID(n), chave: chaveK(n), emitente_cnpj: CNPJ_K, emitente_nome: 'LATICÍNIOS K', numero: String(n), serie: '1', emitida_em: '2026-11-14T13:00:00Z', autorizada_em: '2026-11-14T13:01:00Z',
-    valor_total: 100 + n, situacao_sefaz: 'autorizada', cancelada_em: null, situacao: 'falta_lancar', lancada: null, parecidas: [], pode_conferir: false, nao_parece_compra: false, ignorada: null, ...p,
+    valor_total: 100 + n, situacao_sefaz: 'autorizada', cancelada_em: null, situacao: 'falta_lancar', lancada: null, parecidas: [], pode_conferir: false, nao_parece_compra: false, ignorada: null,
+    resposta: null, ...p,
   });
   const K77 = nova(77, { situacao: 'cancelada_depois_de_lancada', situacao_sefaz: 'cancelada', lancada: { ...parecida, id: UID(91), numero: '77', origem: 'xml', data_entrada: '2026-11-03' } });
   const K880 = nova(880, { situacao: 'parece_lancada', parecidas: [parecida], pode_conferir: false });
@@ -536,6 +618,12 @@ const caixas = await Promise.all(['Substituir certificado', 'Remover'].map((n) =
   let buscaFase = 0; // 1 = POST feito (a próxima leitura diz "em andamento"), 2 = a leitura seguinte diz "terminou, 2 novas"
   let listaModo = 'normal'; // 'normal' | 'vazia' | 'erro'
   let lancou = false;
+  // Respostas à SEFAZ (UX §8). Sem SEFAZ_MANIFESTACAO a API manda `disponivel = false` e `resposta = null` em toda nota: o mock faz igual.
+  const RESP = { disponivel: false, ligadas: false, situacao: 'ok', mensagem: null, pausa_ate: null, ligadas_por_nome: null, ligadas_em: null, na_fila: 0, falharam: 0, prazos_perto: [] };
+  let respostasEst = RESP;
+  let jaFoi = false; // o "Desfazer" chega depois de a resposta sair: o reabrir devolve a nota ainda com a resposta final
+  const CORPOS = []; // corpo de cada POST …/ignorar, na ordem
+  const comResposta = (r) => (respostasEst.disponivel ? r : { ...r, resposta: null });
   const situacaoAtual = () => {
     let emAndamento = false;
     if (buscaFase === 1) { emAndamento = true; buscaFase = 2; }
@@ -547,6 +635,7 @@ const caixas = await Promise.all(['Substituir certificado', 'Remover'].map((n) =
       ligada_por_nome: 'Admin', ligada_em: minutos(-60 * 24), outro_cnpj_ou_modo: false, certificado: { ok: true, code: null, mensagem: null, avisos: [] },
       contagem: { falta_lancar: quais('falta_lancar').length, parece_lancada: quais('parece_lancada').length, cancelada_depois_de_lancada: quais('cancelada_depois_de_lancada').length },
       canceladas_depois: quais('cancelada_depois_de_lancada').map((r) => ({ id: r.id, numero: r.numero, serie: r.serie, emitente_nome: r.emitente_nome })), historico: [],
+      respostas: respostasEst,
     };
   };
   const cors = { 'access-control-allow-origin': new URL(BASE).origin, 'access-control-allow-headers': 'authorization, content-type', 'access-control-allow-methods': 'GET, POST, PUT, OPTIONS' };
@@ -563,18 +652,36 @@ const caixas = await Promise.all(['Substituir certificado', 'Remover'].map((n) =
         if (listaModo === 'erro') return json(route, { error: { code: 'ERRO', message: 'Falha simulada.' } }, 500);
         if (listaModo === 'vazia') return json(route, []);
         const filtro = new URL(req.url()).searchParams.get('filtro');
-        return json(route, filtro === 'todas' ? rows : rows.filter((r) => A_CONFERIR.includes(r.situacao)));
+        return json(route, (filtro === 'todas' ? rows : rows.filter((r) => A_CONFERIR.includes(r.situacao))).map(comResposta));
       }
       if (req.method() === 'POST' && caminho.endsWith('/buscar')) { buscaFase = 1; return json(route, { iniciada: true }, 202); }
-      const m = caminho.match(/\/v1\/notas-sefaz\/([^/]+)\/(ignorar|reabrir)$/);
+      const m = caminho.match(/\/v1\/notas-sefaz\/([^/]+)\/(ignorar|reabrir|responder-de-novo)$/);
       const linha = m && rows.find((r) => r.id === m[1]);
       if (req.method() === 'POST' && linha) {
         if (m[2] === 'ignorar') {
           const b = JSON.parse(req.postData() ?? '{}');
+          CORPOS.push({ id: linha.id, ...b });
           linha.situacao = 'ignorada';
           linha.ignorada = { em: new Date().toISOString(), por_nome: 'Admin', motivo: b.motivo, texto: b.texto ?? null };
-        } else { linha.situacao = original.get(linha.id); linha.ignorada = null; }
-        return json(route, linha);
+          if (b.avisar_sefaz === true && linha.resposta) {
+            const tipo = { nao_reconheco: 'nao_reconheco', compra_nao_aconteceu: 'nao_aconteceu' }[b.motivo] ?? 'confirmacao';
+            linha.resposta = { ...linha.resposta, pode_responder: false, final: { estado: 'na_fila', em: new Date().toISOString(), protocolo: null, c_stat: null, mensagem: null, tipo, origem: 'admin' } };
+          }
+        } else if (m[2] === 'reabrir') {
+          linha.situacao = original.get(linha.id); linha.ignorada = null;
+          if (linha.resposta?.final?.origem === 'admin') {
+            // O servidor cancela a resposta que ainda espera na fila; a que já saiu fica (e a nota volta com ela).
+            linha.resposta = jaFoi
+              ? { ...linha.resposta, final: { ...linha.resposta.final, estado: 'enviando' } }
+              : { ...linha.resposta, final: null, pode_responder: true };
+          }
+        } else {
+          const r = linha.resposta;
+          if (r?.final?.estado === 'falhou') linha.resposta = { ...r, final: { ...r.final, estado: 'na_fila' } };
+          else if (r?.ciencia?.estado === 'falhou') linha.resposta = { ...r, ciencia: { ...r.ciencia, estado: 'na_fila' } };
+          else return json(route, { error: { code: 'SEFAZ_NADA_A_REENVIAR', message: 'Não há resposta para enviar de novo nesta nota.' } }, 409);
+        }
+        return json(route, comResposta(linha));
       }
       return json(route, { error: { code: 'NAO_SIMULADO', message: 'Não simulado.' } }, 404);
     });
@@ -634,6 +741,11 @@ const caixas = await Promise.all(['Substituir certificado', 'Remover'].map((n) =
   check('sefaz aba: "Por quê?" existe 1 vez (details)', (await page.locator('details', { hasText: 'A SEFAZ entrega só o resumo' }).count()) === 1);
   check('sefaz aba: K880 tem "É a mesma nota" e "Lançar mesmo assim"', (await cartao(880).getByRole('button', { name: 'É a mesma nota' }).count()) === 1 && (await cartao(880).getByRole('button', { name: 'Lançar mesmo assim' }).count()) === 1);
   check('sefaz aba: K990 tem "Conferir"', (await cartao(990).getByRole('button', { name: 'Conferir', exact: true }).count()) === 1);
+  // Sem SEFAZ_MANIFESTACAO (respostas.disponivel = false): nada da UX §8 na aba.
+  check('sefaz aba (sem respostas): nenhum "Não reconheço…"', (await page.getByRole('button', { name: 'Não reconheço…' }).count()) === 0);
+  check('sefaz aba (sem respostas): nenhuma linha de prazo nem de resposta', (await lista.getByText(/responder à SEFAZ|Responder à SEFAZ|resposta à SEFAZ|A SEFAZ já sabe|Avisando a SEFAZ|na SEFAZ em|avisou a SEFAZ|não aceitou a resposta/).count()) === 0);
+  check('sefaz aba (sem respostas): nenhuma faixa do prazo', (await page.locator('[data-faixa="prazo"]').count()) === 0 && (await page.getByText(/precisam? de uma resposta à SEFAZ/).count()) === 0);
+  check('sefaz aba (sem respostas): "Por quê?" com o texto das respostas desligadas', (await page.locator('details', { hasText: 'e as respostas à SEFAZ estão desligadas' }).count()) === 1);
   await page.getByRole('button', { name: /^A conferir/ }).click();
 
   // 4) Medidas em 360 + captura.
@@ -649,6 +761,8 @@ const caixas = await Promise.all(['Substituir certificado', 'Remover'].map((n) =
   await cartao(990).getByRole('button', { name: 'Ignorar…' }).click();
   const dlg = page.getByRole('alertdialog');
   check('sefaz aba: diálogo "Ignorar esta nota?"', await sim(dlg.getByText('Ignorar esta nota?')));
+  check('sefaz aba (sem respostas): Ignorar com os 4 motivos de antes', (await dlg.getByRole('radio').count()) === 4 && (await dlg.getByText('A compra não aconteceu (devolvi ou cancelei)').count()) === 0);
+  check('sefaz aba (sem respostas): Ignorar diz que nada vai à SEFAZ', (await dlg.getByText('Nada é enviado à SEFAZ e nada é lançado.', { exact: false }).count()) === 1);
   // O botão fica só com aria-disabled sem motivo (o toque ainda chega e mostra o aviso); o Playwright trata aria-disabled como
   // não clicável, por isso o force.
   check('sefaz aba: "Ignorar nota" com aria-disabled sem motivo', (await dlg.getByRole('button', { name: 'Ignorar nota' }).getAttribute('aria-disabled')) === 'true');
@@ -660,6 +774,7 @@ const caixas = await Promise.all(['Substituir certificado', 'Remover'].map((n) =
   await dlg.getByRole('button', { name: 'Ignorar nota' }).click();
   check('sefaz aba: toast "Nota ignorada." com Desfazer', await sim(page.getByText('Nota ignorada.').first(), 20_000) && (await page.getByRole('button', { name: 'Desfazer' }).count()) >= 1);
   check('sefaz aba: K990 sai da lista "A conferir"', await page.waitForFunction(() => document.querySelectorAll('ul[aria-label="Notas da SEFAZ"] > li').length === 2, null, { timeout: 20_000 }).then(() => true, () => false));
+  check('sefaz aba (sem respostas): o Ignorar não manda avisar_sefaz', CORPOS.length === 1 && CORPOS[0].motivo === 'nao_e_compra' && !('avisar_sefaz' in CORPOS[0]), JSON.stringify(CORPOS));
   await page.getByRole('button', { name: 'Desfazer' }).first().click();
   check('sefaz aba: Desfazer devolve K990', await page.waitForFunction(() => document.querySelectorAll('ul[aria-label="Notas da SEFAZ"] > li').length === 3, null, { timeout: 20_000 }).then(() => true, () => false));
   check('sefaz aba: Desfazer chamou "reabrir"', OPS.some((o) => o.endsWith('/reabrir')));
@@ -712,6 +827,7 @@ const caixas = await Promise.all(['Substituir certificado', 'Remover'].map((n) =
   await page.screenshot({ path: join(SHOTS, 'admin-notas-sefaz-conferir-360.png'), fullPage: true });
   await page.getByRole('button', { name: 'Dar entrada' }).click();
   check('sefaz aba: toast "Entrada lançada no estoque"', await sim(page.getByText(/Entrada lançada no estoque/).first(), 60_000));
+  check('sefaz aba (sem respostas): o toast do Dar entrada não fala da SEFAZ', (await page.getByText('A confirmação da compra vai para a SEFAZ em alguns minutos.').count()) === 0);
   check('sefaz aba: a chamada levou origem sefaz e a chave de K990', OPS.includes(`POST /v1/notas origem=sefaz chave=${chaveK(990)}`), OPS.filter((o) => o.startsWith('POST /v1/notas')).join(' | '));
   check('sefaz aba: "Notas lançadas" mostra a tag SEFAZ', await sim(page.locator('table').getByText('SEFAZ', { exact: true }), 30_000));
 
@@ -725,6 +841,213 @@ const caixas = await Promise.all(['Substituir certificado', 'Remover'].map((n) =
   await page.screenshot({ path: join(SHOTS, 'admin-notas-sefaz-aba-desktop.png'), fullPage: true });
   await page.setViewportSize({ width: 360, height: 800 });
 
+
+  // 11b) Respostas à SEFAZ (UX §8) com a variável simulada (`respostas.disponivel`). A API do navegador segue sem SEFAZ_MANIFESTACAO:
+  // tudo vem do mock (o Ignorar com aviso, o Desfazer, o "Tentar de novo"), e no fim o banco confirma que nenhuma resposta existe.
+  const partesHoje = () => Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: FUSO, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date()).map((x) => [x.type, x.value]));
+  // Meio-dia de Brasília (15h UTC) do dia de hoje + d: os dias contados não dependem da hora em que o roteiro roda.
+  const meioDia = (d) => { const h = partesHoje(); return new Date(Date.UTC(+h.year, +h.month - 1, +h.day + d, 15)).toISOString(); };
+  const dataSp = (iso) => new Intl.DateTimeFormat('pt-BR', { timeZone: FUSO, day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(iso));
+  const ddmmSp = (iso) => dataSp(iso).slice(0, 5);
+  const ONTEM = minutos(-60 * 24);
+  const ev = (estado, p = {}) => ({ estado, em: ONTEM, protocolo: estado === 'registrada' ? '135260000000001' : null, c_stat: null, mensagem: null, ...p });
+  const fin = (tipo, estado, p = {}) => ({ ...ev(estado, p), tipo, origem: 'dar_entrada' });
+  const resp = (p = {}) => ({ ciencia: ev('registrada'), final: null, prazo_final: meioDia(40), prazo_perto: false, prazo_passou: false, pode_responder: true, ...p });
+  const respondida = (final) => resp({ final, pode_responder: false });
+  const jaLancada = (n, final) => nova(n, { situacao: 'ja_lancada', lancada: { ...parecida, numero: String(n), origem: 'xml', data_entrada: '2026-11-10' }, resposta: respondida(final) });
+  const recusada = (n, c_stat, mensagem) => jaLancada(n, fin('confirmacao', 'recusada', { c_stat, mensagem }));
+  const ignoradaPor = (motivo, texto = null) => ({ em: ONTEM, por_nome: 'Diego', motivo, texto });
+  const NOVAS = [
+    nova(30, { resposta: resp() }),
+    nova(31, { resposta: resp({ prazo_final: meioDia(6), prazo_perto: true }) }),
+    nova(32, { resposta: resp({ prazo_final: meioDia(0), prazo_perto: true }) }),
+    nova(33, { resposta: resp({ prazo_final: meioDia(-1), prazo_passou: true, pode_responder: false }) }),
+    nova(34, { resposta: resp({ ciencia: ev('na_fila') }) }),
+    jaLancada(35, fin('confirmacao', 'na_fila')),
+    jaLancada(36, fin('confirmacao', 'registrada')),
+    nova(37, { situacao: 'ignorada', ignorada: ignoradaPor('nao_reconheco'), resposta: respondida({ ...fin('nao_reconheco', 'registrada'), origem: 'admin' }) }),
+    nova(38, { situacao: 'ignorada', ignorada: ignoradaPor('compra_nao_aconteceu', 'Mercadoria devolvida na entrega'), resposta: respondida({ ...fin('nao_aconteceu', 'registrada'), origem: 'admin' }) }),
+    recusada(39, 650, 'A SEFAZ não aceitou a resposta: a nota foi cancelada ou recusada.'),
+    recusada(40, 501, 'A SEFAZ não aceitou a resposta: passou o prazo.'),
+    recusada(41, 655, 'Esta nota já tinha resposta à SEFAZ, dada por outro sistema ou pelo portal.'),
+    recusada(42, 575, 'A SEFAZ não aceitou a resposta: a nota não é para o CNPJ da empresa.'),
+    recusada(43, 236, 'A SEFAZ não aceitou a resposta: a chave de acesso não confere.'),
+    recusada(44, 999, null),
+    jaLancada(45, fin('confirmacao', 'falhou')),
+  ];
+  const TROCAR = 'Para mudar, fale com o seu contador: a SEFAZ aceita corrigir uma vez, em até 30 dias.';
+  const LINHAS = [
+    [30, `Responder à SEFAZ até ${dataSp(meioDia(40))}`],
+    [30, `A SEFAZ já sabe que a nota chegou (${ddmmSp(ONTEM)}).`],
+    [31, `Faltam 6 dias para responder à SEFAZ (até ${dataSp(meioDia(6))}).`],
+    [32, 'Último dia para responder à SEFAZ.'],
+    [33, 'Passou o prazo: a SEFAZ considera esta compra confirmada.'],
+    [34, 'Avisando a SEFAZ que a nota chegou…'],
+    [35, 'Resposta à SEFAZ na fila: sai em alguns minutos.'],
+    [36, `Compra confirmada na SEFAZ em ${ddmmSp(ONTEM)}.`],
+    [37, `Você avisou a SEFAZ que não reconhece esta nota (${ddmmSp(ONTEM)}). ${TROCAR}`],
+    [38, `Você avisou a SEFAZ que a compra não aconteceu (${ddmmSp(ONTEM)}). ${TROCAR}`],
+    [39, 'A SEFAZ não aceitou a resposta: a nota foi cancelada ou recusada.'],
+    [40, 'A SEFAZ não aceitou a resposta: passou o prazo.'],
+    [41, 'Esta nota já tinha resposta à SEFAZ, dada por outro sistema ou pelo portal.'],
+    [42, 'A SEFAZ não aceitou a resposta: a nota não é para o CNPJ da empresa.'],
+    [43, 'A SEFAZ não aceitou a resposta: a chave de acesso não confere.'],
+    [44, 'A SEFAZ não aceitou a resposta (código 999). Fale com o seu contador.'],
+    [45, 'Não consegui enviar a resposta à SEFAZ depois de 3 tentativas.'],
+  ];
+  for (const r of NOVAS) { rows.push(r); original.set(r.id, r.situacao); }
+  K990.resposta = resp();
+  K880.resposta = resp();
+  const altura = async (l) => (await l.boundingBox())?.height ?? 0;
+  const sumiu = (l) => l.waitFor({ state: 'detached', timeout: 20_000 }).then(() => true, () => false);
+  const toastExato = (t) => sim(page.getByText(t, { exact: true }).first(), 20_000);
+  const desfazerToast = () => page.getByRole('button', { name: 'Desfazer' }).first().click();
+
+  // 11b.1) Variável ligada, respostas DESLIGADAS: as linhas seguem o que o servidor manda; nada de "Não reconheço…" nem de aviso no Ignorar.
+  respostasEst = { ...RESP, disponivel: true };
+  await page.reload({ waitUntil: 'networkidle', timeout: 180_000 });
+  await abaSefaz.click();
+  check('sefaz respostas desligadas: K990 aparece', await sim(cartao(990)));
+  check('sefaz respostas desligadas: nenhum "Não reconheço…"', (await page.getByRole('button', { name: 'Não reconheço…' }).count()) === 0);
+  check('sefaz respostas desligadas: a linha do prazo segue o servidor', (await cartao(990).getByText(`Responder à SEFAZ até ${dataSp(meioDia(40))}`, { exact: true }).count()) === 1);
+  check('sefaz respostas desligadas: "Por quê?" com o texto das respostas desligadas', (await page.locator('details', { hasText: 'e as respostas à SEFAZ estão desligadas' }).count()) === 1);
+  await cartao(990).getByRole('button', { name: 'Ignorar…' }).click();
+  check('sefaz respostas desligadas: Ignorar com os 4 motivos e o texto de antes', await sim(dlg.getByText('Ignorar esta nota?'), 10_000)
+    && (await dlg.getByRole('radio').count()) === 4 && (await dlg.getByText('Nada é enviado à SEFAZ e nada é lançado.', { exact: false }).count()) === 1);
+  await dlg.getByRole('button', { name: 'Cancelar' }).click();
+  await dlg.waitFor({ state: 'detached', timeout: 10_000 }).catch(() => {});
+
+  // 11b.2) Respostas LIGADAS: faixa do prazo, linhas de cada cartão, botões.
+  respostasEst = {
+    ...RESP, disponivel: true, ligadas: true, ligadas_por_nome: 'Admin', ligadas_em: minutos(-60),
+    prazos_perto: [32, 31].map((n) => { const r = rows.find((x) => x.numero === String(n)); return { id: r.id, numero: r.numero, serie: r.serie, emitente_nome: r.emitente_nome, prazo_final: r.resposta.prazo_final }; }),
+  };
+  await page.reload({ waitUntil: 'networkidle', timeout: 180_000 });
+  const faixaPrazo = page.locator('[data-faixa="prazo"]');
+  const FRASE_PRAZO = `2 notas precisam de uma resposta à SEFAZ. A primeira vence em ${dataSp(meioDia(0))}.`;
+  check('sefaz respostas: faixa do prazo com a frase e role="status"', await sim(faixaPrazo.getByText(FRASE_PRAZO, { exact: true })) && (await faixaPrazo.getAttribute('role')) === 'status');
+  const yCanc = (await page.locator('[role="alert"]', { hasText: 'que você já lançou, foi cancelada' }).boundingBox())?.y ?? -1;
+  const yPrazo = (await faixaPrazo.boundingBox())?.y ?? -1;
+  const yAbas = (await page.getByRole('tablist').boundingBox())?.y ?? -1;
+  check('sefaz respostas: faixa do prazo abaixo da de cancelamento e acima das abas', yCanc >= 0 && yCanc < yPrazo && yPrazo < yAbas, `${yCanc}/${yPrazo}/${yAbas}`);
+  check('sefaz respostas: "Ver" da faixa do prazo com 44 px', (await altura(faixaPrazo.getByRole('button', { name: 'Ver', exact: true }))) >= 44);
+  await abaSefaz.click();
+  check('sefaz respostas: "Por quê?" com o texto das respostas ligadas', await sim(page.locator('details', { hasText: 'O sistema já avisou a SEFAZ que a nota chegou.' })));
+  check('sefaz respostas: K990 tem "Não reconheço…"', await sim(cartao(990).getByRole('button', { name: 'Não reconheço…' })));
+  const botoes990 = (await cartao(990).getByRole('button').allInnerTexts()).map((t) => t.trim());
+  check('sefaz respostas: ordem no celular (primária, Ignorar…, Não reconheço…, Copiar chave)', JSON.stringify(botoes990) === JSON.stringify(['Conferir', 'Ignorar…', 'Não reconheço…', 'Copiar chave']), JSON.stringify(botoes990));
+  check('sefaz respostas: "Não reconheço…" também em "Parece já lançada"', (await cartao(880).getByRole('button', { name: 'Não reconheço…' }).count()) === 1);
+  check('sefaz respostas: "Não reconheço…" com 44 px e ícone', (await altura(cartao(990).getByRole('button', { name: 'Não reconheço…' }))) >= 44 && (await cartao(990).getByRole('button', { name: 'Não reconheço…' }).locator('svg').count()) === 1);
+  await page.getByRole('button', { name: 'Todas', exact: true }).click();
+  check('sefaz respostas: "Todas" mostra os cartões das respostas', await sim(cartao(45)));
+  for (const [n, t] of LINHAS) check(`sefaz respostas: NF ${n} mostra "${t.slice(0, 60)}"`, (await cartao(n).getByText(t, { exact: true }).count()) === 1);
+  check('sefaz respostas: prazo perto em âmbar com ícone', (await cartao(31).locator('p', { hasText: 'Faltam 6 dias' }).locator('svg').count()) === 1);
+  check('sefaz respostas: linha da resposta em aria-live="polite"', (await cartao(36).locator('[aria-live="polite"]').getByText(`Compra confirmada na SEFAZ em ${ddmmSp(ONTEM)}.`).count()) === 1);
+  check('sefaz respostas: só a que falhou tem "Tentar de novo"', (await lista.getByRole('button', { name: 'Tentar de novo' }).count()) === 1 && (await cartao(45).getByRole('button', { name: 'Tentar de novo' }).count()) === 1);
+  check('sefaz respostas: nota já respondida não tem "Não reconheço…"', (await cartao(37).getByRole('button', { name: 'Não reconheço…' }).count()) === 0 && (await cartao(35).getByRole('button', { name: 'Não reconheço…' }).count()) === 0);
+  check('sefaz respostas: "Tentar de novo" com 44 px', (await altura(cartao(45).getByRole('button', { name: 'Tentar de novo' }))) >= 44);
+  const lResp = await quemPassaDaBorda(page, 360);
+  check('sefaz respostas: sem rolagem lateral em 360 (Todas, com as linhas)', lResp.scroll <= 360, JSON.stringify(lResp));
+  await page.screenshot({ path: join(SHOTS, 'admin-notas-sefaz-respostas-360.png'), fullPage: true });
+  // Tentar de novo: volta à fila.
+  await cartao(45).getByRole('button', { name: 'Tentar de novo' }).click();
+  check('sefaz respostas: "Tentar de novo" mostra "Resposta de volta à fila."', await toastExato('Resposta de volta à fila.') && OPS.includes(`POST /v1/notas-sefaz/${UID(45)}/responder-de-novo`));
+  check('sefaz respostas: depois do "Tentar de novo" a linha diz "na fila"', await sim(cartao(45).getByText('Resposta à SEFAZ na fila: sai em alguns minutos.', { exact: true }), 20_000) && (await cartao(45).getByRole('button', { name: 'Tentar de novo' }).count()) === 0);
+
+  // 11b.3) "Não reconheço…" abre o Ignorar já marcado; "A compra não aconteceu" e os 3 erros; aviso e Desfazer.
+  await page.getByRole('button', { name: /^A conferir/ }).click();
+  await cartao(990).getByRole('button', { name: 'Não reconheço…' }).click();
+  check('sefaz respostas: "Não reconheço…" abre o Ignorar com o motivo marcado', await sim(dlg.getByText('Ignorar esta nota?'), 10_000) && (await dlg.getByRole('radio', { name: 'Não reconheço esta nota' }).isChecked()));
+  const motivosTela = (await dlg.getByRole('radio').evaluateAll((els) => els.map((e) => e.closest('label')?.textContent?.trim() ?? ''))).join(' | ');
+  check('sefaz respostas: 5 motivos na ordem', motivosTela === 'Já lancei de outro jeito | Não é compra | Não reconheço esta nota | A compra não aconteceu (devolvi ou cancelei) | Outro motivo', motivosTela);
+  check('sefaz respostas: descrição "Nada é lançado." sem "Nada é enviado"', (await dlg.getByText('Nada é lançado.', { exact: false }).count()) === 1 && (await dlg.getByText('Nada é enviado à SEFAZ e nada é lançado.', { exact: false }).count()) === 0);
+  check('sefaz respostas: linha do "Não reconheço"', (await dlg.getByText('A SEFAZ é avisada de que a empresa não reconhece esta nota. Use quando você não conhece o fornecedor ou não pediu nada a ele. Depois de enviado, não dá para desfazer aqui.', { exact: true }).count()) === 1);
+  check('sefaz respostas: botão "Avisar a SEFAZ e ignorar"', (await dlg.getByRole('button', { name: 'Avisar a SEFAZ e ignorar' }).count()) === 1);
+  await dlg.getByRole('radio', { name: 'A compra não aconteceu (devolvi ou cancelei)' }).click();
+  const campo = dlg.getByLabel('Conte o que houve');
+  check('sefaz respostas: "Conte o que houve" com "15 a 255 letras" e a linha', await sim(campo, 10_000) && (await dlg.getByText('15 a 255 letras', { exact: true }).count()) === 1
+    && (await dlg.getByText('A SEFAZ é avisada de que a compra não aconteceu, com o seu texto. Depois de enviado, não dá para desfazer aqui.', { exact: true }).count()) === 1);
+  const avisarBtn = dlg.getByRole('button', { name: 'Avisar a SEFAZ e ignorar' });
+  check('sefaz respostas: sem texto, "Avisar a SEFAZ e ignorar" tem aria-disabled', (await avisarBtn.getAttribute('aria-disabled')) === 'true');
+  for (const [txt, erro] of [
+    ['devolvido', 'Conte o que houve com pelo menos 15 letras.'],
+    ['x'.repeat(256), 'Use no máximo 255 letras.'],
+    ['Mercadoria devolvida 😀 na entrega', 'Use só letras, números e pontuação comum (sem emoji).'],
+  ]) {
+    await campo.fill(txt);
+    await avisarBtn.click();
+    check(`sefaz respostas: erro "${erro}" em caixa no diálogo`, await sim(dlg.locator('[role="alert"]').getByText(erro, { exact: true }), 10_000));
+  }
+  check('sefaz respostas: nenhum texto inválido foi enviado', !CORPOS.some((c) => c.motivo === 'compra_nao_aconteceu'), JSON.stringify(CORPOS));
+  const lDlg = await quemPassaDaBorda(page, 360);
+  check('sefaz respostas: diálogo sem rolagem lateral em 360', lDlg.scroll <= 360 && lDlg.culpados.length === 0, JSON.stringify(lDlg));
+  await page.screenshot({ path: join(SHOTS, 'admin-notas-sefaz-nao-aconteceu-360.png') });
+  await campo.fill('  Mercadoria   devolvida na entrega ');
+  await avisarBtn.click();
+  check('sefaz respostas: toast "Nota ignorada. A resposta vai para a SEFAZ em alguns minutos." com Desfazer', await toastExato('Nota ignorada. A resposta vai para a SEFAZ em alguns minutos.') && (await page.getByRole('button', { name: 'Desfazer' }).count()) >= 1);
+  const c1 = CORPOS.at(-1);
+  check('sefaz respostas: mandou o motivo, o texto normalizado e avisar_sefaz = true', c1?.motivo === 'compra_nao_aconteceu' && c1.texto === 'Mercadoria devolvida na entrega' && c1.avisar_sefaz === true, JSON.stringify(c1));
+  check('sefaz respostas: K990 sai de "A conferir"', await sumiu(cartao(990)));
+  await desfazerToast();
+  check('sefaz respostas: Desfazer devolve K990, sem o aviso de "já tinha ido"', await sim(cartao(990), 20_000) && (await page.getByText('A resposta já tinha ido para a SEFAZ', { exact: false }).count()) === 0);
+
+  // "Outro motivo": nada vai à SEFAZ (sem avisar_sefaz).
+  await cartao(990).getByRole('button', { name: 'Ignorar…' }).click();
+  check('sefaz respostas: "Ignorar…" abre sem motivo marcado', await sim(dlg.getByText('Ignorar esta nota?'), 10_000) && (await dlg.getByRole('radio', { checked: true }).count()) === 0);
+  await dlg.getByRole('radio', { name: 'Outro motivo' }).click();
+  check('sefaz respostas: "Outro motivo" diz "Nada é enviado à SEFAZ."', await sim(dlg.getByText('Nada é enviado à SEFAZ.', { exact: true }), 10_000));
+  await dlg.getByLabel('Escreva o motivo').fill('Nota de teste do fornecedor');
+  await dlg.getByRole('button', { name: 'Ignorar nota' }).click();
+  check('sefaz respostas: "Outro motivo" dá "Nota ignorada." e não manda avisar_sefaz', await toastExato('Nota ignorada.') && CORPOS.at(-1)?.motivo === 'outro' && !('avisar_sefaz' in CORPOS.at(-1)), JSON.stringify(CORPOS.at(-1)));
+  await sumiu(cartao(990));
+  await desfazerToast();
+  await sim(cartao(990), 20_000);
+
+  // "Não é compra": a caixa (desmarcada) decide o avisar_sefaz.
+  await cartao(990).getByRole('button', { name: 'Ignorar…' }).click();
+  await sim(dlg.getByText('Ignorar esta nota?'), 10_000);
+  await dlg.getByRole('radio', { name: 'Não é compra' }).click();
+  const caixaCompra = dlg.getByRole('checkbox', { name: 'Avisar a SEFAZ que a compra aconteceu' });
+  check('sefaz respostas: "Não é compra" mostra a caixa desmarcada e a linha', await sim(caixaCompra, 10_000) && !(await caixaCompra.isChecked())
+    && (await dlg.getByText('Marque se a nota é verdadeira e só não vai para o estoque (por exemplo, um equipamento).', { exact: true }).count()) === 1);
+  check('sefaz respostas: a linha da caixa tem 44 px', (await altura(dlg.locator('label', { has: page.getByRole('checkbox', { name: 'Avisar a SEFAZ que a compra aconteceu' }) }))) >= 44);
+  await dlg.getByRole('button', { name: 'Ignorar nota' }).click();
+  check('sefaz respostas: caixa desmarcada manda avisar_sefaz = false e "Nota ignorada."', await toastExato('Nota ignorada.') && CORPOS.at(-1)?.motivo === 'nao_e_compra' && CORPOS.at(-1).avisar_sefaz === false, JSON.stringify(CORPOS.at(-1)));
+  await sumiu(cartao(990));
+  await desfazerToast();
+  await sim(cartao(990), 20_000);
+  // Marcada: avisa; e o Desfazer que chega depois de a resposta sair diz isso.
+  await cartao(990).getByRole('button', { name: 'Ignorar…' }).click();
+  await sim(dlg.getByText('Ignorar esta nota?'), 10_000);
+  await dlg.getByRole('radio', { name: 'Não é compra' }).click();
+  await caixaCompra.click();
+  await dlg.getByRole('button', { name: 'Ignorar nota' }).click();
+  check('sefaz respostas: caixa marcada manda avisar_sefaz = true e o toast do aviso', await toastExato('Nota ignorada. A resposta vai para a SEFAZ em alguns minutos.') && CORPOS.at(-1)?.motivo === 'nao_e_compra' && CORPOS.at(-1).avisar_sefaz === true, JSON.stringify(CORPOS.at(-1)));
+  await sumiu(cartao(990));
+  jaFoi = true;
+  await desfazerToast();
+  check('sefaz respostas: Desfazer tarde diz que a resposta já tinha ido', await toastExato('A resposta já tinha ido para a SEFAZ e não dá para desfazer aqui. A nota voltou para a lista.') && await sim(cartao(990), 20_000));
+  jaFoi = false;
+  check('sefaz respostas: depois disso K990 não oferece mais "Não reconheço…"', await page.waitForFunction(() => ![...document.querySelectorAll('ul[aria-label="Notas da SEFAZ"] > li')].some((li) => li.textContent.includes('NF 990 ·') && li.textContent.includes('Não reconheço…')), null, { timeout: 20_000 }).then(() => true, () => false));
+
+  // "É a mesma nota" com as respostas ligadas: confirma a compra na SEFAZ.
+  await cartao(880).getByRole('button', { name: 'É a mesma nota' }).click();
+  check('sefaz respostas: "É a mesma nota" com o toast da confirmação', await toastExato('Nota marcada como já lançada. A confirmação vai para a SEFAZ em alguns minutos.'));
+  check('sefaz respostas: "É a mesma nota" manda avisar_sefaz = true', CORPOS.at(-1)?.id === K880.id && CORPOS.at(-1).motivo === 'lancada_de_outro_jeito' && CORPOS.at(-1).avisar_sefaz === true, JSON.stringify(CORPOS.at(-1)));
+  await sumiu(cartao(880));
+  await desfazerToast();
+  check('sefaz respostas: Desfazer devolve K880', await sim(cartao(880), 20_000));
+
+  // Dar entrada pela aba com as respostas ligadas: a 2ª linha do toast.
+  await cartao(990).getByRole('button', { name: 'Conferir', exact: true }).click();
+  await sim(page.getByText('2. Dados da nota'), 60_000);
+  await page.getByRole('button', { name: 'Dar entrada' }).click();
+  check('sefaz respostas: Dar entrada tem a 2ª linha "A confirmação da compra vai para a SEFAZ em alguns minutos."', await sim(page.getByText('A confirmação da compra vai para a SEFAZ em alguns minutos.', { exact: true }).first(), 60_000));
+  // "Ver" da faixa do prazo: aba SEFAZ, "A conferir", foco na nota que vence primeiro.
+  await faixaPrazo.getByRole('button', { name: 'Ver', exact: true }).click();
+  check('sefaz respostas: "Ver" da faixa do prazo abre a aba SEFAZ', await page.waitForFunction(() => [...document.querySelectorAll('[role=tab]')].find((t) => t.textContent.startsWith('Notas da SEFAZ'))?.getAttribute('aria-selected') === 'true', null, { timeout: 10_000 }).then(() => true, () => false));
+  check('sefaz respostas: "Ver" põe o foco na nota que vence primeiro', await page.waitForFunction((id) => document.activeElement?.getAttribute('data-nota-id') === id, UID(32), { timeout: 20_000 }).then(() => true, () => false));
+
   // 12) Link direto, storage, console e banco.
   await page.goto(`${BASE}/painel`, { waitUntil: 'domcontentloaded', timeout: 180_000 });
   await page.goto(`${BASE}/notas#notas-sefaz`, { waitUntil: 'networkidle', timeout: 180_000 });
@@ -735,6 +1058,8 @@ const caixas = await Promise.all(['Substituir certificado', 'Remover'].map((n) =
   check('sefaz aba: sem erro de console', reaisAba.length === 0, reaisAba.join(' | '));
   const consultasAba = execFileSync('docker', ['exec', 'erp-freela-postgres', 'psql', '-U', 'erpfreela', '-d', PGDB, '-t', '-A', '-c', 'select count(*) from sefaz_distribuicao']).toString().trim();
   check('sefaz aba: nenhuma consulta no banco (a busca nunca ligou de verdade)', consultasAba === '0', consultasAba);
+  const respostasAba = execFileSync('docker', ['exec', 'erp-freela-postgres', 'psql', '-U', 'erpfreela', '-d', PGDB, '-t', '-A', '-c', "select (select count(*) from sefaz_manifestacao) || '/' || (select count(*) from sefaz_manifestacoes)"]).toString().trim();
+  check('sefaz aba: sefaz_manifestacao e sefaz_manifestacoes vazias (nenhuma resposta saiu de verdade)', respostasAba === '0/0', respostasAba);
   await ctx.close();
 }
 

@@ -23,7 +23,7 @@ import { NotaRepetidaDialogo, NotaRepetidaFaixa, type EstadoRepetida } from "@/c
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { NotasSefazAba } from "@/components/notas-sefaz-aba";
-import { FaixaCancelamentoSefaz } from "@/components/notas-sefaz-faixa";
+import { FaixaCancelamentoSefaz, FaixaPrazoSefaz } from "@/components/notas-sefaz-faixa";
 import { useSituacaoSefaz } from "@/hooks/use-notas-sefaz";
 import { contagemAba, precisaConfirmarTroca } from "@/lib/notas-sefaz";
 import { useAuthStore } from "@/modules/auth/application/auth.store";
@@ -68,6 +68,8 @@ export default function Notas() {
   const { data: situacaoSefaz } = useSituacaoSefaz(ehAdmin);
   const [trocaXml, setTrocaXml] = useState<string | null>(null);
   const sefaz = situacaoSefaz && situacaoSefaz.ambiente !== "desligado" ? situacaoSefaz : null;
+  // Respostas à SEFAZ (UX §8): só com a variável no servidor e o quadro ligado; sem ela, `prazos_perto` vem vazio e nada disso aparece.
+  const respostasSefaz = sefaz?.respostas?.disponivel ? sefaz.respostas : null;
   const [aba, setAba] = useState<"lancar" | "sefaz">("lancar");
   const [focarId, setFocarId] = useState<string | null>(null);
   const hashLido = useRef(false);
@@ -221,7 +223,10 @@ export default function Notas() {
         })),
         parcelas: aVista ? [] : parcelas.map((p) => ({ vencimento: p.vencimento, valor: Number(p.valor) || 0 })),
       });
-      toast.success("Entrada lançada no estoque" + (aVista ? "" : ` e ${parcelas.length} conta(s) a pagar`) + (r.insumos_criados > 0 ? ` · ${r.insumos_criados} insumo(s) cadastrado(s)` : ""));
+      // Nota que veio da aba "Notas da SEFAZ" com as respostas ligadas: lançar já confirma a compra na SEFAZ (2ª linha do toast).
+      const confirmaNaSefaz = origem === "sefaz" && respostasSefaz?.ligadas === true;
+      toast.success("Entrada lançada no estoque" + (aVista ? "" : ` e ${parcelas.length} conta(s) a pagar`) + (r.insumos_criados > 0 ? ` · ${r.insumos_criados} insumo(s) cadastrado(s)` : ""),
+        confirmaNaSefaz ? { description: "A confirmação da compra vai para a SEFAZ em alguns minutos." } : undefined);
       limpar();
       refetch(); qc.invalidateQueries({ queryKey: ["insumos-ativos"] }); qc.invalidateQueries({ queryKey: ["subgrupos"] }); qc.invalidateQueries();
     } catch (e) {
@@ -244,6 +249,7 @@ export default function Notas() {
     requestAnimationFrame(() => arquivoRef.current?.focus());
   }
   const verCanceladas = () => { setAba("sefaz"); setFocarId(sefaz?.canceladas_depois[0]?.id ?? null); };
+  const verPrazos = () => { setAba("sefaz"); setFocarId(respostasSefaz?.prazos_perto[0]?.id ?? null); };
 
   const lancar = (
     <div className="space-y-5">
@@ -374,6 +380,7 @@ export default function Notas() {
       {sefaz ? (
         <>
           <FaixaCancelamentoSefaz canceladas={sefaz.canceladas_depois} onVer={verCanceladas} />
+          {respostasSefaz && <FaixaPrazoSefaz prazos={respostasSefaz.prazos_perto} onVer={verPrazos} />}
           <Tabs value={aba} onValueChange={(v) => setAba(v === "sefaz" ? "sefaz" : "lancar")} className="space-y-5">
             <TabsList className="grid h-auto w-full grid-cols-2 sm:inline-flex sm:w-auto">
               <TabsTrigger value="lancar" className="h-11 whitespace-normal px-4">Lançar nota
