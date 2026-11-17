@@ -1,7 +1,8 @@
 // Planejador das respostas à SEFAZ (puro: sem banco, sem rede, sem relógio global). Roda no tique, com as respostas ligadas, sobre as
 // notas da caixa de um (ambiente, CNPJ): decide as respostas automáticas a criar (ciência em até 9 dias; confirmação da nota lançada pela
 // chave depois de ligar), as ciências na fila a cancelar, o prazo de 90 dias de cada nota e a ordem de envio. Regras: desenho, Etapa 2,
-// "Planejador" e decisão 9 do construtor.
+// "Planejador" e decisão 9 do construtor, com as decisões do controlador de 17/11 (210200 por qualquer caminho, mesmo depois de "Ignorar";
+// ciência na fila que deixou de servir é cancelada; sem aviso de prazo em nota cancelada ou denegada).
 //
 // Dias = 24 h em milissegundos: Brasília não tem horário de verão (UTC−3 fixo), então a conta é a mesma no fuso de Brasília e não depende
 // do TZ do processo (o contêiner roda em UTC).
@@ -26,7 +27,7 @@ export interface NotaParaPlano {
   autorizada_em: Date | null;
   emitida_em: Date | null;
   tem_xml_completo: boolean;
-  /** `created_at` da nota lançada com a mesma chave. */
+  /** `created_at` da nota lançada com a mesma chave (preencher também para a nota ignorada: a 210200 sai mesmo depois de "Ignorar"). */
   lancada_pela_chave_em: Date | null;
 }
 
@@ -79,49 +80,51 @@ export function finalAtiva(ev: EventoExistente[]): EventoExistente | null {
 export function respondivel(n: NotaParaPlano, ev: EventoExistente[], agora: Date): boolean {
   const p = prazoDaNota(n, agora);
   return (
-    n.situacao_sefaz === 'autorizada' &&
-    n.tp_nf === 1 &&
-    p.prazo_final !== null &&
-    !p.prazo_passou &&
-    finalAtiva(daNota(n.id, ev)) === null
+    n.situacao_sefaz === 'autorizada' && n.tp_nf === 1 && p.prazo_final !== null && !p.prazo_passou && finalAtiva(daNota(n.id, ev)) === null
   );
 }
 
-/** Aviso do prazo: ciência nossa registrada · nenhuma resposta final registrada · do 80º dia até o fim do prazo. */
+/** Aviso do prazo: nota autorizada (cancelada ou denegada não aceita resposta) · ciência nossa registrada · nenhuma resposta final
+ * registrada · do 80º dia até o fim do prazo. */
 export function avisoDePrazo(n: NotaParaPlano, ev: EventoExistente[], agora: Date): boolean {
   const meus = daNota(n.id, ev);
   return (
+    n.situacao_sefaz === 'autorizada' &&
     meus.some((e) => e.tp_evento === CIENCIA && e.situacao === 'registrada') &&
     !meus.some((e) => ehFinal(e.tp_evento) && e.situacao === 'registrada') &&
     prazoDaNota(n, agora).prazo_perto
   );
 }
 
-/** 210210: até 9 dias da autorização (não da emissão) · falta lançar ou parece lançada · sem XML completo · nenhuma ciência nossa fora de `cancelada`. */
-function pedeCiencia(n: NotaParaPlano, ev: EventoExistente[], agora: Date): boolean {
+/** A nota (sem olhar a fila) pede ciência: até 9 dias da autorização (não da emissão) · falta lançar ou parece lançada · sem XML completo. */
+function notaPedeCiencia(n: NotaParaPlano, agora: Date): boolean {
   return (
     n.autorizada_em !== null &&
     agora.getTime() - n.autorizada_em.getTime() <= CIENCIA_MAX_DIAS * DIA_MS &&
     (n.situacao === 'falta_lancar' || n.situacao === 'parece_lancada') &&
-    !n.tem_xml_completo &&
-    !ev.some((e) => e.tp_evento === CIENCIA && e.situacao !== 'cancelada')
+    !n.tem_xml_completo
   );
 }
 
 /**
- * 210200 automático: lançada pela chave depois de ligar as respostas. Além do desenho: nenhuma 210200 nossa fora de `cancelada` (uma
- * `recusada` não é "ativa", mas ocupa o índice único (ambiente, chave, tp_evento, n_seq); criar outra seria um laço a cada tique).
+ * 210200 automático: lançada pela chave depois de ligar as respostas, por qualquer caminho, mesmo se antes foi ignorada (decisão 2 do dono,
+ * "confirma ao lançar"). Nenhuma resposta final nossa fora de `cancelada`: a ativa já responde; a `recusada` não se repete sozinha (a saída é o
+ * "responder de novo" do admin), e uma 210200 recusada ainda ocupa o índice único (ambiente, chave, tp_evento, n_seq): criar outra seria um laço.
  */
 function pedeConfirmacao(n: NotaParaPlano, ev: EventoExistente[], ligadaEm: Date): boolean {
   return (
-    n.situacao === 'ja_lancada' &&
+    (n.situacao === 'ja_lancada' || n.situacao === 'ignorada') &&
     n.lancada_pela_chave_em !== null &&
     n.lancada_pela_chave_em.getTime() >= ligadaEm.getTime() &&
-    !ev.some((e) => e.tp_evento === '210200' && e.situacao !== 'cancelada')
+    !ev.some((e) => ehFinal(e.tp_evento) && e.situacao !== 'cancelada')
   );
 }
 
-/** Os eventos automáticos a criar e as ciências na fila a cancelar (resposta final pedida = a ciência daria 655 depois). */
+/**
+ * Os eventos automáticos a criar e as ciências na fila a cancelar. A ciência é o único evento que cria obrigação sozinho, então a que está
+ * `na_fila` só fica se ainda serve: nota respondível (autorizada, de compra, no prazo, sem resposta final ativa), que ainda pede ciência e sem
+ * 210200 criada agora (as duas no mesmo lote = 655). Ignorada, XML completo, 9º dia passado, cancelada, denegada ou já lançada = cancela.
+ */
 export function planejar(notas: NotaParaPlano[], eventos: EventoExistente[], ligadaEm: Date, agora: Date): Plano {
   const porNota = new Map<string, EventoExistente[]>();
   for (const e of eventos) {
@@ -132,16 +135,14 @@ export function planejar(notas: NotaParaPlano[], eventos: EventoExistente[], lig
   const plano: Plano = { criar: [], cancelarCiencias: [] };
   for (const n of notas) {
     const ev = porNota.get(n.id) ?? [];
-    let finalPedida = finalAtiva(ev) !== null;
-    if (respondivel(n, ev, agora)) {
-      if (pedeConfirmacao(n, ev, ligadaEm)) {
-        plano.criar.push({ nota_sefaz_id: n.id, tp_evento: '210200', origem: 'dar_entrada' });
-        finalPedida = true;
-      } else if (pedeCiencia(n, ev, agora)) {
-        plano.criar.push({ nota_sefaz_id: n.id, tp_evento: '210210', origem: 'ciencia_automatica' });
-      }
+    const pode = respondivel(n, ev, agora);
+    const confirma = pode && pedeConfirmacao(n, ev, ligadaEm);
+    const cienciaServe = pode && !confirma && notaPedeCiencia(n, agora);
+    if (confirma) plano.criar.push({ nota_sefaz_id: n.id, tp_evento: '210200', origem: 'dar_entrada' });
+    else if (cienciaServe && !ev.some((e) => e.tp_evento === CIENCIA && e.situacao !== 'cancelada')) {
+      plano.criar.push({ nota_sefaz_id: n.id, tp_evento: '210210', origem: 'ciencia_automatica' });
     }
-    if (finalPedida && ev.some((e) => e.tp_evento === CIENCIA && e.situacao === 'na_fila')) plano.cancelarCiencias.push(n.id);
+    if (!cienciaServe && ev.some((e) => e.tp_evento === CIENCIA && e.situacao === 'na_fila')) plano.cancelarCiencias.push(n.id);
   }
   return plano;
 }

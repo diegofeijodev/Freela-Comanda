@@ -81,7 +81,11 @@ describe('prazoDaNota (Review Focus 5)', () => {
     expect(p).toEqual({ prazo_final: new Date(base.getTime() + 90 * DIA), prazo_perto: perto, prazo_passou: passou });
   });
   it('base nula: tudo nulo/falso', () => {
-    expect(prazoDaNota({ autorizada_em: null, emitida_em: null }, AGORA)).toEqual({ prazo_final: null, prazo_perto: false, prazo_passou: false });
+    expect(prazoDaNota({ autorizada_em: null, emitida_em: null }, AGORA)).toEqual({
+      prazo_final: null,
+      prazo_perto: false,
+      prazo_passou: false,
+    });
   });
   it('nota autorizada perto da meia-noite de Brasília (17/11 23h30): vence 15/02/2027 às 23h30 de Brasília', () => {
     const p = prazoDaNota({ autorizada_em: new Date('2026-11-18T02:30:00Z'), emitida_em: null }, AGORA);
@@ -179,7 +183,6 @@ describe('planejar: confirmação ao dar entrada (210200)', () => {
   it.each([
     ['lançada 1 s antes de ligar', lancada({ lancada_pela_chave_em: new Date(LIGADA.getTime() - 1000) })],
     ['já lançada sem data de lançamento', lancada({ lancada_pela_chave_em: null })],
-    ['ignorada e lançada depois (a situação é "ignorada")', nota({ situacao: 'ignorada', lancada_pela_chave_em: AGORA })],
     ['nota de saída (tp_nf 0)', lancada({ tp_nf: 0 })],
     ['cancelada depois de lançada', lancada({ situacao: 'cancelada_depois_de_lancada', situacao_sefaz: 'cancelada' })],
     ['prazo passou (A90)', lancada({ autorizada_em: dias(90) })],
@@ -187,7 +190,24 @@ describe('planejar: confirmação ao dar entrada (210200)', () => {
     expect(plano(n)).toEqual(VAZIO);
   });
   it('parece lançada (não pela chave): nenhuma 210200, só a ciência de nota nova', () => {
-    expect(plano(nota({ situacao: 'parece_lancada', lancada_pela_chave_em: AGORA }))).toEqual({ criar: [CIENCIA_N1], cancelarCiencias: [] });
+    expect(plano(nota({ situacao: 'parece_lancada', lancada_pela_chave_em: AGORA }))).toEqual({
+      criar: [CIENCIA_N1],
+      cancelarCiencias: [],
+    });
+  });
+  // Decisão do controlador (17/11): "confirma ao lançar" vale por qualquer caminho, mesmo depois de "Ignorar" sem aviso à SEFAZ.
+  it('ignorada ("Outro motivo") e lançada pela chave depois de ligar: dar_entrada', () => {
+    expect(plano(nota({ situacao: 'ignorada', lancada_pela_chave_em: AGORA }))).toEqual({ criar: [CONFIRMA_N1], cancelarCiencias: [] });
+  });
+  it('ignorada com ciência registrada e lançada depois: dar_entrada', () => {
+    const n = nota({ situacao: 'ignorada', lancada_pela_chave_em: AGORA, tem_xml_completo: true });
+    expect(plano(n, [ev('210210', 'registrada')])).toEqual({ criar: [CONFIRMA_N1], cancelarCiencias: [] });
+  });
+  it('ignorada e lançada 1 s antes de ligar: nada', () => {
+    expect(plano(nota({ situacao: 'ignorada', lancada_pela_chave_em: new Date(LIGADA.getTime() - 1000) }))).toEqual(VAZIO);
+  });
+  it('ignorada com "Não reconheço" (210220 registrada) e lançada depois: nada', () => {
+    expect(plano(nota({ situacao: 'ignorada', lancada_pela_chave_em: AGORA }), [ev('210220', 'registrada')])).toEqual(VAZIO);
   });
   it('A90 + 1 s ainda confirma', () => {
     expect(plano(lancada({ autorizada_em: dias(90, 1) }))).toEqual({ criar: [CONFIRMA_N1], cancelarCiencias: [] });
@@ -206,12 +226,19 @@ describe('planejar: confirmação ao dar entrada (210200)', () => {
   it('com 210200 recusada: nada (o índice único ainda guarda a vaga; repetir seria um laço)', () => {
     expect(plano(lancada(), [ev('210200', 'recusada', { origem: 'dar_entrada' })])).toEqual(VAZIO);
   });
+  it.each(['210220', '210240'] as const)('com %s recusada: nada (a saída é o "responder de novo" do admin)', (tp) => {
+    expect(plano(lancada(), [ev(tp, 'recusada')])).toEqual(VAZIO);
+    expect(plano(nota({ situacao: 'ignorada', lancada_pela_chave_em: AGORA }), [ev(tp, 'recusada')])).toEqual(VAZIO);
+  });
+  it.each(['210220', '210240'] as const)('com %s cancelada (Desfazer do admin): confirma', (tp) => {
+    expect(plano(lancada(), [ev(tp, 'cancelada')])).toEqual({ criar: [CONFIRMA_N1], cancelarCiencias: [] });
+  });
   it('com 210200 cancelada (Desfazer do admin): confirma', () => {
     expect(plano(lancada(), [ev('210200', 'cancelada')])).toEqual({ criar: [CONFIRMA_N1], cancelarCiencias: [] });
   });
 });
 
-describe('planejar: ciência na fila com resposta final pedida', () => {
+describe('planejar: ciência na fila que deixou de servir', () => {
   it('final do admin na fila + ciência na fila: cancela a ciência da nota', () => {
     expect(plano(nota(), [ev('210210', 'na_fila'), ev('210220', 'na_fila')])).toEqual({ criar: [], cancelarCiencias: ['n1'] });
   });
@@ -228,6 +255,26 @@ describe('planejar: ciência na fila com resposta final pedida', () => {
   it.each(['recusada', 'cancelada'] as const)('final %s não cancela a ciência na fila', (s) => {
     expect(plano(nota(), [ev('210210', 'na_fila'), ev('210220', s)])).toEqual(VAZIO);
   });
+  // Decisão do controlador (17/11): a ciência é o único evento que cria obrigação sozinho; não sai por inércia da fila.
+  it.each([
+    ['ignorada', nota({ situacao: 'ignorada' })],
+    ['XML completo já chegou', nota({ tem_xml_completo: true })],
+    ['passou do 9º dia (A9 − 1 s)', nota({ autorizada_em: dias(9, -1) })],
+    ['cancelada', nota({ situacao: 'cancelada', situacao_sefaz: 'cancelada' })],
+    ['denegada', nota({ situacao: 'denegada', situacao_sefaz: 'denegada' })],
+    ['lançada pela chave antes de ligar (sem 210200)', nota({ situacao: 'ja_lancada', lancada_pela_chave_em: dias(30) })],
+  ])('%s + ciência na fila: cancela a ciência e não cria nada', (_nome, n) => {
+    expect(plano(n, [ev('210210', 'na_fila')])).toEqual({ criar: [], cancelarCiencias: ['n1'] });
+  });
+  it.each([
+    ['falta lançar, A9 (exatos 9 dias)', nota({ autorizada_em: A9 })],
+    ['parece lançada', nota({ situacao: 'parece_lancada' })],
+  ])('%s + ciência na fila: ainda serve, fica na fila', (_nome, n) => {
+    expect(plano(n, [ev('210210', 'na_fila')])).toEqual(VAZIO);
+  });
+  it.each(['enviando', 'registrada'] as const)('ignorada + ciência %s: não cancela (só a que está na fila)', (s) => {
+    expect(plano(nota({ situacao: 'ignorada' }), [ev('210210', s)])).toEqual(VAZIO);
+  });
   it('final ativa mesmo com o prazo passado: cancela a ciência na fila', () => {
     expect(plano(nota({ autorizada_em: dias(90) }), [ev('210210', 'na_fila'), ev('210220', 'falhou')]).cancelarCiencias).toEqual(['n1']);
   });
@@ -235,11 +282,7 @@ describe('planejar: ciência na fila com resposta final pedida', () => {
 
 describe('planejar: várias notas', () => {
   it('cada nota só vê os próprios eventos; a saída segue a ordem das notas', () => {
-    const notas = [
-      nota({ id: 'a' }),
-      nota({ id: 'b', situacao: 'ja_lancada', lancada_pela_chave_em: AGORA }),
-      nota({ id: 'c' }),
-    ];
+    const notas = [nota({ id: 'a' }), nota({ id: 'b', situacao: 'ja_lancada', lancada_pela_chave_em: AGORA }), nota({ id: 'c' })];
     const eventos = [
       ev('210220', 'registrada', { nota_sefaz_id: 'x' }),
       ev('210210', 'registrada', { nota_sefaz_id: 'c' }),
@@ -259,16 +302,19 @@ describe('planejar: várias notas', () => {
       nota({ id: 'b', situacao: 'ja_lancada', lancada_pela_chave_em: AGORA }),
       nota({ id: 'c', situacao: 'parece_lancada' }),
       nota({ id: 'd' }),
+      nota({ id: 'e', situacao: 'ignorada' }),
     ];
     let eventos: EventoExistente[] = [
       ev('210210', 'na_fila', { nota_sefaz_id: 'b' }),
       ev('210210', 'na_fila', { nota_sefaz_id: 'd' }),
       ev('210220', 'na_fila', { nota_sefaz_id: 'd' }),
+      ev('210210', 'na_fila', { nota_sefaz_id: 'e' }),
     ];
     const p1 = planejar(notas, eventos, LIGADA, AGORA);
     expect(p1.criar).toHaveLength(3);
-    expect(p1.cancelarCiencias).toEqual(['b', 'd']);
-    const cancela = (e: EventoExistente) => e.tp_evento === '210210' && e.situacao === 'na_fila' && p1.cancelarCiencias.includes(e.nota_sefaz_id);
+    expect(p1.cancelarCiencias).toEqual(['b', 'd', 'e']);
+    const cancela = (e: EventoExistente) =>
+      e.tp_evento === '210210' && e.situacao === 'na_fila' && p1.cancelarCiencias.includes(e.nota_sefaz_id);
     eventos = eventos.map((e) => (cancela(e) ? { ...e, situacao: 'cancelada' as const } : e));
     eventos.push(...p1.criar.map((c) => ({ ...c, situacao: 'na_fila' as const, pedida_em: AGORA })));
     expect(planejar(notas, eventos, LIGADA, AGORA)).toEqual(VAZIO);
@@ -307,8 +353,14 @@ describe('avisoDePrazo', () => {
   it('base nula: não', () => {
     expect(avisoDePrazo(nota({ autorizada_em: null, emitida_em: null }), comCiencia, AGORA)).toBe(false);
   });
-  it('lido ao pé da letra: nota cancelada depois da ciência registrada ainda avisa (preocupação no relato)', () => {
-    expect(avisoDePrazo(nota({ situacao: 'cancelada', situacao_sefaz: 'cancelada', autorizada_em: dias(80) }), comCiencia, AGORA)).toBe(true);
+  it.each([
+    ['cancelada', nota({ situacao: 'cancelada', situacao_sefaz: 'cancelada', autorizada_em: dias(80) })],
+    ['denegada', nota({ situacao: 'denegada', situacao_sefaz: 'denegada', autorizada_em: dias(80) })],
+  ])('nota %s depois da ciência registrada: não avisa (não há resposta possível)', (_nome, n) => {
+    expect(avisoDePrazo(n, comCiencia, AGORA)).toBe(false);
+  });
+  it('nota ignorada sem resposta final, com ciência registrada: continua avisando (a obrigação continua)', () => {
+    expect(avisoDePrazo(nota({ situacao: 'ignorada', autorizada_em: dias(80) }), comCiencia, AGORA)).toBe(true);
   });
 });
 
