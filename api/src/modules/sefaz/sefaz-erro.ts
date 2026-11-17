@@ -18,9 +18,10 @@ export type CodigoFault = (typeof CODIGOS_FAULT)[number] | 'outro';
 
 /**
  * Passo em que a leitura da resposta parou: `http` (status ≠ 200), `tamanho` (corpo acima do teto), `xml` (XML ilegível ou recusado),
- * `soap` (envelope sem `retDistDFeInt`), `cStat`, `docZip` (demais, ou sem NSU válido) e `nsu` (`ultNSU`/`maxNSU` inválidos).
+ * `soap` (envelope sem `retDistDFeInt`/`retEnvEvento`), `cStat` (o do retorno ou do lote), `docZip` (demais, ou sem NSU válido),
+ * `nsu` (`ultNSU`/`maxNSU` inválidos) e `retEvento` (mais de 20, fora do lote, sem `infEvento` ou com `cStat` inválido).
  */
-export type PassoLeitura = 'http' | 'tamanho' | 'xml' | 'soap' | 'cStat' | 'docZip' | 'nsu';
+export type PassoLeitura = 'http' | 'tamanho' | 'xml' | 'soap' | 'cStat' | 'docZip' | 'nsu' | 'retEvento';
 
 /** Diagnóstico de uma resposta que não serviu: só rótulos das listas fechadas acima, nunca trecho do corpo. */
 export interface DiagnosticoLeitura {

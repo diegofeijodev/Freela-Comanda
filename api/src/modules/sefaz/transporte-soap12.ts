@@ -23,6 +23,12 @@ export interface ChamadaSoap12 {
   confianca: string[]; // PEM das autoridades aceitas para o servidor (confiancaSefaz)
   tempoLimiteMs: number; // prazo TOTAL da chamada
   tetoRespostaBytes: number;
+  /**
+   * Ausente ou `prefixado` = `envelopeSoap12` (o da distribuição, os bytes de sempre). `sem_prefixo` = `envelopeSoap12SemPrefixo`, para
+   * corpo com assinatura XMLDSig (os eventos): a C14N inclusiva leva ao elemento assinado os `xmlns:*` em escopo nos ancestrais, e com
+   * os do envelope (`soap12`, `xsi`, `xsd`) quem confere no documento recebido calcularia outro digest.
+   */
+  envelope?: 'prefixado' | 'sem_prefixo';
 }
 
 export type ChamarSoap12 = (c: ChamadaSoap12) => Promise<string>;
@@ -34,6 +40,11 @@ export function envelopeSoap12(corpo: string): string {
     'xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap12="http://www.w3.org/2003/05/soap-envelope">' +
     `<soap12:Body>${corpo}</soap12:Body></soap12:Envelope>`
   );
+}
+
+/** O mesmo SOAP 1.2 com o namespace padrão: nenhum prefixo em escopo dentro do `Body` (ver `ChamadaSoap12.envelope`). */
+export function envelopeSoap12SemPrefixo(corpo: string): string {
+  return `<?xml version="1.0" encoding="utf-8"?><Envelope xmlns="http://www.w3.org/2003/05/soap-envelope"><Body>${corpo}</Body></Envelope>`;
 }
 
 // `Document` do xmldom (o global do TS é outro tipo); só `xml-leitura.ts` importa o pacote.
@@ -118,7 +129,7 @@ export function chamarSoap12(c: ChamadaSoap12, requisitar: typeof https.request 
     };
 
     try {
-      const envelope = Buffer.from(envelopeSoap12(c.corpo), 'utf8');
+      const envelope = Buffer.from(c.envelope === 'sem_prefixo' ? envelopeSoap12SemPrefixo(c.corpo) : envelopeSoap12(c.corpo), 'utf8');
       // Chave e certificado só dentro do contexto: com NODE_DEBUG=http/https/tls o Node imprime as opções do pedido (e o nome do
       // pool do agente, que concatena `key`/`cert`). Com `secureContext` o Node ignora `ca`/`minVersion` soltos: vão aqui dentro.
       const secureContext = tls.createSecureContext({
