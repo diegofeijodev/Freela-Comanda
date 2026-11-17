@@ -956,6 +956,17 @@ describe('CaixaSefazService', () => {
         }
       });
 
+      it('cancela também o evento do admin que voltou de um lote recusado inteiro (108, 656, 280): sem tentativa gasta, não foi registrado', async () => {
+        for (const resultado of ['respondida', 'falha_antes_de_enviar']) {
+          const { svc, t } = montarR();
+          const l = lote(resultado);
+          t.sefaz_eventos_lotes.push(l);
+          t.sefaz_manifestacoes.push(evento('ok', '210220', { situacao: 'na_fila', tentativas: 0, lote_id: l.id }));
+          await svc.reabrir(N.ok, QUEM, AGORA);
+          expect(t.sefaz_manifestacoes[0]!.situacao).toBe('cancelada');
+        }
+      });
+
       it('ignorar avisando, reabrir (Desfazer) e ignorar de novo: o evento cancelado não ocupa a vaga', async () => {
         const { svc, t } = montarR();
         await ign(svc, 'ok', 'nao_reconheco');

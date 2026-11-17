@@ -267,14 +267,23 @@ async function main(): Promise<void> {
     const religada = await db.sefaz_manifestacao.findUniqueOrThrow({ where: onde });
     conferir(religada.situacao === 'ok' && religada.mensagem === null && religada.falhas_seguidas === 0, 'religada: ok');
     conferir(religada.ligada_em?.getTime() === ligada.ligada_em?.getTime(), 'religar depois da parada não reescreve ligada_em');
+    // "Voltar para a lista" depois da parada: o evento voltou do 280 sem gastar tentativa (lote `respondida`), então é cancelado
+    await caixa.reabrir(c.id, QUEM);
+    conferir(
+      (await db.sefaz_manifestacoes.findUniqueOrThrow({ where: { id: evC.id } })).situacao === 'cancelada',
+      'reabrir depois do 280 cancela',
+    );
+    await caixa.ignorar(c.id, 'nao_reconheco', null, QUEM, new Date(), true);
+    const evC2 = await db.sefaz_manifestacoes.findFirstOrThrow({ where: { nota_sefaz_id: c.id, situacao: 'na_fila' } });
+    conferir(evC2.id !== evC.id && evC2.tp_evento === '210220', 'o cancelado não ocupa a vaga: novo 210220');
 
     // 6. a 3ª tentativa com 999 → falhou; "Tentar de novo" zera as tentativas (CHECK 0–3 de verdade)
-    await db.sefaz_manifestacoes.update({ where: { id: evC.id }, data: { tentativas: 2 } });
+    await db.sefaz_manifestacoes.update({ where: { id: evC2.id }, data: { tentativas: 2, enviar_apos: new Date(Date.now() - 1000) } });
     porta.proximas.push(retornoLote(128, [{ chave: CH_C, tpEvento: '210220', cStat: 999 }]));
     conferir((await respostas.processar()).fim === 'feito', 'tique 3 saiu');
-    conferir((await db.sefaz_manifestacoes.findUniqueOrThrow({ where: { id: evC.id } })).situacao === 'falhou', '999 na 3ª = falhou');
+    conferir((await db.sefaz_manifestacoes.findUniqueOrThrow({ where: { id: evC2.id } })).situacao === 'falhou', '999 na 3ª = falhou');
     await caixa.responderDeNovo(c.id, QUEM);
-    const deNovo = await db.sefaz_manifestacoes.findUniqueOrThrow({ where: { id: evC.id } });
+    const deNovo = await db.sefaz_manifestacoes.findUniqueOrThrow({ where: { id: evC2.id } });
     conferir(deNovo.situacao === 'na_fila' && deNovo.tentativas === 0, 'Tentar de novo: na fila, 0 tentativas');
     await recusaHttp(caixa.responderDeNovo(a.id, QUEM), 409, 'SEFAZ_NADA_A_REENVIAR', 'nada a reenviar');
 
