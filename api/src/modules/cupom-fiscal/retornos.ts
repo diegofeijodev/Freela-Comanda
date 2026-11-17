@@ -30,9 +30,9 @@ export interface AcaoRetorno {
   rejeicao: boolean;
   /** 539: o número é de outra nota e nunca volta a ser usado. */
   numeroReaproveitavel?: false;
-  /** A parada do ambiente (a frase dela é a `recusa.frase`). */
+  /** A parada do ambiente (a `mensagem` dela sai de `mensagemDoAmbiente`). */
   ambiente?: SituacaoAmbiente;
-  /** 656: o serviço grava `bloqueado_ate` e `ultimo_656_em = contexto.agora`. */
+  /** 656 (no protNFe ou no lote): o serviço grava `bloqueado_ate` e `ultimo_656_em = contexto.agora`. */
   bloquear656?: true;
   bloqueadoAte?: Date;
   /** 120: o aviso da SEFAZ, para `alerta_c_msg`/`alerta_x_msg`. */
@@ -59,7 +59,9 @@ const AUTORIZADO = new Set([100, 150, 120]);
 const DENEGADO = new Set([110, 301, 302]);
 const FORA_DO_AR = new Set([108, 109]);
 const ESQUEMA_E_LOTE = new Set([214, 215, 225, 402, 404, 516, 517, 587, 588]);
-const QR = new Set([373, 394, 395]); // o código do hash do QR inválido ainda não foi confirmado (§5.3); o 1º teste completa
+const QR = new Set([394, 395]); // o código do hash do QR inválido ainda não foi confirmado (§5.3); o 1º teste completa
+/** `xProd` do 1º item fora do texto de homologação (§5.2, `XPROD_HOMOLOGACAO`): defeito da montagem, não do QR (rodada de correção 1). */
+const NOME_HOMOLOGACAO = 373;
 const EVENTO_REGISTRADO = new Set([135, 155]);
 const NOTA_CANCELADA = new Set([101, 151]);
 const NAO_CATALOGADO = 999;
@@ -127,6 +129,18 @@ function efeitoNoAmbiente(c: number, ctx: Pick<ContextoRetorno, 'agora' | 'ultim
   return null;
 }
 
+/**
+ * A `mensagem` do ambiente depois da resposta: 2º 656 = a frase do desligamento; outra parada = a frase da recusa; só o bloqueio do 656
+ * = a frase do bloqueio com a hora. null = a resposta não mexe no ambiente. Use esta, não a `recusa.frase`: com 656 no lote e `protNFe`
+ * na mesma resposta, a recusa é a do cupom.
+ */
+export function mensagemDoAmbiente(a: AcaoRetorno): string | null {
+  if (a.ambiente === 'parada_656') return F.bloqueouDuasVezes;
+  if (a.ambiente) return a.recusa?.frase ?? null;
+  if (a.bloquear656 && a.bloqueadoAte) return F.bloqueio656(a.bloqueadoAte);
+  return null;
+}
+
 function comEfeito(cupom: SituacaoCupom, c: number, xMotivo: string | null | undefined, ef: Efeito): AcaoRetorno {
   const { frase, ...efeito } = ef;
   return { cupom, rejeicao: ehRejeicao(c), ...efeito, recusa: recusaDe(c, xMotivo, () => frase) };
@@ -158,6 +172,21 @@ function fraseDaFamilia(f: Familia, c: number): string {
  * pode ter a nota.
  */
 export function acaoAutorizacao(r: RespostaAutorizacao | SefazErro, ctx: ContextoRetorno): AcaoRetorno {
+  const a = acaoPeloCodigo(r, ctx);
+  // 656 no lote conta mesmo com protNFe (§4.4, regra 6: "em qualquer serviço"; rodada de correção 1): o cupom segue o protNFe (o número
+  // é dele) e o ambiente bloqueia 65 min, ou para no 2º em 24 h (a parada_656 vale sobre a do protNFe). A mensagem: `mensagemDoAmbiente`.
+  if (r instanceof SefazErro || r.protocolo === null || r.cStatLote !== 656 || a.bloquear656) return a;
+  const d = depoisDo656(ctx.ultimo656, ctx.agora);
+  return {
+    ...a,
+    rejeicao: true,
+    bloquear656: true,
+    bloqueadoAte: d.bloqueado_ate,
+    ...(d.parada ? { ambiente: 'parada_656' as const } : {}),
+  };
+}
+
+function acaoPeloCodigo(r: RespostaAutorizacao | SefazErro, ctx: ContextoRetorno): AcaoRetorno {
   if (r instanceof SefazErro) return { cupom: r.enviado ? 'sem_resposta' : 'nao_enviado', rejeicao: false, recusa: null };
   const p = r.protocolo;
   const c = p ? p.cStat : r.cStatLote;
@@ -184,6 +213,9 @@ export function acaoAutorizacao(r: RespostaAutorizacao | SefazErro, ctx: Context
       ambiente: 'parada_serie_em_uso',
       recusa: recusaDe(c, xMotivo, () => F.serieEmUso(ctx.serie, ctx.numero)),
     };
+  }
+  if (c === NOME_HOMOLOGACAO) {
+    return { cupom: 'rejeitado', rejeicao, ambiente: 'parada_configuracao', recusa: recusaDe(c, xMotivo, () => F.erroDoSistema(c)) };
   }
   if (QR.has(c)) {
     return { cupom: 'rejeitado', rejeicao, ambiente: 'parada_configuracao', recusa: recusaDe(c, xMotivo, () => F.qrCode(c, ctx.ambiente)) };

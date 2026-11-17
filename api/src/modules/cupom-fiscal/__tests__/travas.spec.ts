@@ -8,7 +8,10 @@ import {
   TETO_CONSULTAS_HORA,
   TETO_RECUSAS_HORA,
   type EstadoTravas,
+  ESPERA_CANCELAMENTO_MS,
+  MAX_CANCELAMENTOS,
 } from '../travas';
+import { FRASE_ERRO } from '../frases';
 import { acoesDoCupom, inicioDaEspera, type CupomParaAcoes } from '../situacao-cupom';
 
 const AGORA = new Date('2026-11-17T17:05:00Z'); // 14h05 em Brasília
@@ -52,9 +55,10 @@ describe('podeChamar', () => {
     expect(podeChamar(livre({ bloqueado_ate: AGORA }), 'autorizacao', AGORA)).toEqual({ ok: true });
   });
 
-  it('parada_656 → NFCE_PARADA em todos os serviços, antes do bloqueio', () => {
+  // parada_656 e (rodada de correção 1, T9-2b) parada_certificado: com o certificado parado, toda chamada falharia (28x).
+  it.each(['parada_656', 'parada_certificado'] as const)('%s → NFCE_PARADA em todos os serviços, antes do bloqueio', (situacao) => {
     for (const servico of SERVICOS) {
-      expect(podeChamar(livre({ situacao: 'parada_656', bloqueado_ate: min(30) }), servico, AGORA)).toEqual({
+      expect(podeChamar(livre({ situacao, bloqueado_ate: min(30) }), servico, AGORA)).toEqual({
         ok: false,
         code: 'NFCE_PARADA',
         ate: null,
@@ -63,7 +67,7 @@ describe('podeChamar', () => {
   });
 
   // Decisão do controlador (T9-2): consulta pela chave e cancelamento só param no 656 (janela e parada_656) e nos próprios limites.
-  it.each(['parada_certificado', 'parada_configuracao', 'parada_serie_em_uso'] as const)(
+  it.each(['parada_configuracao', 'parada_serie_em_uso'] as const)(
     'ambiente %s → NFCE_PARADA na emissão e no status; consulta e cancelamento passam',
     (situacao) => {
       for (const servico of ['autorizacao', 'status'] as const) {
@@ -206,9 +210,83 @@ describe('podeChamar', () => {
   it('ordem na consulta: parada_656 → bloqueio → espera da consulta (outras paradas e o teto não contam)', () => {
     const tudo = livre({ situacao: 'parada_656', bloqueado_ate: min(10), recusas: vezes(10, () => min(-1)), enviadoEm: s(-10) });
     expect(podeChamar(tudo, 'consulta', AGORA)).toMatchObject({ code: 'NFCE_PARADA' });
-    expect(podeChamar({ ...tudo, situacao: 'parada_certificado' }, 'consulta', AGORA)).toMatchObject({ code: 'NFCE_BLOQUEADA' });
-    expect(podeChamar({ ...tudo, situacao: 'parada_certificado', bloqueado_ate: null }, 'consulta', AGORA)).toMatchObject({
+    expect(podeChamar({ ...tudo, situacao: 'parada_configuracao' }, 'consulta', AGORA)).toMatchObject({ code: 'NFCE_BLOQUEADA' });
+    expect(podeChamar({ ...tudo, situacao: 'parada_configuracao', bloqueado_ate: null }, 'consulta', AGORA)).toMatchObject({
       code: 'NFCE_CONSULTA_CEDO',
+    });
+  });
+});
+
+// Rodada de correção 1 (Important): o cancelamento tem limite próprio por cupom — 1 pedido a cada 2 min e no máximo 3. As rejeições dele
+// contam no teto da hora (`acaoCancelamento` marca `rejeicao`), mas o teto não o barra (o prazo de 30 min não pode se perder).
+describe('podeChamar: limite do cancelamento por cupom', () => {
+  it('constantes', () => {
+    expect(MAX_CANCELAMENTOS).toBe(3);
+    expect(ESPERA_CANCELAMENTO_MS).toBe(120_000);
+  });
+
+  it.each([
+    [0, true],
+    [1, true],
+    [2, true],
+    [3, false],
+    [4, false],
+  ])('com %i pedidos já feitos pelo cupom → passa: %s (o 4º é recusado, sem hora de volta)', (feitos, passa) => {
+    const r = podeChamar(livre({ cancelamentosDoCupom: feitos, ultimoCancelamentoDoCupom: feitos ? min(-10) : null }), 'evento', AGORA);
+    expect(r).toEqual(passa ? { ok: true } : { ok: false, code: 'NFCE_LIMITE_CANCELAMENTOS', ate: null });
+  });
+
+  it.each([
+    [60, false],
+    [119, false],
+    [120, true],
+  ])('2º pedido %i s depois do 1º → passa: %s', (seg, passa) => {
+    const r = podeChamar(livre({ cancelamentosDoCupom: 1, ultimoCancelamentoDoCupom: s(-seg) }), 'evento', AGORA);
+    expect(r).toEqual(passa ? { ok: true } : { ok: false, code: 'NFCE_CANCELAMENTO_CEDO', ate: s(120 - seg) });
+  });
+
+  it('a recusa do 2º pedido cedo leva a hora certa na frase (Brasília, também com TZ=UTC)', () => {
+    const r = podeChamar(livre({ cancelamentosDoCupom: 1, ultimoCancelamentoDoCupom: s(-30) }), 'evento', AGORA);
+    expect(r).toEqual({ ok: false, code: 'NFCE_CANCELAMENTO_CEDO', ate: s(90) });
+    if (r.ok) throw new Error('devia recusar');
+    expect(FRASE_ERRO.NFCE_CANCELAMENTO_CEDO(r.ate as Date)).toBe(
+      'Espere até as 14h06 para pedir o cancelamento de novo: a SEFAZ bloqueia pedidos repetidos.',
+    );
+    expect(FRASE_ERRO.NFCE_LIMITE_CANCELAMENTOS).toBe(
+      'O cancelamento deste cupom já foi pedido 3 vezes. Para não bloquear o CNPJ, não sai outro pedido: fale com o contador.',
+    );
+  });
+
+  it('o teto de recusas não barra o cancelamento, mas o limite do cupom sim', () => {
+    const recusas = vezes(12, () => min(-5));
+    expect(podeChamar(livre({ recusas, cancelamentosDoCupom: 2, ultimoCancelamentoDoCupom: min(-3) }), 'evento', AGORA)).toEqual({
+      ok: true,
+    });
+    expect(podeChamar(livre({ recusas, cancelamentosDoCupom: 3, ultimoCancelamentoDoCupom: min(-3) }), 'evento', AGORA)).toMatchObject({
+      code: 'NFCE_LIMITE_CANCELAMENTOS',
+    });
+  });
+
+  it('o limite do cancelamento não vale para os outros serviços', () => {
+    for (const servico of ['autorizacao', 'consulta', 'status'] as const) {
+      expect(podeChamar(livre({ cancelamentosDoCupom: 3, ultimoCancelamentoDoCupom: s(-10) }), servico, AGORA)).toEqual({ ok: true });
+    }
+  });
+
+  it('ordem no cancelamento: parada (656/certificado) → bloqueio → limite de pedidos → espera de 2 min', () => {
+    const tudo = livre({
+      situacao: 'parada_certificado',
+      bloqueado_ate: min(10),
+      cancelamentosDoCupom: 3,
+      ultimoCancelamentoDoCupom: s(-10),
+    });
+    expect(podeChamar(tudo, 'evento', AGORA)).toMatchObject({ code: 'NFCE_PARADA' });
+    expect(podeChamar({ ...tudo, situacao: 'parada_configuracao' }, 'evento', AGORA)).toMatchObject({ code: 'NFCE_BLOQUEADA' });
+    expect(podeChamar({ ...tudo, situacao: 'ok', bloqueado_ate: null }, 'evento', AGORA)).toMatchObject({
+      code: 'NFCE_LIMITE_CANCELAMENTOS',
+    });
+    expect(podeChamar({ ...tudo, situacao: 'ok', bloqueado_ate: null, cancelamentosDoCupom: 1 }, 'evento', AGORA)).toMatchObject({
+      code: 'NFCE_CANCELAMENTO_CEDO',
     });
   });
 });

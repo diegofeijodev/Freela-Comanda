@@ -382,16 +382,17 @@ expect(erroDoItemFiscal({ gtin: '7891000315508' })).toBe('Este GTIN não confere
   - `acaoCancelamento(r: RespostaEvento | SefazErro, ctx: ContextoRetorno): AcaoRetorno`;
   - `interface AcaoStatus { emOperacao: boolean; rejeicao: boolean; ambiente?: SituacaoAmbiente; bloquear656?: true; bloqueadoAte?: Date; codigo: number | null; frase: string }`;
   - `acaoStatus(r: RespostaStatus | SefazErro, ctx: Pick<ContextoRetorno, 'agora' | 'ultimo656'>): AcaoStatus` ("Testar a conexão": 656, paradas e rejeições contam como nos outros serviços);
+  - `mensagemDoAmbiente(a: AcaoRetorno): string | null` (a `mensagem` do ambiente: 2º 656, outra parada ou o bloqueio com a hora; com 656 no lote e `protNFe` na mesma resposta, a `recusa` é a do cupom);
   - `familiaDoCodigo(c: number): Familia` (lista da §11 do desenho);
   - `motivoSefaz(x: string | null | undefined): string`;
   - `relogioDiverge(dhRecbto: string, agora: Date): boolean` (mais de 120 s; o serviço aplica, com o `dhRecbto` do lote, do status ou o `dhRegEvento`, nunca o `protocolo.dhRecbto` de uma consulta).
-  - Regras: autorizado ou denegado sem `protNFe` ou sem `nProt` válido, lote aceito sem `protNFe`, outro 1xx e o 999 = `sem_resposta`; `rejeicao` = código ≥ 200, menos 301 e 302.
+  - Regras: autorizado ou denegado sem `protNFe` ou sem `nProt` válido, lote aceito sem `protNFe`, outro 1xx e o 999 = `sem_resposta`; `rejeicao` = código ≥ 200, menos 301 e 302; 656 no lote conta mesmo com `protNFe` (o cupom segue o `protNFe`); 373 (nome do 1º item em homologação) = `rejeitado` + `parada_configuracao` com a frase de erro do sistema (não é QR).
 - **`travas.ts`:**
-  - constantes `TETO_RECUSAS_HORA = 10`, `TETO_CONSULTAS_HORA = 20`, `ESPERA_CONSULTA_MS = 120_000`, `STATUS_CADA_MS = 300_000`, `BLOQUEIO_656_MS = 65 * 60_000`, `MAX_ENVIOS = 3`;
-  - `podeChamar(e: EstadoTravas, servico: 'autorizacao' | 'consulta' | 'evento' | 'status', agora: Date): { ok: true } | { ok: false; code: 'NFCE_BLOQUEADA' | 'NFCE_MUITAS_RECUSAS' | 'NFCE_PARADA' | 'NFCE_CONSULTA_CEDO' | 'NFCE_TESTE_CEDO'; ate: Date | null }`;
+  - constantes `TETO_RECUSAS_HORA = 10`, `TETO_CONSULTAS_HORA = 20`, `ESPERA_CONSULTA_MS = 120_000`, `STATUS_CADA_MS = 300_000`, `BLOQUEIO_656_MS = 65 * 60_000`, `MAX_ENVIOS = 3`, `MAX_CANCELAMENTOS = 3`, `ESPERA_CANCELAMENTO_MS = 120_000`;
+  - `podeChamar(e: EstadoTravas, servico: 'autorizacao' | 'consulta' | 'evento' | 'status', agora: Date): { ok: true } | { ok: false; code: 'NFCE_BLOQUEADA' | 'NFCE_MUITAS_RECUSAS' | 'NFCE_PARADA' | 'NFCE_CONSULTA_CEDO' | 'NFCE_TESTE_CEDO' | 'NFCE_CANCELAMENTO_CEDO' | 'NFCE_LIMITE_CANCELAMENTOS'; ate: Date | null }`;
     - emissão e status: qualquer parada → bloqueio do 656 → teto de 10 recusas por hora → espera do status (5 min);
-    - consulta e evento (T9-2): só `parada_656` → bloqueio do 656 → espera da consulta (2 min do envio, 2 min da última consulta da chave, 20 por hora = `NFCE_CONSULTA_CEDO`); o prazo do cancelamento é conferido pelo serviço;
-  - `EstadoTravas = { situacao: SituacaoAmbiente; bloqueado_ate: Date | null; recusas: Date[]; consultas: Date[]; ultimo_status_em: Date | null; enviadoEm?: Date | null; ultimaConsultaDaChave?: Date | null }` (`enviadoEm` = `inicioDaEspera(cupom)`);
+    - consulta e evento (T9-2, T9-2b): só `parada_656` e `parada_certificado` → bloqueio do 656 → limites próprios. Consulta: 2 min do envio, 2 min da última consulta da chave, 20 por hora = `NFCE_CONSULTA_CEDO`. Evento: no máximo 3 pedidos por cupom (`NFCE_LIMITE_CANCELAMENTOS`, sem hora) e 2 min entre eles (`NFCE_CANCELAMENTO_CEDO`); as rejeições dele contam no teto, mas o teto não o barra; o prazo de 30 min é conferido pelo serviço;
+  - `EstadoTravas = { situacao: SituacaoAmbiente; bloqueado_ate: Date | null; recusas: Date[]; consultas: Date[]; ultimo_status_em: Date | null; enviadoEm?: Date | null; ultimaConsultaDaChave?: Date | null; cancelamentosDoCupom?: number; ultimoCancelamentoDoCupom?: Date | null }` (`enviadoEm` = `inicioDaEspera(cupom)`; os dois últimos, do diário `nfce_envios` do cupom, serviço `cancelamento`);
   - `depoisDo656(ultimo656: Date | null, agora: Date): { bloqueado_ate: Date; parada: boolean }`.
 - **`situacao-cupom.ts`:**
   - `PRAZO_CANCELAR_MS = 29 * 60_000`;

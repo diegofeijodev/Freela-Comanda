@@ -10,6 +10,7 @@ import {
   acaoStatus,
   familiaDoCodigo,
   motivoSefaz,
+  mensagemDoAmbiente,
   relogioDiverge,
   type AcaoRetorno,
   type AcaoStatus,
@@ -213,6 +214,48 @@ describe('acaoAutorizacao (desenho §5.3, tabela "Autorização"; UX §6.1)', ()
     expect(acaoAutorizacao(r, ctx())).toEqual(esperado);
   });
 
+  // Rodada de correção 1: o 656 no lote conta (65 min; 2º em 24 h = parada_656) mesmo com protNFe; o cupom segue o protNFe.
+  it('lote 656 com protNFe 386: rejeitado pela família e o ambiente bloqueia 65 min', () => {
+    const a = acaoAutorizacao({ ...aut(386), cStatLote: 656 }, ctx());
+    expect(a).toEqual({
+      cupom: 'rejeitado',
+      rejeicao: true,
+      bloquear656: true,
+      bloqueadoAte: mais(AGORA, 65 * MIN),
+      recusa: recusa(386, 'produto', U.produto),
+    });
+    expect(mensagemDoAmbiente(a)).toBe(U.bloqueio15h10);
+  });
+
+  it('lote 656 com protNFe 100: autorizado (o número é da nota), conta no teto e bloqueia', () => {
+    const a = acaoAutorizacao({ ...aut(100), cStatLote: 656 }, ctx());
+    expect(a).toEqual({ cupom: 'autorizado', rejeicao: true, bloquear656: true, bloqueadoAte: mais(AGORA, 65 * MIN), recusa: null });
+    expect(mensagemDoAmbiente(a)).toBe(U.bloqueio15h10);
+  });
+
+  it('lote 656 (2º em 24 h) com protNFe 539: a parada_656 vale sobre a da série; o número continua bloqueado', () => {
+    const a = acaoAutorizacao({ ...aut(539), cStatLote: 656 }, ctx({ ultimo656: mais(AGORA, -HORA) }));
+    expect(a).toEqual({
+      cupom: 'rejeitado',
+      rejeicao: true,
+      numeroReaproveitavel: false,
+      ambiente: 'parada_656',
+      bloquear656: true,
+      bloqueadoAte: mais(AGORA, 65 * MIN),
+      recusa: recusa(539, 'outra', U.serie539),
+    });
+    expect(mensagemDoAmbiente(a)).toBe(U.duasVezes);
+  });
+
+  it('mensagemDoAmbiente: a frase da parada ou do bloqueio; nula sem efeito no ambiente', () => {
+    expect(mensagemDoAmbiente(acaoAutorizacao(aut(539), ctx()))).toBe(U.serie539);
+    expect(mensagemDoAmbiente(acaoAutorizacao(lote(285), ctx()))).toBe(U.certificado285);
+    expect(mensagemDoAmbiente(acaoAutorizacao(lote(656), ctx()))).toBe(U.bloqueio15h10);
+    expect(mensagemDoAmbiente(acaoAutorizacao(lote(656), ctx({ ultimo656: mais(AGORA, -HORA) })))).toBe(U.duasVezes);
+    expect(mensagemDoAmbiente(acaoAutorizacao(aut(100), ctx()))).toBeNull();
+    expect(mensagemDoAmbiente(acaoAutorizacao(aut(386), ctx()))).toBeNull();
+  });
+
   it('o protNFe vale sobre o código do lote', () => {
     expect(acaoAutorizacao({ ...aut(386), cStatLote: 656 }, ctx()).cupom).toBe('rejeitado');
     expect(acaoAutorizacao({ ...aut(100), cStatLote: 225 }, ctx()).cupom).toBe('autorizado');
@@ -243,7 +286,21 @@ describe('acaoAutorizacao (desenho §5.3, tabela "Autorização"; UX §6.1)', ()
     expect(acaoAutorizacao(aut(394), ctx({ ambiente: 'producao' })).recusa?.frase).toBe(U.qr394Valendo);
   });
 
-  it.each([373, 394, 395])('QR %i: rejeitado + parada_configuracao', (c) => {
+  // Rodada de correção 1: o 373 é a recusa do nome do 1º item em homologação (§5.2; `XPROD_HOMOLOGACAO`), defeito nosso, não o QR.
+  it('373 (nome do 1º item em homologação): rejeitado + parada_configuracao, com a frase de erro do sistema', () => {
+    expect(acaoAutorizacao(aut(373), ctx())).toEqual({
+      cupom: 'rejeitado',
+      rejeicao: true,
+      ambiente: 'parada_configuracao',
+      recusa: recusa(
+        373,
+        'outra',
+        'A emissão parou por um erro do sistema (código 373). Fale com o suporte do Freela Comanda e informe este código.',
+      ),
+    });
+  });
+
+  it.each([394, 395])('QR %i: rejeitado + parada_configuracao', (c) => {
     expect(acaoAutorizacao(aut(c), ctx())).toMatchObject({ cupom: 'rejeitado', ambiente: 'parada_configuracao' });
   });
 
@@ -562,6 +619,36 @@ describe('familiaDoCodigo (desenho §11, ponto 10.4)', () => {
     [999, 'outra'],
   ])('%i → %s', (c, f) => {
     expect(familiaDoCodigo(c)).toBe(f);
+  });
+});
+
+// Rodada de correção 1: sem motivo, a frase não fica com ": ." (o xMotivo do evento pode vir nulo).
+describe('motivo vazio nas frases com <motivo>', () => {
+  it.each(['', '   ', '.', null])('denegado e cancelamento recusado com motivo %p', (m) => {
+    expect(FRASE_RETORNO.denegado(110, motivoSefaz(m))).toBe(
+      'A SEFAZ negou o uso do cupom (código 110). O número foi gasto. Fale com o contador.',
+    );
+    expect(FRASE_RETORNO.cancelamentoRecusado(501, motivoSefaz(m))).toBe(
+      'A SEFAZ não aceitou o cancelamento (código 501). O cupom continua valendo.',
+    );
+  });
+
+  it('pelas ações: evento 501 com xMotivo nulo e denegado com xMotivo vazio', () => {
+    const ev: RespostaEvento = {
+      cStatLote: 128,
+      xMotivoLote: 'Lote de evento processado',
+      cStat: 501,
+      xMotivo: null,
+      nProt: null,
+      dhRegEvento: null,
+      xmlRetorno: '<retEnvEvento/>',
+    };
+    expect(acaoCancelamento(ev, ctx()).recusa).toEqual(
+      recusa(501, 'outra', 'A SEFAZ não aceitou o cancelamento (código 501). O cupom continua valendo.', ''),
+    );
+    expect(acaoAutorizacao(aut(110, { xMotivo: '' }), ctx()).recusa).toEqual(
+      recusa(110, 'outra', 'A SEFAZ negou o uso do cupom (código 110). O número foi gasto. Fale com o contador.', ''),
+    );
   });
 });
 

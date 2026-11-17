@@ -2,9 +2,11 @@
 // Puras: o serviço lê o estado do ambiente (sob o FOR UPDATE da T1) e o diário `nfce_envios`, e pergunta aqui antes de QUALQUER chamada
 // à SEFAZ (autorização, consulta, evento ou status). Nenhum laço: toda chamada nasce de um clique e passa por `podeChamar`.
 // Quem resolve um cupom em andamento escapa das paradas de configuração (decisão T9-2): a consulta pela chave e o cancelamento (evento)
-// só param no 656 (janela de 65 min e `parada_656`) e nos próprios limites (consulta: 2 min, 1 a cada 2 min por chave, 20 por hora;
-// cancelamento: o prazo de 30 min, conferido pelo serviço). Sem isso, um cupom sem resposta de uma série parada não teria saída
-// (a série só troca sem pendentes). Emissão e status seguem todas as travas: qualquer parada e o teto de 10 recusas por hora.
+// só param no 656 (janela de 65 min e `parada_656`), na `parada_certificado` (com o certificado parado toda chamada falharia; T9-2b)
+// e nos próprios limites (consulta: 2 min, 1 a cada 2 min por chave, 20 por hora;
+// cancelamento: 1 pedido a cada 2 min e no máximo 3 por cupom, mais o prazo de 30 min, conferido pelo serviço). Sem isso, um cupom sem
+// resposta de uma série parada não teria saída (a série só troca sem pendentes). As rejeições do cancelamento contam no teto da hora,
+// mas o teto não o barra (o prazo não pode se perder). Emissão e status seguem todas as travas: qualquer parada e o teto de 10 recusas.
 
 import type { ServicoNfce } from '../sefaz/nfce.port';
 
@@ -22,6 +24,10 @@ export const STATUS_CADA_MS = 300_000;
 export const BLOQUEIO_656_MS = 65 * 60_000;
 /** Envios de autorização por cupom; depois, só Descartar. */
 export const MAX_ENVIOS = 3;
+/** Pedidos de cancelamento (evento 110111) por cupom: o mesmo erro repetido é o caminho do 656 (§4.4, regra 5). */
+export const MAX_CANCELAMENTOS = 3;
+/** Entre dois pedidos de cancelamento do mesmo cupom. */
+export const ESPERA_CANCELAMENTO_MS = 120_000;
 
 const JANELA_MS = 60 * 60_000;
 const JANELA_656_MS = 24 * 60 * 60_000;
@@ -38,9 +44,20 @@ export interface EstadoTravas {
   enviadoEm?: Date | null;
   /** Só na consulta: a última consulta desta chave. */
   ultimaConsultaDaChave?: Date | null;
+  /** Só no evento: quantos pedidos de cancelamento este cupom já fez (`nfce_envios`, serviço `cancelamento`, qualquer resultado). */
+  cancelamentosDoCupom?: number;
+  /** Só no evento: `iniciada_em` do último pedido de cancelamento deste cupom. */
+  ultimoCancelamentoDoCupom?: Date | null;
 }
 
-export type CodigoTrava = 'NFCE_BLOQUEADA' | 'NFCE_MUITAS_RECUSAS' | 'NFCE_PARADA' | 'NFCE_CONSULTA_CEDO' | 'NFCE_TESTE_CEDO';
+export type CodigoTrava =
+  | 'NFCE_BLOQUEADA'
+  | 'NFCE_MUITAS_RECUSAS'
+  | 'NFCE_PARADA'
+  | 'NFCE_CONSULTA_CEDO'
+  | 'NFCE_TESTE_CEDO'
+  | 'NFCE_CANCELAMENTO_CEDO'
+  | 'NFCE_LIMITE_CANCELAMENTOS';
 export type ResultadoTrava = { ok: true } | { ok: false; code: CodigoTrava; ate: Date | null };
 
 const mais = (d: Date, ms: number) => new Date(d.getTime() + ms);
@@ -65,17 +82,20 @@ function esperaMaisLonga(esperas: readonly (Date | null)[], agora: Date): Date |
   return ate;
 }
 
-/** Consulta pela chave e cancelamento: resolvem um cupom em andamento, então só o 656 e os próprios limites os param (T9-2). */
+/** Consulta pela chave e cancelamento: resolvem um cupom em andamento, então só o 656, o certificado e os próprios limites os param. */
 const resolveCupom = (s: ServicoNfce) => s === 'consulta' || s === 'evento';
+/** Paradas que valem para todos os serviços: o 2º 656 e o certificado recusado (T9-2b). */
+const PARA_TUDO: readonly SituacaoAmbiente[] = ['parada_656', 'parada_certificado'];
 
 /**
- * Pode chamar a SEFAZ agora? Ordem: parada (até o admin religar; na consulta e no evento, só a `parada_656`) → bloqueio do 656 →
- * teto de recusas (só emissão e status) → espera do serviço (consulta: 2 min do envio, 2 min da última consulta da chave e 20 por
- * hora; status: 5 min). `ate` = quando abre (null na parada).
+ * Pode chamar a SEFAZ agora? Ordem: parada (até o admin religar; na consulta e no evento, só `parada_656` e `parada_certificado`) →
+ * bloqueio do 656 →
+ * teto de recusas (só emissão e status) → limite do serviço (consulta: 2 min do envio, 2 min da última consulta da chave e 20 por
+ * hora; evento: 3 pedidos por cupom e 2 min entre eles; status: 5 min). `ate` = quando abre (null na parada e no limite de pedidos).
  */
 export function podeChamar(e: EstadoTravas, servico: ServicoNfce, agora: Date): ResultadoTrava {
   const resolve = resolveCupom(servico);
-  if (e.situacao === 'parada_656' || (e.situacao !== 'ok' && !resolve)) return { ok: false, code: 'NFCE_PARADA', ate: null };
+  if (PARA_TUDO.includes(e.situacao) || (e.situacao !== 'ok' && !resolve)) return { ok: false, code: 'NFCE_PARADA', ate: null };
   if (e.bloqueado_ate !== null && e.bloqueado_ate > agora) return { ok: false, code: 'NFCE_BLOQUEADA', ate: e.bloqueado_ate };
   if (!resolve) {
     const recusas = tetoAte(e.recusas, TETO_RECUSAS_HORA, agora);
@@ -92,6 +112,11 @@ export function podeChamar(e: EstadoTravas, servico: ServicoNfce, agora: Date): 
       agora,
     );
     if (ate !== null) return { ok: false, code: 'NFCE_CONSULTA_CEDO', ate };
+  }
+  if (servico === 'evento') {
+    if ((e.cancelamentosDoCupom ?? 0) >= MAX_CANCELAMENTOS) return { ok: false, code: 'NFCE_LIMITE_CANCELAMENTOS', ate: null };
+    const ate = e.ultimoCancelamentoDoCupom ? mais(e.ultimoCancelamentoDoCupom, ESPERA_CANCELAMENTO_MS) : null;
+    if (ate !== null && ate > agora) return { ok: false, code: 'NFCE_CANCELAMENTO_CEDO', ate };
   }
   if (servico === 'status' && e.ultimo_status_em !== null) {
     const ate = mais(e.ultimo_status_em, STATUS_CADA_MS);

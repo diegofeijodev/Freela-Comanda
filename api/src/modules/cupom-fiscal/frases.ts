@@ -23,8 +23,11 @@ function lista(itens: readonly string[]): string {
   return itens.length <= 1 ? (itens[0] ?? '') : `${itens.slice(0, -1).join(', ')} e ${itens[itens.length - 1]}`;
 }
 
-/** O motivo da SEFAZ dentro de uma frase que já termina com ponto: sem o ponto final dele. */
-const semPontoFinal = (s: string) => s.replace(/[\s.]+$/u, '');
+/** ": <motivo>" sem o ponto final dele (a frase já termina com ponto); motivo vazio = nada, para não sobrar ": ." */
+const comMotivo = (s: string) => {
+  const m = s.trim().replace(/[\s.]+$/u, '');
+  return m === '' ? '' : `: ${m}`;
+};
 
 /** Formata o CFOP como na tela: 5405 → 5.405. */
 const cfopTexto = (c: string) => `${c[0]}.${c.slice(1)}`;
@@ -82,7 +85,7 @@ export const FRASE_RETORNO = {
   autorizado: (autorizadaEm: Date, nProt: string) => `Autorizado às ${horaSp(autorizadaEm)} · protocolo ${nProt}`,
   autorizadoComAlerta: (xMsg: string) => `Autorizado, com um aviso da SEFAZ: “${xMsg}”. O cupom vale. Mostre o aviso ao contador.`,
   denegado: (codigo: number, motivo: string) =>
-    `A SEFAZ negou o uso do cupom (código ${codigo}): ${semPontoFinal(motivo)}. O número foi gasto. Fale com o contador.`,
+    `A SEFAZ negou o uso do cupom (código ${codigo})${comMotivo(motivo)}. O número foi gasto. Fale com o contador.`,
   jaTem: (consultarAPartirDe: Date) =>
     `A SEFAZ já tem este cupom. Consulte a partir das ${horaSp(consultarAPartirDe)} para ver a situação.`,
   serieEmUso: (serie: number, numero: number | bigint) =>
@@ -120,7 +123,7 @@ export const FRASE_RETORNO = {
   semResposta: (consultarAPartirDe: Date) =>
     `A SEFAZ não respondeu. O cupom pode ter sido autorizado. Consulte a partir das ${horaSp(consultarAPartirDe)} e não emita outro cupom para esta venda até lá.`,
   cancelamentoRecusado: (codigo: number, motivo: string) =>
-    `A SEFAZ não aceitou o cancelamento (código ${codigo}): ${semPontoFinal(motivo)}. O cupom continua valendo.`,
+    `A SEFAZ não aceitou o cancelamento (código ${codigo})${comMotivo(motivo)}. O cupom continua valendo.`,
   // "Testar a conexão" (UX 5.1, a linha sob o botão; o certificado, o 656 e as paradas usam as frases acima)
   statusOk: (respondeuEm: Date) => `A SEFAZ respondeu às ${horaSp(respondeuEm)}: o serviço está funcionando.`,
   statusSemContato: 'Não consegui falar com a SEFAZ. Nada foi enviado.',
@@ -193,6 +196,11 @@ export const FRASE_ERRO = {
   NFCE_PRODUCAO_SEM_TESTE: 'Antes de ligar valendo, emita e cancele um cupom no modo de teste.',
   NFCE_LANCA_VENDA_PENDENTE: 'Responda quem conta no estoque as vendas emitidas aqui (quadro Caixa de hoje).',
   NFCE_TESTE_CEDO: (ate: Date) => `Pode testar de novo às ${horaSp(ate)}.`,
+  // limite do cancelamento por cupom (rodada de correção 1): a UX não fixa; no molde do NFCE_CONSULTA_CEDO e do NFCE_LIMITE_ENVIOS
+  NFCE_CANCELAMENTO_CEDO: (ate: Date) =>
+    `Espere até as ${horaSp(ate)} para pedir o cancelamento de novo: a SEFAZ bloqueia pedidos repetidos.`,
+  NFCE_LIMITE_CANCELAMENTOS:
+    'O cancelamento deste cupom já foi pedido 3 vezes. Para não bloquear o CNPJ, não sai outro pedido: fale com o contador.',
   NFCE_BLOQUEADA: FRASE_RETORNO.bloqueio656,
   NFCE_MUITAS_RECUSAS: FRASE_RETORNO.muitasRecusas,
 } as const;
