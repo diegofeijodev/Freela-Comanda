@@ -50,7 +50,16 @@
   - enviar sempre com `envelope: 'sem_prefixo'`;
   - todo texto livre passa por `textoFiscal()` antes de assinar (U+0085, U+2028 e U+2029 viram espaço).
 - **Sem dependência nova na API.** No web, só `qrcode-generator`, com versão exata (`yarn add --exact`), importada em um arquivo só.
-- **Erros:** `{ error: { code, message } }`, com as frases da §8.4 do desenho; no web, ler com `errMsg()`.
+- **Erros:** `{ error: { code, message } }`; no web, ler com `errMsg()`.
+- **Frases (fonte única):**
+  - o servidor manda o texto final das tabelas **6.1 e 6.2 da UX**, literalmente, com hora no formato `14h05` (Brasília);
+  - a §5.3 e a §8.4 do desenho dão só o código e o status;
+  - frase que a UX não fixa segue a UX §6.3: "não confere" em vez de "inválido", "modo de teste" e "valendo", "caixa de hoje".
+- **Dinheiro no fio:**
+  - nas rotas do cupom, centavos inteiros (JSON `number`), com o sufixo `_centavos`, nos dois sentidos (desenho §8.2);
+  - o serviço nunca devolve `Decimal` de dinheiro;
+  - o DANFE devolve os valores como texto do XML ("24.00");
+  - na tela, centavos viram `bigint` com `BigInt(n)`.
 - **Comandos pesados:**
   - sempre por `scripts/run-capped.sh`, com tetos jest/tsc/eslint 1500, smoke 1300 e browser-check 3300;
   - um por vez; jest sempre `npx jest --runInBand <arquivos>`;
@@ -59,7 +68,10 @@
 ## Review Focus
 
 1. **Quantidade "0,350", "0", "-1" ou "1.23456".** O servidor recusa com frase (400 `VALIDATION_ERROR`, "Quantidade com até 4 casas, ponto como separador e maior que zero."), e a tela converte a vírgula antes de enviar. Testes nas Tasks 4 e 11.
-2. **Preço do cardápio com 3 casas ("12.345").** Servidor e tela arredondam igual (metade para cima, R$ 12,35), e o `total_esperado` bate. Testes nas Tasks 4 (api e web) e 11.
+2. **Preço do cardápio com 3 casas ("12.345").**
+   - O servidor arredonda uma vez só (metade para cima): `GET /produtos` devolve `preco_venda_centavos = 1235`.
+   - A tela soma esses centavos com a mesma `calcularTotais`, e o `total_esperado_centavos` bate.
+   - Testes nas Tasks 4, 10 e 11.
 3. **Nome de produto com `&`, `<`, aspas, emoji ou U+2028.** O XML sai escapado, U+2028 vira espaço, a assinatura passa e o DANFE mostra o nome legível. Testes nas Tasks 6 e 13.
 4. **Virada do mês entre o envio e o reenvio (31/01 23:58 → 01/02 00:03).** Mesmo número e mesmo `cNF`, chave com o AAMM novo, sem 539. Teste na Task 11.
 5. **Produto desativado ou perfil trocado entre a tela e o envio.** Erro 422 `NFCE_ITEM_INDISPONIVEL` antes da T1: nenhum número reservado e a porta não é chamada. Teste na Task 11.
@@ -217,23 +229,27 @@ expect(decimal2(2400n)).toBe('24.00'); expect(decimal4('2')).toBe('2.0000');
 - Produces:
   - `type Crt = 1 | 2 | 3 | 4`;
   - `interface PerfilFiscal { cfop: string; csosn: string | null; cst_icms: string | null; aliq_icms: string | null; pis_cst: string | null; cofins_cst: string | null; c_ativ_sn: string | null; ibs_sn_aliq: string | null; cbs_sn_aliq: string | null; ibscbs_cst: string | null; ibscbs_cclass_trib: string | null; ativo: boolean }`;
-  - `erroDoPerfil(p: PerfilFiscal): string | null`;
+  - `erroDoPerfil(p: PerfilFiscal, crt: Crt | null): string | null`: com `crt` nulo (regime ainda não cadastrado), aceita CSOSN ou CST;
   - `perfilValeNoRegime(p: PerfilFiscal, crt: Crt): boolean`;
   - `type MotivoProduto = 'falta_ncm' | 'falta_perfil' | 'sem_preco' | 'inativo' | 'perfil_inativo' | 'perfil_fora_do_regime'`;
   - `motivosDoProduto(i: { ativo: boolean; preco_venda: string | null; ncm: string | null; perfil: PerfilFiscal | null }, crt: Crt | null): MotivoProduto[]`;
   - `erroDoItemFiscal(i: { ncm?: string | null; cest?: string | null; gtin?: string | null; origem?: number; descricao_cupom?: string | null; unidade?: string | null }): string | null`.
 
-- [ ] **Step 1: testes** (as frases exatas da §8.4 do desenho)
+- [ ] **Step 1: testes**
+  - As três primeiras frases são as da UX §6.2, literais.
+  - As outras são novas, no estilo da UX §6.3; ao fechar a tarefa, entram em `frases.ts`.
 
 ```ts
-expect(erroDoPerfil({ ...p, csosn: '500', cfop: '5102' })).toBe('O CSOSN 500 só vale com o CFOP 5.405.');
-expect(erroDoPerfil({ ...p, csosn: '102', cfop: '5405' })).toBe('O CSOSN 102 só vale com os CFOP 5.101, 5.102, 5.103, 5.104 ou 5.115.');
-expect(erroDoPerfil({ ...p, csosn: '102', cst_icms: '00' })).toBe('Escolha CSOSN (Simples) ou CST (Regime Normal), não os dois.');
-expect(erroDoPerfil({ ...p, cfop: '5933' })).toBe('O CFOP 5.933 não é aceito no cupom (só com ISSQN).');
+expect(erroDoPerfil({ ...p, csosn: '500', cfop: '5102' }, 1)).toBe('O CSOSN 500 só vale com o CFOP 5.405.');
+expect(erroDoPerfil({ ...p, csosn: null, cst_icms: '00' }, 1)).toBe('No Simples, escolha o CSOSN.');
+expect(erroDoPerfil({ ...p, csosn: '102', cst_icms: null }, 3)).toBe('No regime normal, escolha o CST.');
+expect(erroDoPerfil({ ...p, csosn: '102', cfop: '5405' }, 1)).toBe('O CSOSN 102 só vale com o tipo de venda (CFOP) 5.101, 5.102, 5.103, 5.104 ou 5.115.');
+expect(erroDoPerfil({ ...p, csosn: '102', cst_icms: '00' }, null)).toBe('Escolha o CSOSN (Simples) ou o CST (regime normal), não os dois.');
+expect(erroDoPerfil({ ...p, cfop: '5933' }, 1)).toBe('O tipo de venda (CFOP) 5.933 não entra no cupom.');
 expect(perfilValeNoRegime({ ...p, csosn: '102' }, 3)).toBe(false);
 expect(motivosDoProduto({ ativo: true, preco_venda: null, ncm: '2106909', perfil: null }, 1)).toEqual(['falta_ncm', 'falta_perfil', 'sem_preco']);
 expect(motivosDoProduto({ ativo: true, preco_venda: '9.90', ncm: '22030000', perfil: { ...p, csosn: '102' } }, 3)).toEqual(['perfil_fora_do_regime']);
-expect(erroDoItemFiscal({ gtin: '7891000315508' })).toBe('GTIN inválido. Confira os números ou deixe em branco (sem código de barras).');
+expect(erroDoItemFiscal({ gtin: '7891000315508' })).toBe('Este GTIN não confere. Confira os números ou deixe em branco (produto sem código de barras).');
 ```
 - [ ] **Step 2:** `../scripts/run-capped.sh 1500 npx jest --runInBand src/modules/cupom-fiscal/__tests__/validacao-fiscal.spec.ts`. Esperado: FAIL.
 - [ ] **Step 3:** implementar com as listas da §3.2 do desenho:
@@ -278,9 +294,11 @@ expect(erroDoItemFiscal({ gtin: '7891000315508' })).toBe('GTIN inválido. Confir
     - `qrCodeV2` casa com o padrão v2 on-line do esquema (`\?p=…\|2\|[1-2]\|(0|[1-9]([0-9]{1,5})?)\|[A-F0-9]{40}`);
     - o hash é igual a `createHash('sha1').update(chave + '|2|2|1' + CSC_TESTE).digest('hex').toUpperCase()`;
     - IdCSC `000001` vira `1`.
+    - Esse teste repete a fórmula: ele prova a montagem da URL, não a fórmula. O oráculo externo do hash é o passo 2 do 1º teste em homologação (código do hash do QR).
+    - Se o Manual DANFE v6.0 for baixado de novo (link na pesquisa), transcrever o exemplo das p. 26–27 como mais um vetor.
   - Montagem completa: depois de `assinarXmlEnveloped(nfe, 'NFe' + chave, cert)` + `inserirSupl`, a ordem dos filhos de `NFe` é `infNFe`, `infNFeSupl`, `Signature`.
   - **Oráculo:** o `xml-crypto` confere a assinatura do `infNFe` dentro de `envelopeSoap12SemPrefixo(corpoEnviNfe(1n, nfeCompleta))`, o envelope inteiro.
-  - Opcional: se `xmllint` existir e `__tests__/fixtures/xsd/leiauteNFe_v4.00.xsd` estiver presente, `xmllint --schema` aceita a NFe. Para isso, baixar o 010h v1.03 (link na pesquisa); é a única rede deste plano e acontece fora do teste.
+  - Opcional: se `xmllint` existir e `__tests__/fixtures/xsd/leiauteNFe_v4.00.xsd` estiver presente, `xmllint --schema` aceita a NFe. Para isso, baixar o 010h v1.03 (link na pesquisa). Essa rede acontece fora do teste, como o `yarn add` da Task 14; nenhum teste usa rede.
 - [ ] **Step 2:** jest do arquivo. Esperado: FAIL.
 - [ ] **Step 3:** implementar.
   - Os valores fixos do `ide`, `emit`, `dest`, `det`, `total`, `transp`, `pag`, `infAdic` e `infRespTec` saem da tabela da §5.2 do desenho.
@@ -373,7 +391,10 @@ expect(erroDoItemFiscal({ gtin: '7891000315508' })).toBe('GTIN inválido. Confir
   - `acoesDoCupom(c: CupomParaAcoes, agora: Date): { acoes: AcaoCupom[]; consultar_a_partir_de: Date | null; cancelar_ate: Date | null }`;
   - `vendaEstoque(c): VendaEstoque | null`;
   - `tipoPendente(c, agora): TipoPendente | null`.
-- **`frases.ts`:** as frases da §5.3 e da §8.4 do desenho; o `xMotivo` entra cortado em 255.
+- **`frases.ts`:**
+  - o texto final das tabelas 6.1 e 6.2 da UX, literal, com hora `14h05`, e a versão "modo de teste" ou "valendo" onde a UX dá as duas;
+  - o `xMotivo` vai à parte (`recusa.x_motivo`, sem o prefixo "Rejeição:", cortado em 255), para o `<details>` da tela;
+  - teste: a frase do 539 com a série 2 e o número 12 é igual à da UX 6.1, letra por letra.
 
 - [ ] **Step 1: testes** (tabela; uma linha `it.each` por linha da §5.3)
   - Autorização:
@@ -426,6 +447,7 @@ expect(erroDoItemFiscal({ gtin: '7891000315508' })).toBe('GTIN inválido. Confir
   - `perfis()`, `criarPerfil(dto, autor)` e `atualizarPerfil(id, dto, autor)`;
   - `produtos(prontos: boolean)`, `salvarProduto(itemId, dto, autor)` e `perfilEmLote(dto, autor)`.
   - Os formatos de resposta são os da §8.2 do desenho (`falta`, `pendentes`, `historico`, `motivos`).
+  - Em `produtos`, o preço sai como `preco_venda_centavos: number | null`, de `precoCentavos()` (Task 4); nunca `Decimal`.
 - **`Autor = { id: string; nome: string }`.**
 - **Rotas desta tarefa:** `situacao`, `emitente`, `ambientes/:ambiente`, `perfis`, `produtos`, `produtos/perfil` e `produtos/:itemCardapioId`.
   - Funcionam com o servidor desligado.
@@ -442,6 +464,7 @@ expect(erroDoItemFiscal({ gtin: '7891000315508' })).toBe('GTIN inválido. Confir
     - `proximo_numero` ≤ maior número usado → 422 `NFCE_NUMERO_INVALIDO`;
     - trocar a série com cupom `rejeitado` → 409 `NFCE_SERIE_COM_PENDENTES`.
   - Perfis em lote: 501 itens → 400; 3 itens → 1 transação e 3 linhas.
+  - Produtos: um item com `preco_venda` "12.345" → `preco_venda_centavos: 1235`.
   - `situacao().falta` sem nada cadastrado traz os códigos `ie`, `crt`, `endereco`, `serie`, `csc`, `certificado`, `cnpj` e `produto_pronto`.
   - Permissões: as rotas novas aparecem só para admin, e a lista "a loja alcança exatamente estas rotas" fica igual.
 - [ ] **Step 2:** FAIL. **Step 3:** implementar. **Step 4:** PASS com `permissoes-protecao.spec.ts`.
@@ -456,8 +479,8 @@ expect(erroDoItemFiscal({ gtin: '7891000315508' })).toBe('GTIN inválido. Confir
 
 **Interfaces:**
 - Consumes: Tasks 2 a 10; `CERTIFICADO_DIGITAL.emUso()`.
-- **`VendaParaCupom`** = `{ chave_idempotencia: string; itens: { item_cardapio_id: string; quantidade: string }[]; desconto: number; pagamentos: { t_pag: TPag; valor: number }[]; consumidor_doc: string | null; total_esperado: number }`. Os valores vêm em centavos (inteiros) no fio e viram `bigint` no serviço.
-- **`pedidoHash(v: VendaParaCupom): string`:** SHA-256 hex do JSON de `{ itens, desconto, pagamentos, consumidor_doc }`, na ordem enviada.
+- **`VendaParaCupom`** = `{ chave_idempotencia: string; itens: { item_cardapio_id: string; quantidade: string }[]; desconto_centavos: number; pagamentos: { t_pag: TPag; valor_centavos: number }[]; consumidor_doc: string | null; total_esperado_centavos: number }`. No DTO, os inteiros têm `@IsInt() @Min(0)`; no serviço, viram `bigint`.
+- **`pedidoHash(v: VendaParaCupom): string`:** SHA-256 hex do JSON de `{ itens, desconto_centavos, pagamentos, consumidor_doc }`, na ordem enviada.
 - **`CupomEmissaoService`**, com `agora?: Date` injetável em todos os métodos:
   - `emitir(v: VendaParaCupom, autor: Autor): Promise<{ status: 200 | 201; cupom: CupomDetalhe }>`;
   - `reenviar(id, autor)`, `consultar(id, autor)`, `descartar(id, motivo, autor)`, `lancarVenda(id)`, `testarConexao(autor)` e `ligarEmissao(a, ligada, confirmado, autor)`.
@@ -473,7 +496,8 @@ expect(erroDoItemFiscal({ gtin: '7891000315508' })).toBe('GTIN inválido. Confir
     - `xml_autorizado` começa com `<nfeProc` e contém a `NFe` enviada byte a byte;
     - em produção com `lanca_venda`, a T3 chama `nfce_lancar_venda` uma vez; em homologação, nunca.
   - Validação antes da T1 (em todos, a porta não é chamada e nenhum cupom é criado):
-    - `total_esperado` = 4999 com total 5000 → 409 `NFCE_TOTAL_MUDOU`;
+    - `total_esperado_centavos` = 4999 com total 5000 → 409 `NFCE_TOTAL_MUDOU`;
+    - preço "12.345" no cardápio + `total_esperado_centavos` = 1235 → aceito;
     - produto desativado entre a tela e o envio → 422 `NFCE_ITEM_INDISPONIVEL`;
     - quantidade `'0,350'` → 400 `VALIDATION_ERROR`.
   - Idempotência:
@@ -541,7 +565,8 @@ expect(erroDoItemFiscal({ gtin: '7891000315508' })).toBe('GTIN inválido. Confir
   - `CupomLeituraService`:
     - `listar(f: { ambiente?; ini?; fim?; situacao?: SituacaoCupom[]; atencao?: boolean; chave_idempotencia?: string; limite?: number })`;
     - `detalhe(id, agora)`, `danfe(id)` e `xml(id, tipo: 'nota' | 'cancelamento')`;
-    - `xmlDoMes(mes: string, ambiente)` e `vendasNoPeriodo(ini, fim)`.
+    - `xmlDoMes(mes: string, ambiente)` e `vendasNoPeriodo(ini, fim): Promise<{ quantidade: number; valor_centavos: number }>`;
+    - nas linhas e no detalhe, todo dinheiro em `*_centavos: number` (Global Constraints).
 - **Rotas desta tarefa:**
   - `GET cupons` (filtros da §8.2), `cupons/:id`, `cupons/:id/danfe`, `cupons/:id/xml`, `xml-do-mes` e `vendas-no-periodo`;
   - todas funcionam com o servidor desligado;
@@ -584,6 +609,7 @@ expect(erroDoItemFiscal({ gtin: '7891000315508' })).toBe('GTIN inválido. Confir
   - `qrSvg(texto: string): string` (nível M).
 - Textos, foco, `aria-*` e fluxos (2.5, 2.7, 3.1 a 3.5, 4.3 a 4.5): os da UX, literalmente.
 - O "não sei se saiu" chama `GET cupons?chave_idempotencia=` **uma vez**.
+- `total_esperado_centavos` = `calcularTotais` (Task 4) sobre os `preco_venda_centavos` recebidos; a tela não arredonda preço.
 - Nada da venda vai para o storage.
 
 - [ ] **Step 1: testes**
@@ -614,12 +640,12 @@ expect(qrSvg('https://x/?p=1')).toMatch(/^<svg/);
 **Interfaces:**
 - Produces:
   - `textoPendentes(p: { total: number; primeiro: { serie: number; numero: number; tipo: TipoPendente } | null }): string | null`;
-  - `textoAvisoImportacao(r: { quantidade: number; valor: number }): string | null`, com o texto da §3.4 do desenho;
+  - `textoAvisoImportacao(r: { quantidade: number; valor_centavos: number }): string | null`, com o texto da UX 5.8;
   - `ordenarFalta(f: { codigo: string; texto: string }[]): typeof f` (ordem da UX 5.1).
 
 - [ ] **Step 1: testes**
   - `textoPendentes({ total: 0, primeiro: null })` → `null`.
-  - `textoAvisoImportacao({ quantidade: 2, valor: 5000 })` → "Neste período o Comanda já lançou 2 cupons (R$ 50,00). Se essas vendas também estão neste arquivo, vão contar duas vezes no estoque."
+  - `textoAvisoImportacao({ quantidade: 4, valor_centavos: 21050 })` → "Neste período, o Freela Comanda já lançou 4 cupons no estoque (R$ 210,50). Se essas vendas também estão neste arquivo, vão contar duas vezes."
 - [ ] **Step 2:** FAIL. **Step 3:** implementar as telas pelas seções 4, 5 e 7 da UX. **Step 4:** vitest PASS, typecheck e lint.
 - [ ] **Step 5:** commit `feat(web): emitidos e pendentes, produtos e perfis fiscais, painel do cupom em Configurações, ficha e aviso na importação`.
 

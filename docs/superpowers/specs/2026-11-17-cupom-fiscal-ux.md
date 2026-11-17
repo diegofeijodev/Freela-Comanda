@@ -1094,7 +1094,7 @@ O `browser-check.sh` força `NFCE_AMBIENTE` vazia. Por isso este roteiro só vê
    - A tela mostra o preço lido ao abrir, e o servidor lê de novo no envio (§3.1).
    - Se o preço subiu e o dinheiro cobre a diferença, o cupom sai autorizado com outro total e outro troco do que o caixa entregou. Só a falta de pagamento vira erro (`NFCE_PAGAMENTO_INSUFICIENTE`).
    - Pedido: o POST levar `total_esperado` (centavos). Se for diferente, 409 `NFCE_TOTAL_MUDOU` com os preços novos, antes da T1 (sem reservar número).
-   - **Resposta do desenho (17/11):** Aceito: o POST leva `total_esperado` (centavos); diferente = 409 `NFCE_TOTAL_MUDOU` antes da T1, sem reservar número. Recusado só o corpo do 409 trazer os preços: o filtro manda só `{ code, message }`, a frase diz o produto e o preço novo, e a tela relê `GET /produtos` (desenho §8.2, §8.4, §11).
+   - **Resposta do desenho (17/11):** Aceito: o POST leva `total_esperado_centavos` (inteiro; todo dinheiro do cupom vai em centavos no fio, desenho §8.2); diferente = 409 `NFCE_TOTAL_MUDOU` antes da T1, sem reservar número. Recusado só o corpo do 409 trazer os preços: o filtro manda só `{ code, message }`, a frase diz o produto e o preço novo, e a tela relê `GET /produtos` (desenho §8.2, §8.4, §11).
 2. **Idempotência:**
    - (a) A mesma `chave_idempotencia` com outro corpo devolve o cupom antigo calado (§4.2): pedir a comparação de um resumo do corpo e 409 `NFCE_CHAVE_REUSADA` se diferir.
    - (b) Para "não sei se saiu" (2.7), uma leitura pela chave que **não** emite, por exemplo `GET /v1/cupom-fiscal/cupons?chave_idempotencia=`. Hoje a única forma de saber é reenviar, e isso emite se o 1º não chegou.

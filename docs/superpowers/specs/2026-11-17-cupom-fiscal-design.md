@@ -906,6 +906,12 @@ Entra já na fase 1, porque o 1º cupom real de produção tem de chegar ao cont
 
 - Todas `@AdminOnly()` e no `permissoes-protecao.spec.ts`.
 - Rotas estáticas antes das `:id`; `:id` passa pelo `ParseUuidPipe`.
+- **Dinheiro no fio** (*minha*, 17/11): nas rotas do cupom, todo valor em dinheiro vai em **centavos inteiros**, nos dois sentidos, com o sufixo `_centavos`.
+  - Exemplos: `preco_venda_centavos`, `valor_total_centavos`, `valor_troco_centavos`, `valor_unitario_centavos`, `valor_centavos`.
+  - O serviço nunca devolve `Decimal` de dinheiro, então o `wire.ts` (que converte `numeric` em reais) não age sobre eles.
+  - Exceções:
+    - o DANFE devolve os valores como texto do XML ("24.00"), porque imprime o que está no XML;
+    - as alíquotas (%) seguem o `wire.ts`.
 - `:ambiente` só aceita `homologacao` ou `producao` (senão 404).
 
 **Leitura e cadastro** (funcionam com o servidor `desligado`):
@@ -946,8 +952,9 @@ Entra já na fase 1, porque o 1º cupom real de produção tem de chegar ao cont
 - `PUT /v1/cupom-fiscal/ambientes/:ambiente/emissao` com `{ ligada, confirmado? }`; só para o ambiente do servidor.
 - `POST /v1/cupom-fiscal/testar-conexao`.
 - `POST /v1/cupom-fiscal/cupons`:
-  - corpo `{ chave_idempotencia, itens: [{ item_cardapio_id, quantidade }], desconto?, pagamentos: [{ t_pag, valor }], consumidor_doc?, total_esperado }`. Os valores são em centavos (inteiros);
-  - `total_esperado` diferente do total que o servidor calcula = 409 `NFCE_TOTAL_MUDOU`, antes da T1 e sem reservar número (UX 10.1);
+  - corpo `{ chave_idempotencia, itens: [{ item_cardapio_id, quantidade }], desconto_centavos?, pagamentos: [{ t_pag, valor_centavos }], consumidor_doc?, total_esperado_centavos }`;
+  - `quantidade` é **texto** ("0.350": ponto, até 4 casas, > 0);
+  - `total_esperado_centavos` diferente do total que o servidor calcula = 409 `NFCE_TOTAL_MUDOU`, antes da T1 e sem reservar número (UX 10.1);
   - responde 201 com o cupom em qualquer situação final desta tentativa: autorizado, rejeitado, sem resposta etc.;
   - a mesma chave com o mesmo corpo responde 200 com o mesmo cupom, sem novo envio; com outro corpo, 409 `NFCE_CHAVE_REUSADA`;
   - os erros HTTP (§8.4) são só da validação antes de enviar.
@@ -1019,6 +1026,8 @@ export interface SefazNfcePort {
 ### 8.4 Erros
 
 Formato `{ error: { code, message } }`, com a frase pt-BR em `message`.
+
+**Texto final:** as frases abaixo e as da §5.3 são a base. O texto que o servidor manda é o das tabelas 6.1 e 6.2 da UX, literalmente, com hora no formato `14h05`. As trocas da UX §6.4 estão aceitas (§11). Frase que a UX não fixa segue o estilo da UX §6.3: "não confere" em vez de "inválido", "modo de teste" e "valendo", "caixa de hoje".
 
 | Código | Status | Frase |
 |---|---|---|
@@ -1102,6 +1111,9 @@ Formato `{ error: { code, message } }`, com a frase pt-BR em `message`.
 7. **Dono, para a fase 2:**
    - o operador de caixa pode ver o preço de venda? Isso muda a regra "a loja nunca vê preço";
    - o que fazer quando a internet da loja cair?
+8. **Dono e contador (nova, 17/11):** com o cliente de acordo, basta entregar o cupom só pelo QR ou pelo link, sem papel (`tpImp` 5)?
+   - A dúvida vem da UX 9.1 e 10.9: o admin emite pelo celular, sem impressora.
+   - Até a resposta, `tpImp` 4.
 
 ### 9.3 Roteiro do 1º teste em homologação
 
@@ -1267,6 +1279,8 @@ Regra da conciliação: em conflito, vale o desenho técnico, salvo quando a UX 
 | 10.16 motivo do descarte | **Aceito:** 3 a 255 caracteres. | §8.4 |
 | 10.17 `GET /produtos` para Emitir | **Aceito:** a mesma rota, com `?prontos=true`. | §8.2 |
 | 10.18 onde se editam os perfis | **Aceito:** na aba Produtos; as rotas não mudam. | §2.1 |
+| UX §6.1, §6.2 e §6.4 (textos) | **Aceito:** as tabelas 6.1 e 6.2 são o texto final que o servidor manda (`frases.ts`). As trocas da 6.4 são só de texto ou de tela e não mudam regra; em `NFCE_DOC_INVALIDO` e `NFCE_CSC_INVALIDO`, o código é um só e a frase é a do campo que falhou. | §8.4 |
+| Unidade do dinheiro (achado na conciliação) | Centavos inteiros no fio, com sufixo `_centavos`, nos dois sentidos. | §8.2 |
 
 ## Fora do escopo
 
