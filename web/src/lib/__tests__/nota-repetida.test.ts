@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { NotaParecida } from "../erp-api";
-import { chaveDaConsulta, fraseChaveIgual, fraseNotaRepetida, linhaEntrada, linhaNota, origemPorExtenso } from "../nota-repetida";
+import { chaveDaConsulta, enviaConfirmacao, fraseChaveIgual, fraseNotaRepetida, linhaEntrada, linhaNota, origemPorExtenso } from "../nota-repetida";
 
 const nota = (p: Partial<NotaParecida> = {}): NotaParecida => ({
   id: "n1", numero: "4411", serie: "1", fornecedor_nome: "ATACADÃO S.A.", data_emissao: "2026-11-02", data_entrada: "2026-11-03",
@@ -58,5 +58,20 @@ describe("chaveDaConsulta", () => {
   });
   it("série vazia ou nula vale igual", () => {
     expect(chaveDaConsulta("12ABC34501DE35", "4411", null)).toBe(chaveDaConsulta("12ABC34501DE35", "4411", ""));
+  });
+});
+
+describe("enviaConfirmacao", () => {
+  const conf = chaveDaConsulta("12ABC34501DE35", "4411", "1");
+  it("confirmou e não mudou: envia", () => {
+    expect(enviaConfirmacao(conf, "12.abc.345/01de-35", "0004411", "001")).toBe(true);
+  });
+  it("confirmou e mudou série, número ou CNPJ: não envia", () => {
+    expect(enviaConfirmacao(conf, "12ABC34501DE35", "4411", "2")).toBe(false);
+    expect(enviaConfirmacao(conf, "12ABC34501DE35", "4412", "1")).toBe(false);
+    expect(enviaConfirmacao(conf, "99ABC34501DE35", "4411", "1")).toBe(false);
+  });
+  it("nunca confirmou: não envia", () => {
+    expect(enviaConfirmacao(null, "12ABC34501DE35", "4411", "1")).toBe(false);
   });
 });

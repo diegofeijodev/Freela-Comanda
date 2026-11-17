@@ -52,3 +52,8 @@ export function chaveDaConsulta(cnpj: string | null, numero: string | null, seri
   if (!c || !n) return null;
   return `${c}|${n}|${normalizarNumeroSerie(serie)}`;
 }
+
+/** `confirmar_repetida` só vai se a confirmação foi dada para o trio (CNPJ, número, série) que está nos campos agora. */
+export function enviaConfirmacao(confirmadaPara: string | null, cnpj: string | null, numero: string | null, serie: string | null): boolean {
+  return confirmadaPara !== null && confirmadaPara === chaveDaConsulta(cnpj, numero, serie);
+}

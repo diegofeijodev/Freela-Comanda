@@ -18,7 +18,7 @@ import { brl, dataBR, isoDate, num, parseNum } from "@/lib/format";
 import { errCode, errMsg } from "@/lib/db";
 import { documentoConfere, normalizarCnpj } from "@/lib/fiscal";
 import { aguardandoIa, aplicarSugestoes, avisoDaIa, sugerirEmLotes, type ResultadoIa } from "@/lib/sugestao-ia";
-import { chaveDaConsulta, fraseNotaRepetida } from "@/lib/nota-repetida";
+import { chaveDaConsulta, enviaConfirmacao, fraseNotaRepetida } from "@/lib/nota-repetida";
 import { NotaRepetidaDialogo, NotaRepetidaFaixa, type EstadoRepetida } from "@/components/nota-repetida-faixa";
 
 
@@ -43,6 +43,7 @@ export default function Notas() {
   const [atualizarPreco, setAtualizarPreco] = useState(true);
   const [lendo, setLendo] = useState(false);
   const [busy, setBusy] = useState(false);
+  const enviando = useRef(false); // guarda contra toque duplo no mesmo instante
   // Nota repetida: a consulta prévia vale para o trio CNPJ/número/série da última leitura ou saída de campo (nunca a cada tecla).
   const [consulta, setConsulta] = useState<{ chave: string; cnpj: string; numero: string; serie: string | null } | null>(null);
   const [confirmadaPara, setConfirmadaPara] = useState<string | null>(null);
@@ -173,19 +174,22 @@ export default function Notas() {
   const esperaIa = aguardandoIa(linhas);
   const avisoIa = avisoDaIa(resultadoIa);
 
-  async function darEntrada(confirmar = false) {
-    if (!nota || chaveIgual || esperaIa) return;
+  // `confirmadaNesta`: chave para a qual o diálogo acabou de confirmar. Sem ele vale `confirmadaPara`; nos dois casos só conta se for a dos campos de agora.
+  async function darEntrada(confirmadaNesta: string | null = null) {
+    if (!nota || chaveIgual || esperaIa || enviando.current) return;
+    const confirmouAgora = enviaConfirmacao(confirmadaNesta ?? confirmadaPara, nota.emitente_cnpj, nota.numero, nota.serie);
+    const camposIguaisAConsulta = chaveDaConsulta(nota.emitente_cnpj, nota.numero, nota.serie) === chaveConsulta;
     if (!aVista && (!parcelas.length || parcelas.some((p) => !p.vencimento))) return toast.error("Informe o vencimento de cada parcela");
     if (linhas.some((l) => l.novo && !l.novo.nome.trim())) return toast.error("Informe o nome do insumo novo");
-    if (!confirmar && estadoRepetida?.tipo === "parecida" && !estadoRepetida.confirmada) return setFraseDialogo(fraseNotaRepetida(estadoRepetida.parecidas));
-    setBusy(true);
+    if (!confirmouAgora && camposIguaisAConsulta && estadoRepetida?.tipo === "parecida") return setFraseDialogo(fraseNotaRepetida(estadoRepetida.parecidas));
+    enviando.current = true; setBusy(true);
     try {
       // Uma chamada só: nota + itens + estoque (lancar_nota) + contas a pagar + fornecedor novo, numa transação na API.
       const r = await lancarNota({
         chave: nota.chave, numero: nota.numero, serie: nota.serie, fornecedor_nome: nota.emitente_nome, fornecedor_cnpj: nota.emitente_cnpj,
         data_emissao: nota.data_emissao || entrada, data_entrada: entrada, valor_total: nota.valor_total || totalItens,
         forma_pagamento: nota.forma_pagamento, origem, atualizar_preco: atualizarPreco,
-        ...(confirmar || confirmada ? { confirmar_repetida: true } : {}),
+        ...(confirmouAgora ? { confirmar_repetida: true } : {}),
         itens: linhas.map((l) => ({
           codigo: l.codigo, descricao: l.descricao, unidade: l.unidade, quantidade: parseNum(l.quantidade) ?? 0, valor_unitario: parseNum(l.valor_unitario) ?? 0,
           fator: parseNum(l.fator) || 1,
@@ -200,7 +204,7 @@ export default function Notas() {
       refetch(); qc.invalidateQueries({ queryKey: ["insumos-ativos"] }); qc.invalidateQueries({ queryKey: ["subgrupos"] }); qc.invalidateQueries();
     } catch (e) {
       if (errCode(e) === "NOTA_REPETIDA") setFraseDialogo(errMsg(e)); else toast.error(errMsg(e));
-    } finally { setBusy(false); }
+    } finally { enviando.current = false; setBusy(false); }
   }
 
   return (
@@ -310,7 +314,10 @@ export default function Notas() {
       )}
 
       <NotaRepetidaDialogo frase={fraseDialogo} onNaoLancar={() => setFraseDialogo(null)}
-        onLancar={() => { setFraseDialogo(null); setConfirmadaPara(chaveConsulta); darEntrada(true); }} />
+        onLancar={() => {
+          const atual = nota ? chaveDaConsulta(nota.emitente_cnpj, nota.numero, nota.serie) : null;
+          setFraseDialogo(null); setConfirmadaPara(atual); darEntrada(atual);
+        }} />
 
       <Panel title="Notas lançadas">
         <div className="overflow-x-auto"><table className="w-full text-sm"><tbody>{(notas ?? []).map((n) => (
