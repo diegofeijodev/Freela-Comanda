@@ -106,6 +106,9 @@ async function abrir(page, erros, caminho, texto, nome) {
   check('CNPJ do XML com DV errado avisa', await page.getByText('CNPJ/CPF não confere').isVisible());
   check('número e série em campos separados', (await page.getByLabel('Número', { exact: true }).inputValue()) === '1234' && (await page.getByLabel('Série', { exact: true }).inputValue()) === '1');
   check('insumo sugerido pelo nome', (await page.getByText('sugestão — confira').count()) === 1);
+  // Sem chave de IA neste ambiente: a tela segue por palavras, sem espera e sem nenhum aviso.
+  check('sem chave de IA: nada de "Sugerindo"', (await page.getByText('Sugerindo').count()) === 0);
+  check('sem chave de IA: nenhum aviso de IA', (await page.getByText('inteligência artificial agora').count()) === 0);
   // Linha 1 vira insumo novo (nome editado); linha 2 vai a "Cadastrar novo" e volta a "não lançar": não cria nada.
   const linha1 = page.locator('tbody tr', { hasText: 'PICANHA BOVINA KG' }).first();
   const linha2 = page.locator('tbody tr', { hasText: 'TAXA DE ENTREGA' }).first();
@@ -308,6 +311,16 @@ const caixas = await Promise.all(['Substituir certificado', 'Remover'].map((n) =
   const { ctx, page, erros } = await sessao('admin@erpfreela.local', { width: 360, height: 800 });
   const faixa = page.locator('main [role="alert"]');
   const darEntrada = page.getByRole('button', { name: 'Dar entrada' });
+  // IA simulada no navegador (page.route não faz rede). Registrar ANTES do primeiro goto: o QueryClient guarda ['ia-chave'] por 10 s,
+  // e uma resposta real "sem chave" em cache faria o XML2 pular a IA.
+  const cors = { 'access-control-allow-origin': 'http://localhost:3026', 'access-control-allow-headers': 'authorization, content-type', 'access-control-allow-methods': 'GET, POST, OPTIONS' };
+  const simulada = (corpo, espera = 0) => async (route) => {
+    if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: cors });
+    if (espera) await new Promise((res) => setTimeout(res, espera));
+    return route.fulfill({ status: 200, contentType: 'application/json', headers: cors, body: JSON.stringify(corpo) });
+  };
+  await page.route('**/v1/ia-chave', simulada({ origem: 'configuracoes', provedor: 'anthropic', nome: 'Claude', dica: '••••1234' }));
+  await page.route('**/v1/notas/sugerir-insumos', simulada({ itens: [{ item_estoque_id: null, novo: { nome: 'Taxa de entrega', unidade: 'UN', subgrupo: null }, fator: 1 }] }, 1500));
   await page.goto(`${BASE}/notas`, { waitUntil: 'networkidle', timeout: 180_000 });
 
   // Chave igual: caixa vermelha dentro da tela, sem opção de lançar.
@@ -328,6 +341,14 @@ const caixas = await Promise.all(['Substituir certificado', 'Remover'].map((n) =
   // Nota parecida (outra chave): faixa âmbar com foco.
   await page.setInputFiles('input[type=file]', xml2Path);
   await page.getByText('2. Dados da nota').waitFor();
+  // IA simulada demora 1,5 s: durante a espera a linha mostra "Sugerindo…" e "Dar entrada" fica travado; depois entra o "novo — confira".
+  check('IA: durante a espera aparece "Sugerindo…" na linha', (await page.locator('option', { hasText: 'Sugerindo…' }).count()) > 0);
+  check('IA: durante a espera aparece a linha de espera', await page.getByText('Aguarde a sugestão de insumos (alguns segundos).').isVisible());
+  check('IA: durante a espera "Dar entrada" está desabilitado', await darEntrada.isDisabled());
+  check('IA: depois aparece a linha da IA', await page.getByText('Os insumos marcados foram sugeridos por inteligência artificial. Confira antes de dar entrada.').waitFor({ timeout: 20_000 }).then(() => true, () => false));
+  check('IA: a linha sem vínculo vira "novo — confira"', (await page.getByText('novo — confira').count()) === 1);
+  check('IA: a espera acabou e "Dar entrada" libera', (await page.getByText('Aguarde a sugestão de insumos').count()) === 0 && (await darEntrada.isEnabled()));
+  await page.locator('tbody tr', { hasText: 'TAXA DE ENTREGA' }).first().getByLabel('Insumo do estoque').selectOption('');
   const ambar = faixa.filter({ hasText: 'Parece que esta nota já foi lançada' });
   check('repetida: nota parecida mostra a faixa âmbar', await ambar.waitFor({ timeout: 30_000 }).then(() => true, () => false));
   check('repetida: a faixa traz as linhas da nota mais nova', (await ambar.innerText()).includes('NF 1234 · série 1 · R$ 701,95') && (await ambar.innerText()).includes(`Entrou em ${hoje} por XML`));

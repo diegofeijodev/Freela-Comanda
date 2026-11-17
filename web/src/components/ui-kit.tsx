@@ -28,12 +28,12 @@ export function Stat({ label, value, delta, hint }: { label: string; value: Reac
   );
 }
 
-export function Panel({ title, children, className, actions }: { title?: string; children: ReactNode; className?: string; actions?: ReactNode }) {
+export function Panel({ title, children, className, actions, vivo }: { title?: string; children: ReactNode; className?: string; actions?: ReactNode; vivo?: boolean }) {
   return (
     <section className={cn("rounded-xl border bg-card p-4", className)}>
       {(title || actions) && (
         <div className="mb-3 flex items-center justify-between gap-2">
-          {title && <h2 className="font-sans text-sm font-semibold uppercase tracking-wide text-muted-foreground">{title}</h2>}
+          {title && <h2 className="font-sans text-sm font-semibold uppercase tracking-wide text-muted-foreground" aria-live={vivo ? "polite" : undefined}>{title}</h2>}
           {actions}
         </div>
       )}

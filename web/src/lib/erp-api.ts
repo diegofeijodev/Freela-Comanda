@@ -262,6 +262,11 @@ export const statusIa = () => get<StatusIa>('/v1/ia-chave');
 export const salvarChaveIa = (provedor: ProvedorIa, chave: string) => put<StatusIa>('/v1/ia-chave', { provedor, chave });
 export const removerChaveIa = () => del<StatusIa>('/v1/ia-chave');
 
+// ---------- sugestão de insumo por IA para os itens do XML: só descrição e unidade vão; volta uma sugestão por item, na mesma ordem (a API numera e casa por posição)
+export type SugestaoInsumo = { item_estoque_id: string | null; novo: { nome: string; unidade: string; subgrupo: string | null } | null; fator: number };
+export const sugerirInsumosItens = async (itens: { descricao: string; unidade: string | null }[], signal?: AbortSignal) =>
+  (await api.post<{ itens: SugestaoInsumo[] }>('/v1/notas/sugerir-insumos', { itens: itens.map((it) => ({ descricao: it.descricao, unidade: it.unidade })) }, { signal })).data;
+
 // ---------- certificado digital A1 (admin). O arquivo e a senha só vão no envio e nunca voltam; datas chegam como string ISO.
 export type SituacaoCertificado = 'ausente' | 'sem_segredo' | 'ilegivel' | 'vencido' | 'vencendo' | 'valido';
 export type ItemHistoricoCertificado = {

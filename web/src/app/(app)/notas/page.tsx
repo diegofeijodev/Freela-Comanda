@@ -4,8 +4,8 @@ import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
-import { CircleAlert, Plus, Trash2 } from "lucide-react";
-import { lancarNota, lerFotoNota, lerPdfNota, listarItensEstoque, listarSubgrupos, notaPelaChave, notasRecentes, notasRepetidas, vinculos, type NotaParecida } from "@/lib/erp-api";
+import { CircleAlert, Loader2, Plus, Trash2 } from "lucide-react";
+import { lancarNota, lerFotoNota, lerPdfNota, listarItensEstoque, listarSubgrupos, notaPelaChave, notasRecentes, notasRepetidas, statusIa, sugerirInsumosItens, vinculos, type NotaParecida } from "@/lib/erp-api";
 import { MAX_FOTOS, pareceImagem, reduzirImagem } from "@/lib/imagem";
 import { PageHeader, Panel, Tag } from "@/components/ui-kit";
 import { Button } from "@/components/ui/button";
@@ -17,12 +17,13 @@ import { A_VISTA, FORMAS, parseNFeXML, sugerirInsumo, type FormaPgto, type NotaL
 import { brl, dataBR, isoDate, num, parseNum } from "@/lib/format";
 import { errCode, errMsg } from "@/lib/db";
 import { documentoConfere, normalizarCnpj } from "@/lib/fiscal";
+import { aguardandoIa, aplicarSugestoes, avisoDaIa, sugerirEmLotes, type ResultadoIa } from "@/lib/sugestao-ia";
 import { chaveDaConsulta, fraseNotaRepetida } from "@/lib/nota-repetida";
 import { NotaRepetidaDialogo, NotaRepetidaFaixa, type EstadoRepetida } from "@/components/nota-repetida-faixa";
 
 
 type NovoInsumo = { nome: string; unidade: string; subgrupo: string };
-type Linha = { codigo: string | null; descricao: string; unidade: string | null; quantidade: string; valor_unitario: string; item_estoque_id: string; fator: string; sugerido: boolean; novo: NovoInsumo | null };
+type Linha = { codigo: string | null; descricao: string; unidade: string | null; quantidade: string; valor_unitario: string; item_estoque_id: string; fator: string; sugerido: boolean; novo: NovoInsumo | null; pendenteIa: boolean; tocada: boolean; fatorTocado: boolean };
 const NOVO = "__novo__";
 type Insumo = { id: string; nome: string; unidade: string };
 
@@ -48,6 +49,9 @@ export default function Notas() {
   const [chaveIgual, setChaveIgual] = useState<NotaParecida | null>(null);
   const [fraseDialogo, setFraseDialogo] = useState<string | null>(null);
   const [tocou, setTocou] = useState(false);
+  const [resultadoIa, setResultadoIa] = useState<ResultadoIa | null>(null);
+  // Descarta a resposta tardia da IA: avança em arquivo novo, Cancelar, "Não lançar esta nota" e depois do "Dar entrada".
+  const geracaoIa = useRef(0);
   const arquivoRef = useRef<HTMLInputElement>(null);
   const chaveConsulta = consulta?.chave ?? null;
 
@@ -74,6 +78,7 @@ export default function Notas() {
     if (chaveDaConsulta(cnpj, numero, serie) !== chaveConsulta) definirConsulta(cnpj, numero, serie);
   }
   function limpar() {
+    geracaoIa.current++; setResultadoIa(null);
     setNota(null); setLinhas([]); setParcelas([]);
     setConsulta(null); setConfirmadaPara(null); setChaveIgual(null); setFraseDialogo(null); setTocou(false);
   }
@@ -87,6 +92,8 @@ export default function Notas() {
     if (!arquivos.length) return;
     const fotos = arquivos.every(pareceImagem);
     if (arquivos.length > 1 && (!fotos || arquivos.length > MAX_FOTOS)) return void toast.error("Envie até 4 fotos da mesma nota.");
+    const geracao = ++geracaoIa.current;
+    setResultadoIa(null);
     setLendo(true);
     try {
       const f = arquivos[0];
@@ -100,14 +107,21 @@ export default function Notas() {
       const vinc = await vinculos(cnpj);
       const vm = new Map(vinc.map((v) => [v.codigo_fornecedor, v]));
       const porIA = fotos || isPdf;
-      setLinhas(lida.itens.map((it) => {
+      // Só o XML pede sugestão à IA, e só para as linhas sem vínculo salvo. Sem chave de IA, não chama e segue por palavras.
+      let chamarIa = false;
+      if (!porIA && !jaLancada && lida.itens.some((it) => !vm.has(it.codigo ?? it.descricao))) {
+        const st = await qc.fetchQuery({ queryKey: ["ia-chave"], queryFn: statusIa }).catch(() => null);
+        chamarIa = st === null || st.origem !== null;
+      }
+      const linhasNovas: Linha[] = lida.itens.map((it) => {
         const v = vm.get(it.codigo ?? it.descricao);
         let item_estoque_id = ""; let novo: NovoInsumo | null = null; let sugerido = false;
+        const pendenteIa = !v && !porIA && chamarIa;
         if (v) item_estoque_id = v.item_estoque_id ?? "";
         else if (porIA) {
           if (it.item_estoque_id) { item_estoque_id = it.item_estoque_id; sugerido = true; }
           else if (it.novo) novo = { nome: it.novo.nome, unidade: it.novo.unidade, subgrupo: it.novo.subgrupo ?? "" };
-        } else {
+        } else if (!pendenteIa) {
           const sug = sugerirInsumo(it.descricao, insumos ?? []);
           if (sug) { item_estoque_id = sug.id; sugerido = true; }
         }
@@ -115,8 +129,10 @@ export default function Notas() {
           codigo: it.codigo, descricao: it.descricao, unidade: it.unidade,
           quantidade: String(it.quantidade).replace(".", ","), valor_unitario: String(it.valor_unitario).replace(".", ","),
           item_estoque_id, fator: String(v?.fator ?? (porIA ? it.fator : undefined) ?? 1).replace(".", ","), sugerido, novo,
+          pendenteIa, tocada: false, fatorTocado: false,
         };
-      }));
+      });
+      setLinhas(linhasNovas);
       const forma = lida.forma_pagamento in FORMAS ? lida.forma_pagamento : "outros";
       setParcelas(lida.parcelas?.length ? lida.parcelas : A_VISTA.includes(forma) ? [] : [{ numero: "1", vencimento: somaDias(diaValido(lida.data_emissao) ? lida.data_emissao : entrada, 30), valor: lida.valor_total }]);
       setNota({ ...lida, forma_pagamento: forma });
@@ -125,14 +141,27 @@ export default function Notas() {
       setChaveIgual(jaLancada);
       if (jaLancada) setConsulta(null); else definirConsulta(lida.emitente_cnpj, lida.numero, lida.serie);
       if (!jaLancada) toast.success(`${lida.itens.length} itens lidos`);
+      if (chamarIa) consultarIa(linhasNovas.filter((l) => l.pendenteIa), geracao);
     } catch (e) { toast.error(errMsg(e)); } finally { setLendo(false); }
   }
 
-  function escolherInsumo(i: number, valor: string) {
-    if (valor === NOVO) setLinhas((ls) => ls.map((l, k) => (k === i ? { ...l, item_estoque_id: "", sugerido: false, novo: l.novo ?? { nome: l.descricao, unidade: (l.unidade ?? "UN").toUpperCase(), subgrupo: "" } } : l)));
-    else setL(i, { item_estoque_id: valor, novo: null });
+  // Segundo plano: a tela já está de pé; a resposta só entra se ainda for a mesma nota (geração) e só nas linhas que o admin não mexeu.
+  async function consultarIa(pendentes: Linha[], geracao: number) {
+    const r = await sugerirEmLotes(
+      pendentes.map((l) => ({ descricao: l.descricao, unidade: l.unidade })),
+      (lote, signal) => sugerirInsumosItens(lote, signal),
+      { semChave: (e) => errCode(e) === "PDF_NAO_CONFIGURADO" },
+    );
+    if (geracaoIa.current !== geracao) return;
+    setResultadoIa(r);
+    setLinhas((ls) => aplicarSugestoes(ls, r, qc.getQueryData<Insumo[]>(["insumos-ativos"]) ?? insumos ?? []));
   }
-  const setNovo = (i: number, p: Partial<NovoInsumo>) => setLinhas((ls) => ls.map((l, k) => (k === i && l.novo ? { ...l, novo: { ...l.novo, ...p } } : l)));
+
+  function escolherInsumo(i: number, valor: string) {
+    if (valor === NOVO) setLinhas((ls) => ls.map((l, k) => (k === i ? { ...l, tocada: true, item_estoque_id: "", sugerido: false, novo: l.novo ?? { nome: l.descricao, unidade: (l.unidade ?? "UN").toUpperCase(), subgrupo: "" } } : l)));
+    else setL(i, { item_estoque_id: valor, novo: null, tocada: true });
+  }
+  const setNovo = (i: number, p: Partial<NovoInsumo>) => setLinhas((ls) => ls.map((l, k) => (k === i && l.novo ? { ...l, tocada: true, novo: { ...l.novo, ...p } } : l)));
 
   const setL = (i: number, p: Partial<Linha>) => setLinhas((ls) => ls.map((l, k) => (k === i ? { ...l, ...p, sugerido: p.item_estoque_id !== undefined ? false : l.sugerido } : l)));
   const setP = (i: number, p: Partial<Parcela>) => setParcelas((ps) => ps.map((x, k) => (k === i ? { ...x, ...p } : x)));
@@ -141,9 +170,11 @@ export default function Notas() {
   const totalParc = parcelas.reduce((s, p) => s + (Number(p.valor) || 0), 0);
   const semVinculo = linhas.filter((l) => !l.item_estoque_id && !l.novo).length;
   const novos = linhas.filter((l) => l.novo).length;
+  const esperaIa = aguardandoIa(linhas);
+  const avisoIa = avisoDaIa(resultadoIa);
 
   async function darEntrada(confirmar = false) {
-    if (!nota || chaveIgual) return;
+    if (!nota || chaveIgual || esperaIa) return;
     if (!aVista && (!parcelas.length || parcelas.some((p) => !p.vencimento))) return toast.error("Informe o vencimento de cada parcela");
     if (linhas.some((l) => l.novo && !l.novo.nome.trim())) return toast.error("Informe o nome do insumo novo");
     if (!confirmar && estadoRepetida?.tipo === "parecida" && !estadoRepetida.confirmada) return setFraseDialogo(fraseNotaRepetida(estadoRepetida.parecidas));
@@ -210,8 +241,10 @@ export default function Notas() {
             </div>
           </Panel>
 
-          <Panel title={`3. Itens · ${linhas.length}${semVinculo ? ` · ${semVinculo} sem insumo` : ""}${novos ? ` · ${novos} novos` : ""}`}>
+          <Panel vivo title={`3. Itens · ${linhas.length}${semVinculo ? ` · ${semVinculo} sem insumo` : ""}${novos ? ` · ${novos} novos` : ""}${esperaIa ? " · sugerindo insumos…" : ""}`}>
             <p className="mb-3 text-xs text-muted-foreground">Escolha o insumo de cada produto. &ldquo;Fator&rdquo; converte a unidade da nota para a do estoque (ex.: caixa com 12 → 12). Itens sem insumo não entram no estoque. O vínculo fica salvo para as próximas notas deste fornecedor.</p>
+            {avisoIa === "ia" && <p role="status" className="mb-3 text-sm">Os insumos marcados foram sugeridos por inteligência artificial. Confira antes de dar entrada.</p>}
+            {avisoIa === "falhou" && <p role="status" className="mb-3 text-xs text-muted-foreground">Não consegui usar a inteligência artificial agora. As sugestões abaixo são por palavras parecidas.</p>}
             <div className="overflow-x-auto"><table className="w-full text-sm">
               <thead><tr className="text-left text-xs text-muted-foreground"><th className="py-1">Produto na nota</th><th>Qtd</th><th>Preço un.</th><th>Insumo do estoque</th><th>Fator</th><th className="text-right">Entra no estoque</th></tr></thead>
               <tbody>{linhas.map((l, i) => {
@@ -224,9 +257,12 @@ export default function Notas() {
                     <td><Input className="h-8 w-20" value={l.quantidade} onChange={(e) => setL(i, { quantidade: e.target.value })} /></td>
                     <td><Input className="h-8 w-24" value={l.valor_unitario} onChange={(e) => setL(i, { valor_unitario: e.target.value })} /></td>
                     <td className="pr-2">
-                      <select className="h-8 w-full min-w-[180px] rounded-md border bg-background px-2 text-sm" aria-label="Insumo do estoque" value={l.novo ? NOVO : l.item_estoque_id} onChange={(e) => escolherInsumo(i, e.target.value)}>
-                        <option value="">— não lançar —</option><option value={NOVO}>+ Cadastrar novo insumo</option>{insumos?.map((x) => <option key={x.id} value={x.id}>{x.nome}</option>)}
+                      <div className="flex items-center gap-1.5">
+                      <select className="h-8 w-full min-w-[180px] rounded-md border bg-background px-2 text-sm disabled:opacity-70" aria-label="Insumo do estoque" disabled={l.pendenteIa} value={l.novo ? NOVO : l.item_estoque_id} onChange={(e) => escolherInsumo(i, e.target.value)}>
+                        <option value="">{l.pendenteIa ? "Sugerindo…" : "— não lançar —"}</option><option value={NOVO}>+ Cadastrar novo insumo</option>{insumos?.map((x) => <option key={x.id} value={x.id}>{x.nome}</option>)}
                       </select>
+                      {l.pendenteIa && <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" aria-hidden />}
+                      </div>
                       {l.sugerido && <Tag tone="warn">sugestão — confira</Tag>}
                       {l.novo && (
                         <div className="mt-1.5 space-y-1.5">
@@ -241,7 +277,7 @@ export default function Notas() {
                         </div>
                       )}
                     </td>
-                    <td><Input className="h-8 w-16" value={l.fator} onChange={(e) => setL(i, { fator: e.target.value })} /></td>
+                    <td><Input className="h-8 w-16" value={l.fator} onChange={(e) => setL(i, { fator: e.target.value, fatorTocado: true })} /></td>
                     <td className="text-right">{un ? `${num(q, 3)} ${un}` : "—"}</td>
                   </tr>
                 );
@@ -264,9 +300,10 @@ export default function Notas() {
                 {Math.abs(totalParc - nota.valor_total) > 0.02 && <p className="text-xs text-warning">Soma das parcelas ({brl(totalParc)}) diferente do total da nota ({brl(nota.valor_total)}).</p>}
               </div>
             )}
-            <div className="mt-4 flex gap-2">
-              <Button disabled={busy || !!chaveIgual} onClick={() => darEntrada()}>{busy ? "Lançando…" : "Dar entrada"}</Button>
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <Button disabled={busy || !!chaveIgual || esperaIa} onClick={() => darEntrada()}>{busy ? "Lançando…" : "Dar entrada"}</Button>
               <Button variant="ghost" onClick={limpar}>Cancelar</Button>
+              {esperaIa && <p className="text-xs text-muted-foreground">Aguarde a sugestão de insumos (alguns segundos).</p>}
             </div>
           </Panel>
         </div>
