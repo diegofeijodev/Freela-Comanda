@@ -309,7 +309,7 @@ describe("resumoRespostas", () => {
     expect(x.botao).toBe("ligar");
     expect(x.botaoDesabilitado).toBe(false);
     expect(x.caixa).toBeNull();
-    expect(x.linhas).toEqual(["Com as respostas desligadas, nada é enviado à SEFAZ. O que estava na fila espera até você ligar de novo."]);
+    expect(x.linhas).toEqual([{ texto: "Com as respostas desligadas, nada é enviado à SEFAZ. O que estava na fila espera até você ligar de novo." }]);
   });
   it("desligadas sem certificado ou sem CNPJ: botão desabilitado e a frase do certificado", () => {
     const cert = { ok: false, code: "CERTIFICADO_NAO_CADASTRADO", mensagem: "Envie o certificado digital da empresa no quadro acima para ligar a busca.", avisos: [] };
@@ -323,10 +323,10 @@ describe("resumoRespostas", () => {
     expect(x.tag).toEqual({ tom: "ok", texto: "Ligadas" });
     expect(x.botao).toBe("desligar");
     expect(x.caixa).toBeNull();
-    expect(x.linhas).toEqual(["Ligadas por Diego em 17/11/2026 às 10h05", "3 respostas na fila"]);
+    expect(x.linhas).toEqual([{ texto: "Ligadas por Diego em 17/11/2026 às 10h05" }, { texto: "3 respostas na fila" }]);
   });
   it("na fila no singular, some com 0; prazo e falhas; modo de teste", () => {
-    expect(r({ ligadas: true, na_fila: 1 }).linhas).toEqual(["1 resposta na fila"]);
+    expect(r({ ligadas: true, na_fila: 1 }).linhas).toEqual([{ texto: "1 resposta na fila" }]);
     const x = resumoRespostas(com({
       ambiente: "homologacao",
       respostas: {
@@ -337,12 +337,14 @@ describe("resumoRespostas", () => {
         ],
       },
     }), AGORA);
+    // [Ver as notas] na linha do prazo e [Ver] na das falhas, cada um na sua linha
     expect(x.linhas).toEqual([
-      "2 notas precisam de resposta até 15/02/2027", "1 resposta não foi enviada", "Modo de teste da SEFAZ: as respostas valem só para notas de mentira.",
+      { texto: "2 notas precisam de resposta até 15/02/2027", ver: "Ver as notas" }, { texto: "1 resposta não foi enviada", ver: "Ver" },
+      { texto: "Modo de teste da SEFAZ: as respostas valem só para notas de mentira." },
     ]);
-    expect(r({ ligadas: true, falharam: 2 }).linhas).toEqual(["2 respostas não foram enviadas"]);
+    expect(r({ ligadas: true, falharam: 2 }).linhas).toEqual([{ texto: "2 respostas não foram enviadas", ver: "Ver" }]);
     expect(r({ ligadas: true, prazos_perto: [{ id: "a", numero: "1", serie: "1", emitente_nome: "A", prazo_final: "2027-02-16T02:30:00Z" }] }).linhas)
-      .toEqual(["1 nota precisa de resposta até 15/02/2027"]);
+      .toEqual([{ texto: "1 nota precisa de resposta até 15/02/2027", ver: "Ver as notas" }]);
   });
   it("pausa no futuro: Esperando a SEFAZ e caixa âmbar com a mensagem como vem", () => {
     const m = "A SEFAZ está fora do ar. As respostas saem de novo às 15h10.";
@@ -384,14 +386,14 @@ describe("linhaPrazo", () => {
     // 02h UTC de 16/02 ainda é 15/02 em Brasília
     expect(linhaPrazo(r, em("2027-02-16T02:00:00Z"))).toEqual({ tom: "warn", texto: "Último dia para responder à SEFAZ." });
   });
-  it("prazo passado, com aviso de chegada registrado e sem resposta final: muted", () => {
+  it("prazo passado: vale o que o servidor manda (prazo_passou), sem regra própria sobre a ciência", () => {
     const passou = { tom: "muted", texto: "Passou o prazo: a SEFAZ considera esta compra confirmada." };
     expect(linhaPrazo(resp({ ciencia, prazo_passou: true, pode_responder: false }), AGORA)).toEqual(passou);
     expect(linhaPrazo(resp({ ciencia, prazo_passou: true, pode_responder: false, prazo_final: null }), AGORA)).toEqual(passou);
-    // sem aviso de chegada registrado, ou com resposta final ativa: nada
-    expect(linhaPrazo(resp({ prazo_passou: true, pode_responder: false }), AGORA)).toBeNull();
-    const final = { ...ciencia, tipo: "confirmacao" as const, origem: "dar_entrada" as const };
-    expect(linhaPrazo(resp({ ciencia, final, prazo_passou: true, pode_responder: false }), AGORA)).toBeNull();
+    // ciência que ficou em "enviando" ou "falhou" (possivelmente registrada) e nenhuma ciência: o servidor já decidiu
+    expect(linhaPrazo(resp({ ciencia: { ...ciencia, estado: "falhou" }, prazo_passou: true, pode_responder: false }), AGORA)).toEqual(passou);
+    expect(linhaPrazo(resp({ prazo_passou: true, pode_responder: false }), AGORA)).toEqual(passou);
+    expect(linhaPrazo(resp({ ciencia: { ...ciencia, estado: "enviando" }, prazo_perto: true }), em("2027-02-09T15:00:00Z"))?.tom).toBe("warn");
   });
   it("sem pode_responder e sem prazo passado: null", () => {
     expect(linhaPrazo(resp({ pode_responder: false }), AGORA)).toBeNull();
@@ -474,30 +476,34 @@ describe("faixaPrazo", () => {
 describe("avisoDoMotivo", () => {
   const BOTAO = "Ignorar nota";
   const AVISAR = "Avisar a SEFAZ e ignorar";
+  it("sem dizer se as respostas estão ligadas, falha fechado: o diálogo da entrega 2", () => {
+    expect(avisoDoMotivo("lancada_de_outro_jeito", true)).toEqual({ linha: null, avisa: "nunca", botao: BOTAO });
+    expect(avisoDoMotivo("nao_reconheco", true).botao).toBe(BOTAO);
+  });
   it("com resposta possível: os cinco motivos", () => {
-    expect(avisoDoMotivo("lancada_de_outro_jeito", true)).toEqual({ linha: "A SEFAZ é avisada de que a compra aconteceu, como quando você lança a nota.", avisa: "sempre", botao: BOTAO });
-    expect(avisoDoMotivo("nao_e_compra", true)).toEqual({
+    expect(avisoDoMotivo("lancada_de_outro_jeito", true, true)).toEqual({ linha: "A SEFAZ é avisada de que a compra aconteceu, como quando você lança a nota.", avisa: "sempre", botao: BOTAO });
+    expect(avisoDoMotivo("nao_e_compra", true, true)).toEqual({
       linha: "Marque se a nota é verdadeira e só não vai para o estoque (por exemplo, um equipamento).", avisa: "opcional", botao: BOTAO,
     });
-    expect(avisoDoMotivo("nao_reconheco", true)).toEqual({
+    expect(avisoDoMotivo("nao_reconheco", true, true)).toEqual({
       linha: "A SEFAZ é avisada de que a empresa não reconhece esta nota. Use quando você não conhece o fornecedor ou não pediu nada a ele. Depois de enviado, não dá para desfazer aqui.",
       avisa: "sempre", botao: AVISAR,
     });
-    expect(avisoDoMotivo("compra_nao_aconteceu", true)).toEqual({
+    expect(avisoDoMotivo("compra_nao_aconteceu", true, true)).toEqual({
       linha: "A SEFAZ é avisada de que a compra não aconteceu, com o seu texto. Depois de enviado, não dá para desfazer aqui.", avisa: "sempre", botao: AVISAR,
     });
-    expect(avisoDoMotivo("outro", true)).toEqual({ linha: "Nada é enviado à SEFAZ.", avisa: "nunca", botao: BOTAO });
-    expect(avisoDoMotivo("cancelamento_conferido", true)).toEqual({ linha: null, avisa: "nunca", botao: BOTAO });
+    expect(avisoDoMotivo("outro", true, true)).toEqual({ linha: "Nada é enviado à SEFAZ.", avisa: "nunca", botao: BOTAO });
+    expect(avisoDoMotivo("cancelamento_conferido", true, true)).toEqual({ linha: null, avisa: "nunca", botao: BOTAO });
   });
   it("nota que não aceita resposta (respostas ligadas): nunca avisa e diz por quê", () => {
     const nao = "Esta nota não aceita resposta à SEFAZ.";
-    expect(avisoDoMotivo("lancada_de_outro_jeito", false)).toEqual({ linha: nao, avisa: "nunca", botao: BOTAO });
-    expect(avisoDoMotivo("nao_e_compra", false)).toEqual({ linha: nao, avisa: "nunca", botao: BOTAO });
-    expect(avisoDoMotivo("nao_reconheco", false)).toEqual({
+    expect(avisoDoMotivo("lancada_de_outro_jeito", false, true)).toEqual({ linha: nao, avisa: "nunca", botao: BOTAO });
+    expect(avisoDoMotivo("nao_e_compra", false, true)).toEqual({ linha: nao, avisa: "nunca", botao: BOTAO });
+    expect(avisoDoMotivo("nao_reconheco", false, true)).toEqual({
       linha: `Se você não conhece este fornecedor, fale com o seu contador. Aqui a nota só fica escondida. ${nao}`, avisa: "nunca", botao: BOTAO,
     });
-    expect(avisoDoMotivo("compra_nao_aconteceu", false)).toEqual({ linha: nao, avisa: "nunca", botao: BOTAO });
-    expect(avisoDoMotivo("outro", false)).toEqual({ linha: "Nada é enviado à SEFAZ.", avisa: "nunca", botao: BOTAO });
+    expect(avisoDoMotivo("compra_nao_aconteceu", false, true)).toEqual({ linha: nao, avisa: "nunca", botao: BOTAO });
+    expect(avisoDoMotivo("outro", false, true)).toEqual({ linha: "Nada é enviado à SEFAZ.", avisa: "nunca", botao: BOTAO });
   });
   it("respostas desligadas: o diálogo da entrega 2", () => {
     expect(avisoDoMotivo("nao_reconheco", true, false)).toEqual({

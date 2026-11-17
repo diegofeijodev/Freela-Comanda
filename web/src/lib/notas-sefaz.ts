@@ -317,7 +317,8 @@ export type ResumoRespostas = {
   caixa: { tom: "neutro" | "warn" | "bad"; texto: string; irParaCertificado?: true } | null;
   botao: "ligar" | "desligar" | "ligar_de_novo" | null;
   botaoDesabilitado: boolean;
-  linhas: string[];
+  /** `ver`: a linha leva o atalho para a lista de notas (UX §8: [Ver as notas] no prazo, [Ver] nas falhas). */
+  linhas: { texto: string; ver?: "Ver as notas" | "Ver" }[];
 };
 
 /**
@@ -349,17 +350,17 @@ export function resumoRespostas(s: SituacaoSefazLigada, agora: Date): ResumoResp
     caixa = { tom: c === "CERTIFICADO_NAO_CADASTRADO" ? "neutro" : "bad", texto: s.certificado.mensagem, ...(ir ? { irParaCertificado: true as const } : {}) };
   }
 
-  const linhas: string[] = [];
+  const linhas: ResumoRespostas["linhas"] = [];
   if (r.ligadas) {
-    if (r.ligadas_em) linhas.push(`Ligadas${r.ligadas_por_nome ? ` por ${r.ligadas_por_nome}` : ""} em ${dataHoraSp(r.ligadas_em)}`);
-    if (r.na_fila > 0) linhas.push(`${r.na_fila} ${plural(r.na_fila, "resposta", "respostas")} na fila`);
+    if (r.ligadas_em) linhas.push({ texto: `Ligadas${r.ligadas_por_nome ? ` por ${r.ligadas_por_nome}` : ""} em ${dataHoraSp(r.ligadas_em)}` });
+    if (r.na_fila > 0) linhas.push({ texto: `${r.na_fila} ${plural(r.na_fila, "resposta", "respostas")} na fila` });
     const p = r.prazos_perto;
-    if (p.length > 0) linhas.push(`${p.length} ${plural(p.length, "nota precisa", "notas precisam")} de resposta até ${emissaoSp(p[0]!.prazo_final)}`);
-    if (r.falharam > 0) linhas.push(`${r.falharam} ${plural(r.falharam, "resposta não foi enviada", "respostas não foram enviadas")}`);
+    if (p.length > 0) linhas.push({ texto: `${p.length} ${plural(p.length, "nota precisa", "notas precisam")} de resposta até ${emissaoSp(p[0]!.prazo_final)}`, ver: "Ver as notas" });
+    if (r.falharam > 0) linhas.push({ texto: `${r.falharam} ${plural(r.falharam, "resposta não foi enviada", "respostas não foram enviadas")}`, ver: "Ver" });
   } else {
-    linhas.push(FRASE_RESPOSTAS_DESLIGADAS);
+    linhas.push({ texto: FRASE_RESPOSTAS_DESLIGADAS });
   }
-  if (s.ambiente === "homologacao") linhas.push("Modo de teste da SEFAZ: as respostas valem só para notas de mentira.");
+  if (s.ambiente === "homologacao") linhas.push({ texto: "Modo de teste da SEFAZ: as respostas valem só para notas de mentira." });
   return { tag, caixa, botao, botaoDesabilitado, linhas };
 }
 
@@ -372,16 +373,12 @@ function diasAte(ate: Date, de: Date): number {
 }
 
 /**
- * A linha do prazo no cartão da nota (UX §8). Âmbar só na nota com o aviso de chegada registrado e sem resposta final (`prazo_perto`, do 80º
- * dia em diante); a respondível comum leva a linha neutra; passado o prazo, só quem tem o aviso registrado e nenhuma resposta ativa.
+ * A linha do prazo no cartão da nota (UX §8). Âmbar na nota em `prazo_perto` (do 80º dia em diante); a respondível comum leva a linha
+ * neutra; `prazo_passou` leva a linha muted.
  */
 export function linhaPrazo(r: RespostaNota, agora: Date): { tom: "neutro" | "warn" | "muted"; texto: string } | null {
-  const finalAtiva = r.final !== null && (r.final.estado === "registrada" || r.final.estado === "na_fila" || r.final.estado === "enviando");
-  if (r.prazo_passou) {
-    return r.ciencia?.estado === "registrada" && !finalAtiva
-      ? { tom: "muted", texto: "Passou o prazo: a SEFAZ considera esta compra confirmada." }
-      : null;
-  }
+  // `prazo_passou` e `prazo_perto` vêm do servidor, que já conta a ciência possivelmente registrada: sem regra própria aqui.
+  if (r.prazo_passou) return { tom: "muted", texto: "Passou o prazo: a SEFAZ considera esta compra confirmada." };
   if (!r.pode_responder || !r.prazo_final) return null;
   const ate = emissaoSp(r.prazo_final);
   if (r.prazo_perto) {
@@ -439,10 +436,10 @@ const FRASE_NAO_RECONHECO_E2 = "Se você não conhece este fornecedor, fale com 
 
 /**
  * A linha sob cada motivo do diálogo Ignorar, se a SEFAZ é avisada (`avisa`) e o rótulo do botão primário (UX §8). `podeResponder` = a nota
- * é respondível; `respostasLigadas` = o quadro está ligado (desligadas, o diálogo é o da entrega 2).
+ * é respondível; `respostasLigadas` = o quadro está ligado (desligadas, ou sem dizer, o diálogo é o da entrega 2: falha fechado, como `acoesDaNota`).
  */
 export function avisoDoMotivo(
-  m: MotivoIgnorar, podeResponder: boolean, respostasLigadas = true,
+  m: MotivoIgnorar, podeResponder: boolean, respostasLigadas = false,
 ): { linha: string | null; avisa: "sempre" | "opcional" | "nunca"; botao: string } {
   const BOTAO = "Ignorar nota";
   const sem = (linha: string | null) => ({ linha, avisa: "nunca" as const, botao: BOTAO });

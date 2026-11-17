@@ -130,16 +130,15 @@ export function NotasSefazRespostas({ data }: { data: SituacaoBuscaSefaz }) {
 
       {resumo.linhas.length > 0 && (
         <ul className="min-w-0 space-y-1 break-words text-sm" aria-live="polite">
-          {resumo.linhas.map((l) => <li key={l}>{l}</li>)}
+          {resumo.linhas.map((l) => (
+            <li key={l.texto} className="flex min-w-0 flex-wrap items-center gap-x-3">
+              <span className="min-w-0 break-words">{l.texto}</span>
+              {l.ver && r.ligadas && (
+                <Link href="/notas#notas-sefaz" className="inline-flex min-h-11 items-center text-primary underline underline-offset-2">{l.ver}</Link>
+              )}
+            </li>
+          ))}
         </ul>
-      )}
-
-      {r.ligadas && (r.prazos_perto.length > 0 || r.falharam > 0) && (
-        <div className="flex flex-col gap-2 sm:flex-row">
-          <Link href="/notas#notas-sefaz" className="inline-flex min-h-11 items-center justify-center rounded-md border px-4 text-sm sm:justify-start">
-            {r.prazos_perto.length > 0 ? "Ver as notas com prazo" : "Ver as notas com resposta pendente"}
-          </Link>
-        </div>
       )}
 
       {resumo.botao && (
