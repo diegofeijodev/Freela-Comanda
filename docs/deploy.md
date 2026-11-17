@@ -36,6 +36,26 @@ Os scripts ficam fora do repositório, em `~/erp-deploy/` (o dono roda cada um c
    use o ensaio da migração.
 8. **Dados do Lovable e virada do `www`:** `docs/migracao-lovable.md`.
 
+## Notas da SEFAZ (busca na distribuição de DF-e, só leitura)
+
+Variável `SEFAZ_DFE_AMBIENTE` (declarada no `docker-compose.prod.yml` como `${SEFAZ_DFE_AMBIENTE:-}`; modelo em `api/.env.example`):
+
+| Valor | Efeito |
+|---|---|
+| ausente ou vazia | `desligado` (o padrão): nenhum agendador, nenhuma conexão; as rotas dão 503 `SEFAZ_DESLIGADA` e o painel diz que a busca não está ativada |
+| `homologacao` | consulta o ambiente de teste da SEFAZ (a nota de teste nunca entra no estoque) |
+| `producao` | consulta a SEFAZ real |
+| qualquer outro | **a API não sobe** (falha de validação do ambiente, de propósito: melhor parar do que adivinhar) |
+
+Mesmo com a variável ligada, a busca só roda depois de alguém tocar em "Ligar a busca" em Configurações (certificado A1 válido e CNPJ da empresa salvos).
+**Nunca** ligar `homologacao` ou `producao` sem o "eu autorizo" do dono, dado na hora e por escrito; o dono acompanha. Nenhum agente executa o roteiro (ele está em `README.md`, "Pendências do dono").
+Roteiro: (1) conferir o servidor desligado e `select count(*) from sefaz_consultas` = 0; (2) `pg_dump` do banco; (3) perguntar ao contador se ele já baixa as notas desse CNPJ (dois sistemas no mesmo CNPJ levam a bloqueio 656 de 1 hora para os dois); (4) pôr a variável no `.env` do servidor e recriar SÓ a API (`up -d --no-deps api`; o `.env` chega pelo `env_file`); (5) ligar e buscar pela tela. Volta: variável vazia e recriar a API; **nunca apagar linhas `sefaz_*`** (são a prova das esperas) e, desligada por mais de 60 dias, a SEFAZ deixa buraco sem volta (avisar o dono).
+Cuidados: nunca ligar `NODE_DEBUG=http|https|tls` na API (o Node imprime as opções do pedido); o certificado só chega à SEFAZ pela porta `CERTIFICADO_DIGITAL` e nada dele vai para log.
+
+**Recuperar um documento descartado:** a classificação desiste de um documento depois de 3 falhas (`erro_processamento` começa com "Descartado depois de 3 tentativas"), para um defeito dele não prender a fila. O XML continua guardado (`sefaz_documentos`). Corrigida a causa (ou se foi um soluço do banco), colocar de volta na fila:
+`UPDATE sefaz_documentos SET processado_em = NULL, erro_processamento = NULL WHERE erro_processamento LIKE 'Descartado%';`
+(a API classifica de novo no próximo tique, em até 5 minutos).
+
 Volta: `IMAGE_TAG=<tag> docker compose -f docker-compose.prod.yml up -d --no-build api` (imagem anterior) ou, para tirar tudo do ar,
 `docker compose -f docker-compose.prod.yml down` (o volume fica: no Docker ele se chama `erp-freela_erp_freela_pgdata` — o compose prefixa o nome do projeto `erp-freela`; a chave `erp_freela_pgdata` do compose está certa) e apagar o vhost do nginx.
 Memória no EC2: API 640 MB + Postgres 320 MB (tetos no compose).

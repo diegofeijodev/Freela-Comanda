@@ -29,7 +29,7 @@ limpar() {
 trap limpar EXIT
 
 cd "$API"
-DATABASE_URL="$URL" PORT=3097 CORS_ORIGINS=http://localhost:3026 ANTHROPIC_API_KEY= CERTIFICADO_SECRET=browser-certificado-segredo-de-teste-0123456789 NODE_OPTIONS=--max-old-space-size=500 \
+DATABASE_URL="$URL" PORT=3097 CORS_ORIGINS=http://localhost:3026 ANTHROPIC_API_KEY= SEFAZ_DFE_AMBIENTE= CERTIFICADO_SECRET=browser-certificado-segredo-de-teste-0123456789 NODE_OPTIONS=--max-old-space-size=500 \
   setsid npx ts-node --transpile-only -r tsconfig-paths/register src/main.ts >"$SHOTS/api.log" 2>&1 &
 PIDS+=($!)
 cd "$WEB"

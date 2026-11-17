@@ -57,6 +57,16 @@ Na máquina do dono, sempre pelo teto de memória (`scripts/run-capped.sh`, ver 
   - Nenhum e-CNPJ real foi testado (os testes usam certificados de teste fictícios): o primeiro envio do certificado verdadeiro é o teste real. Se for recusado, anotar a mensagem exata e olhar `cadeia_conferida` depois de aceito.
   - O pacote de autoridades certificadoras do ITI embutido é de 16/11/2026 e envelhece: `api/scripts/atualizar-cadeia-icp.sh` o renova.
 
+- **Notas da SEFAZ (busca automática das notas de compra):** a primeira etapa está pronta e DESLIGADA, mas **nada foi testado contra a SEFAZ** (nem homologação): os testes usam porta falsa, HTTPS local e telas simuladas. A primeira chamada real exige o "eu autorizo" do dono, dado na hora, e ninguém liga isso sozinho. Roteiro do primeiro teste real (o dono acompanha cada passo que fala com a SEFAZ):
+  1. **Antes, sem falar com a SEFAZ:** conferir que a entrega está no ar com `SEFAZ_DFE_AMBIENTE` ausente (desligado); em Configurações o certificado aparece "válido" e o CNPJ da empresa está salvo; `select count(*) from sefaz_consultas` dá 0; fazer um `pg_dump`.
+  2. **Pergunta ao contador (antes de ligar):** "O senhor já baixa as notas desse CNPJ pela SEFAZ (programa do contador, manifestação)?" Dois sistemas no mesmo CNPJ levam a bloqueio 656 de 1 hora para os dois.
+  3. **Homologação (1º "eu autorizo"):** pôr `SEFAZ_DFE_AMBIENTE=homologacao` no `.env` do servidor, reiniciar só a API, "Ligar a busca" e "Buscar agora". Esperado: 137 (primeiro uso). Registrar a linha de `sefaz_consultas` (`c_stat`, `erro_code`) e o log `sefaz.distribuicao`. Fecha os pontos "não confirmado": `SEFAZ_TLS` com `enviado` falso = a raiz do emissor da SEFAZ não está no `ca` (anotar o emissor; vira PR com o pacote regerado, nunca variável de ambiente); HTTP 415/500 ou rejeição de versão = SOAP 1.2 recusado (plano B: SOAP 1.1, trocando uma função); nenhum 593 = o CNPJ-base confere; 280–286 ou 473 = problema no certificado.
+  4. **Homologação, 2º clique antes de 65 minutos:** esperado 409 `SEFAZ_AGUARDE`, sem rede (`sefaz_consultas` não cresce). Depois dos 65 minutos o tique sozinho deve dar 137 de novo, sem 656.
+  5. **Produção (2º "eu autorizo"):** desligar a busca, pôr `producao`, reiniciar, ligar e fazer uma busca. Esperado 137. Atenção: 138 com documentos = aviso de que outro sistema já usava a busca (só aviso); 656 com `ultNSU` = a busca se desliga e avisa, e o dono fala com o contador. Vigiar por 24 horas: `select c_stat, count(*) from sefaz_consultas where iniciada_em > now() - interval '24 hours' group by 1` não pode ter 656.
+  6. **Dias depois:** uma nota que chegou como resumo e foi lançada por arquivo tem de virar "Já lançada".
+  7. **Volta:** `SEFAZ_DFE_AMBIENTE` vazia e reiniciar (nada mais roda). Nunca apagar linhas `sefaz_*`. Desligada por mais de 60 dias deixa buraco sem volta: avisar o dono.
+  Detalhes e a recuperação de documento descartado: `docs/deploy.md`; rotas e erros: `docs/api-contract.md` §16. Na conferência do navegador (`browser-check.sh`) a busca nunca liga com certificado.
+
 ## Migração dos dados (pendente)
 
 As tabelas são idênticas às do Supabase do Lovable, então trazer os dados de Valinhos (insumos, fichas, inventários, vendas, contas) é cópia
