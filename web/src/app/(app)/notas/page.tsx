@@ -17,7 +17,7 @@ import { A_VISTA, FORMAS, parseNFeXML, sugerirInsumo, type FormaPgto, type NotaL
 import { brl, dataBR, isoDate, num, parseNum } from "@/lib/format";
 import { errCode, errMsg } from "@/lib/db";
 import { documentoConfere, normalizarCnpj } from "@/lib/fiscal";
-import { aguardandoIa, aplicarSugestoes, avisoDaIa, sugerirEmLotes, type ResultadoIa } from "@/lib/sugestao-ia";
+import { aguardandoIa, aplicarSugestoes, avisoDaIa, chaveDeIaDisponivel, respostaVale, sugerirEmLotes, type ResultadoIa } from "@/lib/sugestao-ia";
 import { chaveDaConsulta, enviaConfirmacao, fraseNotaRepetida } from "@/lib/nota-repetida";
 import { NotaRepetidaDialogo, NotaRepetidaFaixa, type EstadoRepetida } from "@/components/nota-repetida-faixa";
 
@@ -93,8 +93,8 @@ export default function Notas() {
     if (!arquivos.length) return;
     const fotos = arquivos.every(pareceImagem);
     if (arquivos.length > 1 && (!fotos || arquivos.length > MAX_FOTOS)) return void toast.error("Envie até 4 fotos da mesma nota.");
-    const geracao = ++geracaoIa.current;
-    setResultadoIa(null);
+    // A geração só avança quando as linhas novas entram na tela: arquivo inválido deixa a nota anterior e o seu pedido de IA vivos.
+    const geracao = geracaoIa.current + 1;
     setLendo(true);
     try {
       const f = arquivos[0];
@@ -111,8 +111,7 @@ export default function Notas() {
       // Só o XML pede sugestão à IA, e só para as linhas sem vínculo salvo. Sem chave de IA, não chama e segue por palavras.
       let chamarIa = false;
       if (!porIA && !jaLancada && lida.itens.some((it) => !vm.has(it.codigo ?? it.descricao))) {
-        const st = await qc.fetchQuery({ queryKey: ["ia-chave"], queryFn: statusIa }).catch(() => null);
-        chamarIa = st === null || st.origem !== null;
+        chamarIa = await chaveDeIaDisponivel(() => qc.fetchQuery({ queryKey: ["ia-chave"], queryFn: statusIa }));
       }
       const linhasNovas: Linha[] = lida.itens.map((it) => {
         const v = vm.get(it.codigo ?? it.descricao);
@@ -133,6 +132,7 @@ export default function Notas() {
           pendenteIa, tocada: false, fatorTocado: false,
         };
       });
+      geracaoIa.current = geracao; setResultadoIa(null);
       setLinhas(linhasNovas);
       const forma = lida.forma_pagamento in FORMAS ? lida.forma_pagamento : "outros";
       setParcelas(lida.parcelas?.length ? lida.parcelas : A_VISTA.includes(forma) ? [] : [{ numero: "1", vencimento: somaDias(diaValido(lida.data_emissao) ? lida.data_emissao : entrada, 30), valor: lida.valor_total }]);
@@ -153,7 +153,7 @@ export default function Notas() {
       (lote, signal) => sugerirInsumosItens(lote, signal),
       { semChave: (e) => errCode(e) === "PDF_NAO_CONFIGURADO" },
     );
-    if (geracaoIa.current !== geracao) return;
+    if (!respostaVale(geracaoIa.current, geracao)) return;
     setResultadoIa(r);
     setLinhas((ls) => aplicarSugestoes(ls, r, qc.getQueryData<Insumo[]>(["insumos-ativos"]) ?? insumos ?? []));
   }

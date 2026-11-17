@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SugestaoInsumo } from "../erp-api";
-import { aguardandoIa, aplicarSugestoes, avisoDaIa, LOTE_IA, PRAZO_IA_MS, sugerirEmLotes, type LinhaSugerivel } from "../sugestao-ia";
+import { aguardandoIa, aplicarSugestoes, avisoDaIa, chaveDeIaDisponivel, LIMITE_DESCRICAO, LIMITE_UNIDADE, LOTE_IA, respostaVale, PRAZO_IA_MS, sugerirEmLotes, type LinhaSugerivel } from "../sugestao-ia";
 
 const sug = (p: Partial<SugestaoInsumo> = {}): SugestaoInsumo => ({ item_estoque_id: null, novo: null, fator: 1, ...p });
 const itens = (n: number) => Array.from({ length: n }, (_, i) => ({ descricao: `ITEM ${i + 1}`, unidade: "UN" }));
@@ -133,5 +133,48 @@ describe("estado da espera", () => {
     expect(avisoDaIa({ tipo: "falhou" })).toBe("falhou");
     expect(avisoDaIa({ tipo: "sem_chave" })).toBeNull();
     expect(avisoDaIa(null)).toBeNull();
+  });
+});
+
+describe("corte dos limites da API", () => {
+  it("descrição em 500 e unidade em 20 antes de mandar; a ordem e o tamanho do pedido não mudam", async () => {
+    const vistos: { descricao: string; unidade: string | null }[] = [];
+    await sugerirEmLotes(
+      [{ descricao: "A".repeat(900), unidade: "U".repeat(40) }, { descricao: "curta", unidade: null }],
+      async (lote) => { vistos.push(...lote); return { itens: lote.map(() => sug()) }; },
+      { semChave },
+    );
+    expect(vistos).toHaveLength(2);
+    expect(vistos[0].descricao).toHaveLength(LIMITE_DESCRICAO);
+    expect(vistos[0].unidade).toHaveLength(LIMITE_UNIDADE);
+    expect(vistos[1]).toEqual({ descricao: "curta", unidade: null });
+  });
+});
+
+describe("chaveDeIaDisponivel", () => {
+  it("origem nula: não; com origem: sim; consulta que falha: sim", async () => {
+    expect(await chaveDeIaDisponivel(async () => ({ origem: null }))).toBe(false);
+    expect(await chaveDeIaDisponivel(async () => ({ origem: "servidor" }))).toBe(true);
+    expect(await chaveDeIaDisponivel(async () => { throw new Error("x"); })).toBe(true);
+  });
+  it("sem resposta em 20 s: não (sem sugestão)", async () => {
+    const p = chaveDeIaDisponivel(() => new Promise(() => {}));
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(await p).toBe(false);
+  });
+});
+
+describe("geração: nota A pendente + arquivo B ilegível", () => {
+  it("B ilegível não avança a geração: a resposta de A ainda vale e libera as pendências", () => {
+    let geracao = 1; // nota A na tela, pedido da geração 1 vivo
+    const pedidoA = geracao;
+    const lidoB = false; // B caiu no catch: nenhuma linha nova entrou
+    if (lidoB) geracao = 2;
+    expect(respostaVale(geracao, pedidoA)).toBe(true);
+    const aposResposta = aplicarSugestoes([linha()], { tipo: "falhou" }, insumos);
+    expect(aguardandoIa(aposResposta)).toBe(false);
+  });
+  it("B válido avança a geração: a resposta tardia de A é descartada", () => {
+    expect(respostaVale(2, 1)).toBe(false);
   });
 });

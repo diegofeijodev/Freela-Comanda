@@ -6,6 +6,10 @@ export const PRAZO_IA_MS = 20_000;
 /** Limite de linhas por pedido da API; nota maior vai em vários pedidos, em sequência. */
 export const LOTE_IA = 200;
 
+/** Limites do DTO da API por linha; acima disso a API recusaria o pedido inteiro (400). */
+export const LIMITE_DESCRICAO = 500;
+export const LIMITE_UNIDADE = 20;
+
 export type ResultadoIa = { tipo: "ia"; itens: SugestaoInsumo[] } | { tipo: "sem_chave" } | { tipo: "falhou" };
 
 type ItemPedido = { descricao: string; unidade: string | null };
@@ -21,6 +25,7 @@ export async function sugerirEmLotes(
   op: { semChave: (e: unknown) => boolean; prazoMs?: number },
 ): Promise<ResultadoIa> {
   if (!itens.length) return { tipo: "ia", itens: [] };
+  itens = itens.map((it) => ({ descricao: it.descricao.slice(0, LIMITE_DESCRICAO), unidade: it.unidade === null ? null : it.unidade.slice(0, LIMITE_UNIDADE) }));
   const ctrl = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const prazo = new Promise<ResultadoIa>((resolve) => {
@@ -79,3 +84,17 @@ export const aguardandoIa = (linhas: { pendenteIa: boolean }[]) => linhas.some((
 
 /** Que linha mostrar acima da tabela depois da consulta: da IA, de falha discreta, ou nenhuma. */
 export const avisoDaIa = (r: ResultadoIa | null): "ia" | "falhou" | null => (r?.tipo === "ia" ? "ia" : r?.tipo === "falhou" ? "falhou" : null);
+
+/**
+ * Há chave de IA? Consulta com o mesmo prazo da espera. Respondeu: vale `origem !== null`. Falhou: chama assim mesmo (true).
+ * Não respondeu a tempo: trata como sem sugestão (false).
+ */
+export async function chaveDeIaDisponivel(consultar: () => Promise<{ origem: string | null }>, prazoMs = PRAZO_IA_MS): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const prazo = new Promise<boolean>((res) => { timer = setTimeout(() => res(false), prazoMs); });
+  const consulta = consultar().then((st) => st.origem !== null, () => true);
+  try { return await Promise.race([consulta, prazo]); } finally { clearTimeout(timer); }
+}
+
+/** A resposta da IA só vale se a nota na tela ainda é a do pedido. A geração só avança quando linhas novas entram na tela (ou ao limpar). */
+export const respostaVale = (geracaoAtual: number, geracaoDoPedido: number) => geracaoAtual === geracaoDoPedido;
