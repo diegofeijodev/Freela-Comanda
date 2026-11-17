@@ -13,6 +13,8 @@ export const A_VISTA = ['pix', 'dinheiro', 'cartao_debito', 'transferencia'];
 
 type LinhaNota = {
   id: string;
+  chave?: string | null;
+  fornecedor_cnpj?: string | null;
   numero: string | null;
   serie: string | null;
   fornecedor_nome: string;
@@ -37,6 +39,9 @@ function paraParecida(n: LinhaNota): NotaParecida {
   };
 }
 
+/** Nota lançada com a chave e o CNPJ do fornecedor, para cruzar com a caixa da SEFAZ. */
+export type NotaLancada = NotaParecida & { chave: string | null; fornecedor_cnpj: string | null };
+
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
 @Injectable()
@@ -60,6 +65,19 @@ export class NotasService {
     return linhas
       .filter((n) => pareceRepetida({ cnpj, numero: ref.numero, serie: ref.serie }, { cnpj: n.fornecedor_cnpj, numero: n.numero, serie: n.serie }))
       .map(paraParecida);
+  }
+
+  /**
+   * Notas lançadas por chave OU por emitente, numa consulta só (a mais nova primeiro). Quem chama normaliza as listas
+   * (chaves e CNPJs em maiúsculas, `[0-9A-Z]`); a regra de "já lançada / parece lançada" fica em `notas-sefaz/situacao-nota`.
+   */
+  async notasLancadas(f: { chaves: string[]; emitentes: string[] }): Promise<NotaLancada[]> {
+    if (f.chaves.length === 0 && f.emitentes.length === 0) return [];
+    const linhas = await this.prisma.notas_entrada.findMany({
+      where: { OR: [{ chave: { in: f.chaves } }, { fornecedor_cnpj: { in: f.emitentes } }] },
+      orderBy: { created_at: 'desc' },
+    });
+    return linhas.map((n) => ({ ...paraParecida(n), chave: n.chave, fornecedor_cnpj: n.fornecedor_cnpj }));
   }
 
   /** Vínculos produto do fornecedor → insumo salvos por lancar_nota (para pré-preencher a próxima nota). */

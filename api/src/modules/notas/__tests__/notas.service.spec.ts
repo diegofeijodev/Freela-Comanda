@@ -201,3 +201,21 @@ describe('NotasService (nota repetida)', () => {
     expect(r[0]).toMatchObject({ data_entrada: '2026-11-03', created_at: '2026-11-03T15:00:00.000Z', valor_total: 1234.56 });
   });
 });
+
+describe('NotasService.notasLancadas', () => {
+  it('uma única consulta com OR por chave e por emitente, da mais nova para a mais antiga', async () => {
+    const { svc, chamadas } = montar(false, [linha('a', { chave: VETOR })]);
+    const r = await svc.notasLancadas({ chaves: [VETOR], emitentes: ['12ABC34501DE35'] });
+    expect(chamadas.findMany).toEqual([
+      { where: { OR: [{ chave: { in: [VETOR] } }, { fornecedor_cnpj: { in: ['12ABC34501DE35'] } }] }, orderBy: { created_at: 'desc' } },
+    ]);
+    expect(r).toHaveLength(1);
+    expect(r[0]).toMatchObject({ id: 'a', chave: VETOR, fornecedor_cnpj: '12ABC34501DE35', valor_total: 1234.56, data_entrada: '2026-11-03' });
+  });
+
+  it('listas vazias: nenhuma consulta', async () => {
+    const { svc, chamadas } = montar();
+    expect(await svc.notasLancadas({ chaves: [], emitentes: [] })).toEqual([]);
+    expect(chamadas.findMany).toHaveLength(0);
+  });
+});
