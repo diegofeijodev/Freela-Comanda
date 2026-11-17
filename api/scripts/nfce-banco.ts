@@ -147,7 +147,10 @@ async function limpar(db: PrismaClient): Promise<void> {
 
 async function estrutura(db: PrismaClient): Promise<void> {
   const emit = await db.nfce_emitente.findMany();
-  conferir(emit.length === 1 && emit[0]!.id === 1 && emit[0]!.cupom_lanca_venda === null, 'emitente semeado (id 1, lança venda não respondido)');
+  conferir(
+    emit.length === 1 && emit[0]!.id === 1 && emit[0]!.cupom_lanca_venda === null,
+    'emitente semeado (id 1, lança venda não respondido)',
+  );
   const amb = await db.nfce_ambientes.findMany({ orderBy: { ambiente: 'asc' } });
   conferir(
     amb.map((a) => `${a.ambiente}:${a.serie}:${a.proximo_numero}:${a.emissao_ligada}:${a.situacao}`).join(',') ===
@@ -161,12 +164,27 @@ async function estrutura(db: PrismaClient): Promise<void> {
     'nfce_ambientes_proximo_numero',
     'próximo número 0',
   );
-  await recusa(db, sqlCupom({ ambiente: 'homologacao', serie: 1, numero: 102, numeroNaChave: 101 }), 'nfce_cupons_chave_partes', 'chave de outro número');
-  await recusa(db, sqlCupom({ ambiente: 'homologacao', serie: 1, numero: 103, lancaVenda: true }), 'nfce_cupons_lanca_venda', 'homologação lançando venda');
+  await recusa(
+    db,
+    sqlCupom({ ambiente: 'homologacao', serie: 1, numero: 102, numeroNaChave: 101 }),
+    'nfce_cupons_chave_partes',
+    'chave de outro número',
+  );
+  await recusa(
+    db,
+    sqlCupom({ ambiente: 'homologacao', serie: 1, numero: 103, lancaVenda: true }),
+    'nfce_cupons_lanca_venda',
+    'homologação lançando venda',
+  );
 
   // dois vivos com o mesmo (ambiente, série, número): o índice parcial recusa; descartado + vivo passam (chaves e idempotência diferentes)
   const primeiro = await novoCupom(db, { ambiente: 'homologacao', serie: 1, numero: 100, situacao: 'rejeitado' });
-  await recusa(db, sqlCupom({ ambiente: 'homologacao', serie: 1, numero: 100, situacao: 'nao_enviado' }), 'Key (ambiente, serie, numero)=', '2 vivos com o mesmo número');
+  await recusa(
+    db,
+    sqlCupom({ ambiente: 'homologacao', serie: 1, numero: 100, situacao: 'nao_enviado' }),
+    'Key (ambiente, serie, numero)=',
+    '2 vivos com o mesmo número',
+  );
   await db.$executeRaw`UPDATE nfce_cupons SET situacao = 'descartado', descartado_em = now(), descarte_motivo = 'teste' WHERE id = ${primeiro}::uuid`;
   await novoCupom(db, { ambiente: 'homologacao', serie: 1, numero: 100, situacao: 'nao_enviado' });
   const n = await db.nfce_cupons.count({ where: { ambiente: 'homologacao', serie: 1, numero: BigInt(100) } });
@@ -181,8 +199,18 @@ async function gatilhos(db: PrismaClient, item: Item): Promise<void> {
   conferir((await db.nfce_cupons.findUniqueOrThrow({ where: { id: g } })).situacao === 'autorizado', 'enviando → autorizado passa');
 
   await recusa(db, Prisma.sql`UPDATE nfce_cupons SET valor_total = 1 WHERE id = ${g}::uuid`, DOC_FISCAL, 'valor_total do autorizado');
-  await recusa(db, Prisma.sql`UPDATE nfce_cupons SET n_prot = '135260000000999' WHERE id = ${g}::uuid`, DOC_FISCAL, 'protocolo do autorizado');
-  await recusa(db, Prisma.sql`UPDATE nfce_cupons SET situacao = 'rejeitado' WHERE id = ${g}::uuid`, 'não passa para rejeitado', 'autorizado → rejeitado');
+  await recusa(
+    db,
+    Prisma.sql`UPDATE nfce_cupons SET n_prot = '135260000000999' WHERE id = ${g}::uuid`,
+    DOC_FISCAL,
+    'protocolo do autorizado',
+  );
+  await recusa(
+    db,
+    Prisma.sql`UPDATE nfce_cupons SET situacao = 'rejeitado' WHERE id = ${g}::uuid`,
+    'não passa para rejeitado',
+    'autorizado → rejeitado',
+  );
   await recusa(db, Prisma.sql`DELETE FROM nfce_cupons WHERE id = ${g}::uuid`, 'nunca é apagado', 'DELETE do cupom');
   await recusa(
     db,
@@ -192,7 +220,12 @@ async function gatilhos(db: PrismaClient, item: Item): Promise<void> {
     FILHOS,
     'item novo no autorizado',
   );
-  await recusa(db, Prisma.sql`UPDATE nfce_cupom_itens SET quantidade = 2 WHERE cupom_id = ${g}::uuid`, FILHOS, 'quantidade do item do autorizado');
+  await recusa(
+    db,
+    Prisma.sql`UPDATE nfce_cupom_itens SET quantidade = 2 WHERE cupom_id = ${g}::uuid`,
+    FILHOS,
+    'quantidade do item do autorizado',
+  );
   await recusa(db, Prisma.sql`DELETE FROM nfce_cupom_itens WHERE cupom_id = ${g}::uuid`, FILHOS, 'DELETE do item do autorizado');
   await recusa(
     db,
@@ -210,14 +243,32 @@ async function gatilhos(db: PrismaClient, item: Item): Promise<void> {
   await cancelar(db, g);
   const c = await db.nfce_cupons.findUniqueOrThrow({ where: { id: g } });
   conferir(c.situacao === 'cancelado' && c.cancelamento_n_prot !== null, 'autorizado → cancelando → cancelado passa');
-  await recusa(db, Prisma.sql`UPDATE nfce_cupons SET cancelamento_motivo = 'outro motivo qualquer' WHERE id = ${g}::uuid`, DOC_FISCAL, 'motivo do cancelado');
-  await recusa(db, Prisma.sql`UPDATE nfce_cupons SET situacao = 'autorizado' WHERE id = ${g}::uuid`, 'não passa para autorizado', 'cancelado → autorizado');
+  await recusa(
+    db,
+    Prisma.sql`UPDATE nfce_cupons SET cancelamento_motivo = 'outro motivo qualquer' WHERE id = ${g}::uuid`,
+    DOC_FISCAL,
+    'motivo do cancelado',
+  );
+  await recusa(
+    db,
+    Prisma.sql`UPDATE nfce_cupons SET situacao = 'autorizado' WHERE id = ${g}::uuid`,
+    'não passa para autorizado',
+    'cancelado → autorizado',
+  );
 }
 
 async function venda(db: PrismaClient, a: Item, b: Item, insumo: string): Promise<void> {
   // 22h30 em Brasília = 01h30 UTC do dia seguinte: a venda é do dia 17
   const dhEmi = new Date('2026-11-18T01:30:00Z');
-  const c12 = await novoCupom(db, { ambiente: 'producao', serie: 2, numero: 12, lancaVenda: true, dhEmi, produtos: '36.00', desconto: '1.00' });
+  const c12 = await novoCupom(db, {
+    ambiente: 'producao',
+    serie: 2,
+    numero: 12,
+    lancaVenda: true,
+    dhEmi,
+    produtos: '36.00',
+    desconto: '1.00',
+  });
   await db.nfce_cupom_itens.createMany({
     data: [linha(c12, 1, a, '1.0000', '12.00', '12.00', '1.00'), linha(c12, 2, a, '2.0000', '12.00', '24.00')],
   });
@@ -247,7 +298,9 @@ async function venda(db: PrismaClient, a: Item, b: Item, insumo: string): Promis
 
   // dois itens com a mesma descrição no cupom não colidem: a chave da venda é o nome do cardápio
   const c13 = await novoCupom(db, { ambiente: 'producao', serie: 2, numero: 13, lancaVenda: true, dhEmi, produtos: '22.00' });
-  await db.nfce_cupom_itens.createMany({ data: [linha(c13, 1, a, '1.0000', '12.00', '12.00'), linha(c13, 2, b, '1.0000', '10.00', '10.00')] });
+  await db.nfce_cupom_itens.createMany({
+    data: [linha(c13, 1, a, '1.0000', '12.00', '12.00'), linha(c13, 2, b, '1.0000', '10.00', '10.00')],
+  });
   await autorizar(db, c13);
   const [r3] = await db.$queryRaw<{ n: number }[]>`SELECT nfce_lancar_venda(${c13}::uuid) AS n`;
   conferir(r3?.n === 2, 'mesma descrição do cupom em 2 itens = 2 vendas');
