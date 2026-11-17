@@ -386,6 +386,61 @@ export const notaPelaChave = async (chave: string) => (await get<{ existe: boole
 export const notasRepetidas = (p: { cnpj: string; numero: string; serie: string | null }) =>
   get<NotaParecida[]>('/v1/notas/repetidas', { cnpj: p.cnpj, numero: p.numero, serie: p.serie ?? undefined });
 export const vinculos = (cnpj: string) => get<Vinculo[]>('/v1/vinculos', { cnpj });
+// ---------- Notas da SEFAZ (admin; etapa 1, só leitura). Tipos iguais aos da API (caixa.service.ts); datas chegam como string ISO.
+export type MotivoIgnorar = 'lancada_de_outro_jeito' | 'nao_e_compra' | 'nao_reconheco' | 'cancelamento_conferido' | 'outro';
+export type SituacaoNotaSefaz = 'cancelada_depois_de_lancada' | 'ignorada' | 'cancelada' | 'denegada' | 'ja_lancada' | 'parece_lancada' | 'falta_lancar';
+export type SituacaoBuscaSefaz =
+  | { ambiente: 'desligado' }
+  | {
+      ambiente: 'producao' | 'homologacao';
+      cnpj: string | null;
+      busca_ligada: boolean;
+      situacao: 'ok' | 'parada_certificado' | 'parada_configuracao' | 'parada_conflito' | 'parada_656';
+      mensagem: string | null;
+      aviso: string | null;
+      ultima_consulta: { em: string; novas: number } | null;
+      primeira_consulta_em: string | null;
+      proxima_consulta_em: string | null;
+      bloqueado_ate: string | null;
+      em_andamento: boolean;
+      lacunas: number;
+      dias_sem_buscar: number | null;
+      ligada_por_nome: string | null;
+      ligada_em: string | null;
+      outro_cnpj_ou_modo: boolean;
+      certificado: { ok: boolean; code: string | null; mensagem: string | null; avisos: string[] };
+      contagem: { falta_lancar: number; parece_lancada: number; cancelada_depois_de_lancada: number };
+      canceladas_depois: { id: string; numero: string; serie: string; emitente_nome: string }[];
+      historico: { evento: 'ligada' | 'desligada' | 'parada_automatica'; feito_por_nome: string | null; feito_em: string; c_stat: number | null }[];
+    };
+export type SituacaoSefazLigada = Exclude<SituacaoBuscaSefaz, { ambiente: 'desligado' }>;
+export type NotaSefaz = {
+  id: string;
+  chave: string;
+  emitente_cnpj: string;
+  emitente_nome: string;
+  numero: string;
+  serie: string;
+  emitida_em: string | null;
+  autorizada_em: string | null;
+  valor_total: number | null;
+  situacao_sefaz: 'autorizada' | 'denegada' | 'cancelada';
+  cancelada_em: string | null;
+  situacao: SituacaoNotaSefaz;
+  lancada: NotaParecida | null;
+  parecidas: NotaParecida[];
+  pode_conferir: boolean;
+  nao_parece_compra: boolean;
+  ignorada: { em: string; por_nome: string | null; motivo: MotivoIgnorar; texto: string | null } | null;
+};
+export const situacaoSefaz = () => get<SituacaoBuscaSefaz>('/v1/notas-sefaz/situacao');
+export const configurarBuscaSefaz = (busca_ligada: boolean) => put<SituacaoBuscaSefaz>('/v1/notas-sefaz/configuracao', { busca_ligada });
+export const buscarSefazAgora = () => post<{ iniciada: true }>('/v1/notas-sefaz/buscar');
+export const listarNotasSefaz = (filtro: 'a_conferir' | 'todas') => get<NotaSefaz[]>('/v1/notas-sefaz', { filtro, limite: 500 });
+export const xmlNotaSefaz = async (id: string) => (await api.get<string>(`/v1/notas-sefaz/${id}/xml`, { responseType: 'text' })).data;
+export const ignorarNotaSefaz = (id: string, motivo: MotivoIgnorar, texto?: string) =>
+  post<NotaSefaz>(`/v1/notas-sefaz/${id}/ignorar`, texto ? { motivo, texto } : { motivo });
+export const reabrirNotaSefaz = (id: string) => post<NotaSefaz>(`/v1/notas-sefaz/${id}/reabrir`);
 export const lancarNota = (n: unknown) => post<{ id: string; contas: number; a_vista: boolean; insumos_criados: number }>('/v1/notas', n);
 const enviarPdf = async <T>(url: string, f: File) => {
   const fd = new FormData();

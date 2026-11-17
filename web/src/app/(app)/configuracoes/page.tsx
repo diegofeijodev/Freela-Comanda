@@ -19,9 +19,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PlanoContas } from "@/components/plano-contas";
 import { IaChavePanel } from "@/components/ia-chave-panel";
 import { CertificadoPanel } from "@/components/certificado-panel";
+import { NotasSefazPainel } from "@/components/notas-sefaz-painel";
 import { formatarCnpj } from "@/lib/certificado";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { CERTIFICADO_QUERY_KEY } from "@/hooks/use-certificado";
+import { SITUACAO_SEFAZ_KEY } from "@/hooks/use-notas-sefaz";
 import { useMe } from "@/lib/auth";
 
 
@@ -62,6 +64,7 @@ export default function Config() {
     }
     toast.success("Configurações salvas"); refetch();
     queryClient.invalidateQueries({ queryKey: CERTIFICADO_QUERY_KEY });
+    queryClient.invalidateQueries({ queryKey: SITUACAO_SEFAZ_KEY });
   }
 
   return (
@@ -90,6 +93,17 @@ export default function Config() {
           }
         >
           <CertificadoPanel />
+        </ErrorBoundary>
+      )}
+      {me?.perfil === "admin" && (
+        <ErrorBoundary
+          fallback={
+            <Panel title="Notas da SEFAZ">
+              <p className="text-sm text-muted-foreground">Não consegui mostrar este quadro agora. Recarregue a página.</p>
+            </Panel>
+          }
+        >
+          <NotasSefazPainel />
         </ErrorBoundary>
       )}
       <Panel title="Geral">

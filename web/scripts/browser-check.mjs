@@ -399,6 +399,102 @@ const caixas = await Promise.all(['Substituir certificado', 'Remover'].map((n) =
   await ctx.close();
 }
 
+// ---------------- ADMIN: painel Notas da SEFAZ em Configurações (celular 360x800)
+// A API do navegador roda SEM SEFAZ_DFE_AMBIENTE (desligada de fábrica): a busca NUNCA liga de verdade aqui. Todo estado "ligado" vem de
+// page.route (inclusive o PUT da configuração), e no fim o banco confirma que nenhuma consulta existe.
+{
+  const PGDB = 'erpfreela_browser';
+  const { ctx, page, erros } = await sessao('admin@erpfreela.local', { width: 360, height: 800 });
+  const painel = page.locator('#notas-sefaz');
+
+  // 1) API real, servidor desligado: só a frase, nenhum botão.
+  await page.goto(`${BASE}/configuracoes`, { waitUntil: 'networkidle', timeout: 180_000 });
+  check('sefaz painel: servidor desligado mostra a frase', await painel.getByText('A busca de notas na SEFAZ não está ativada neste servidor. Fale com o suporte do Freela Comanda se quiser usá-la.').waitFor({ timeout: 30_000 }).then(() => true, () => false));
+  check('sefaz painel: servidor desligado não tem "Ligar a busca"', (await painel.getByRole('button', { name: /Ligar a busca/ }).count()) === 0);
+
+  // 2) Estado simulado em memória. Registrado antes do reload que o usa.
+  const cert = { ok: true, code: null, mensagem: null, avisos: [] };
+  const desligadaComCert = {
+    ambiente: 'producao', cnpj: '12345678000199', busca_ligada: false, situacao: 'ok', mensagem: null, aviso: null, ultima_consulta: null,
+    primeira_consulta_em: null, proxima_consulta_em: null, bloqueado_ate: null, em_andamento: false, lacunas: 0, dias_sem_buscar: null,
+    ligada_por_nome: null, ligada_em: null, outro_cnpj_ou_modo: false, certificado: cert,
+    contagem: { falta_lancar: 0, parece_lancada: 0, cancelada_depois_de_lancada: 0 }, canceladas_depois: [], historico: [],
+  };
+  let est = desligadaComCert;
+  const corsSefaz = { 'access-control-allow-origin': new URL(BASE).origin, 'access-control-allow-headers': 'authorization, content-type', 'access-control-allow-methods': 'GET, POST, PUT, OPTIONS' };
+  const pedidosSefaz = [];
+  await page.route('**/v1/notas-sefaz/**', async (route) => {
+    const req = route.request();
+    if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: corsSefaz });
+    pedidosSefaz.push(`${req.method()} ${new URL(req.url()).pathname}`);
+    if (req.method() === 'PUT' && req.url().endsWith('/configuracao')) {
+      const ligar = JSON.parse(req.postData() ?? '{}').busca_ligada === true;
+      est = ligar
+        ? { ...est, busca_ligada: true, ligada_por_nome: 'Admin', ligada_em: new Date().toISOString(), proxima_consulta_em: new Date(Date.now() + 60_000).toISOString() }
+        : { ...est, busca_ligada: false };
+      return route.fulfill({ status: 200, contentType: 'application/json', headers: corsSefaz, body: JSON.stringify(est) });
+    }
+    if (req.method() === 'GET' && req.url().endsWith('/situacao')) return route.fulfill({ status: 200, contentType: 'application/json', headers: corsSefaz, body: JSON.stringify(est) });
+    return route.fulfill({ status: 404, contentType: 'application/json', headers: corsSefaz, body: JSON.stringify({ error: { code: 'NAO_SIMULADO', message: 'Não simulado.' } }) });
+  });
+  await page.reload({ waitUntil: 'networkidle', timeout: 180_000 });
+
+  // 3) Desligada com certificado: confirmação, foco, Esc, ligar.
+  check('sefaz painel: tag "Desligada"', await painel.getByText('Desligada', { exact: true }).waitFor({ timeout: 30_000 }).then(() => true, () => false));
+  const ligar = painel.getByRole('button', { name: 'Ligar a busca', exact: true });
+  await ligar.scrollIntoViewIfNeeded();
+  await ligar.click();
+  const dlg = page.getByRole('alertdialog');
+  check('sefaz painel: diálogo tem o título exato', await dlg.getByText('Ligar a busca de notas?', { exact: true }).waitFor({ timeout: 10_000 }).then(() => true, () => false));
+  check('sefaz painel: diálogo avisa do contador', (await dlg.getByText('Se o seu contador também baixa as notas pela SEFAZ, avise antes de ligar').count()) === 1);
+  check('sefaz painel: foco inicial em "Agora não"', await page.evaluate(() => document.activeElement?.textContent?.trim() === 'Agora não'));
+  await page.screenshot({ path: join(SHOTS, 'admin-notas-sefaz-dialogo-360.png') });
+  await page.keyboard.press('Escape');
+  check('sefaz painel: Esc fecha o diálogo', await dlg.waitFor({ state: 'detached', timeout: 10_000 }).then(() => true, () => false));
+  check('sefaz painel: Esc não ligou nada', !pedidosSefaz.some((x) => x.startsWith('PUT')));
+  await ligar.click();
+  await dlg.getByRole('button', { name: 'Ligar a busca', exact: true }).click();
+  check('sefaz painel: toast de ligada', await page.getByText('Busca ligada. A primeira busca sai em até 5 minutos.').first().waitFor({ timeout: 30_000 }).then(() => true, () => false));
+  check('sefaz painel: tag "Ligada"', await painel.getByText('Ligada', { exact: true }).waitFor({ timeout: 30_000 }).then(() => true, () => false));
+  check('sefaz painel: mostra "Ligada por"', (await painel.getByText(/Ligada por Admin em /).count()) === 1);
+
+  // 4) Desligar: sem diálogo, toast com Desfazer.
+  await painel.getByRole('button', { name: 'Desligar a busca' }).click();
+  check('sefaz painel: desligar tem toast com "Desfazer"', await page.getByText('Busca desligada.').first().waitFor({ timeout: 30_000 }).then(() => true, () => false) && (await page.getByRole('button', { name: 'Desfazer' }).count()) >= 1);
+  check('sefaz painel: desligar não abre diálogo', (await page.getByRole('alertdialog').count()) === 0);
+
+  // 5) Estados simulados.
+  est = { ...desligadaComCert, situacao: 'parada_conflito', mensagem: 'Outro sistema também está buscando as notas deste CNPJ na SEFAZ (provavelmente o do contador). Com dois sistemas, a SEFAZ bloqueia os dois por 1 hora. A busca foi desligada: fale com o contador antes de ligar de novo.' };
+  await page.reload({ waitUntil: 'networkidle', timeout: 180_000 });
+  check('sefaz painel: parada tem alerta com a frase de conflito', await painel.locator('[role="alert"]').getByText(/Outro sistema também está buscando/).waitFor({ timeout: 30_000 }).then(() => true, () => false));
+  check('sefaz painel: parada tem "Ligar a busca de novo"', (await painel.getByRole('button', { name: 'Ligar a busca de novo' }).count()) === 1);
+  est = { ...desligadaComCert, certificado: { ok: false, code: 'CERTIFICADO_NAO_CADASTRADO', mensagem: 'Envie o certificado digital da empresa no quadro acima para ligar a busca.', avisos: [] } };
+  await page.reload({ waitUntil: 'networkidle', timeout: 180_000 });
+  check('sefaz painel: sem certificado mostra a frase', await painel.getByText('Envie o certificado digital da empresa no quadro acima para ligar a busca.').waitFor({ timeout: 30_000 }).then(() => true, () => false));
+  check('sefaz painel: sem certificado desabilita o botão', await painel.getByRole('button', { name: 'Ligar a busca', exact: true }).isDisabled());
+  check('sefaz painel: sem certificado tem o link para o certificado', (await painel.getByRole('link', { name: 'Ir para o certificado' }).count()) === 1);
+
+  // 6) Medidas e captura.
+  const larguraSefaz = await quemPassaDaBorda(page, 360);
+  check('sefaz painel: sem rolagem lateral em 360', larguraSefaz.scroll <= 360, JSON.stringify(larguraSefaz));
+  await painel.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: join(SHOTS, 'admin-notas-sefaz-painel-360.png'), fullPage: true });
+  const reaisSefaz = erros.filter((e) => !/Failed to load resource/.test(e));
+  check('sefaz painel: sem erro de console', reaisSefaz.length === 0, reaisSefaz.join(' | '));
+  await page.unroute('**/v1/notas-sefaz/**');
+
+  // 7) Nada ligou de verdade: o banco do navegador não tem nenhuma consulta.
+  const consultas = execFileSync('docker', ['exec', 'erp-freela-postgres', 'psql', '-U', 'erpfreela', '-d', PGDB, '-t', '-A', '-c', 'select count(*) from sefaz_distribuicao']).toString().trim();
+  check('sefaz painel: nenhuma consulta no banco (a busca nunca ligou de verdade)', consultas === '0', consultas);
+  await ctx.close();
+
+  // 8) Loja: nada do painel em Configurações.
+  const loja = await sessao('loja@erpfreela.local', { width: 360, height: 800 });
+  await loja.page.goto(`${BASE}/configuracoes`, { waitUntil: 'networkidle', timeout: 180_000 });
+  check('sefaz painel: loja não vê "Notas da SEFAZ"', (await loja.page.getByText('Notas da SEFAZ').count()) === 0);
+  await loja.ctx.close();
+}
+
 // ---------------- LOJA (celular)
 {
   const { ctx, page, erros } = await sessao('loja@erpfreela.local', { width: 390, height: 844 });
