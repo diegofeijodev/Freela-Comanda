@@ -1,4 +1,5 @@
 // Oráculo: xml-crypto 6.4.0 (devDependency exata), importado SÓ em arquivos de __tests__. Nenhum teste faz rede; certificado fictício.
+import { montarChaveNfce } from '../../../common/fiscal/chave-acesso';
 import { SignedXml } from 'xml-crypto';
 import { CLIENTE } from '../../sefaz/__tests__/certificado-teste';
 import { assinarXmlEnveloped } from '../../sefaz/assinatura-xml';
@@ -6,7 +7,9 @@ import { envelopeSoap12SemPrefixo } from '../../sefaz/transporte-soap12';
 import { elementos, lerXml } from '../../sefaz/xml-leitura';
 import { corpoEnvEventoCancelamento, idCancelamento, montarCancelamento, type DadosCancelamento } from '../evento-cancelamento';
 
-const CHAVE = '35261112345678000195650010000000011000000019';
+const CHAVE = montarChaveNfce({ aamm: '2611', cnpj: '12345678000195', serie: 1, numero: 1, tpEmis: 1, cNF: '00000001' });
+const CNPJ_ALFA = '12ABC34501DE35';
+const CHAVE_ALFA = montarChaveNfce({ aamm: '2611', cnpj: CNPJ_ALFA, serie: 1, numero: 1, tpEmis: 1, cNF: '00000001' });
 const NPROT = '135260000012345';
 const NPROT_17 = '13526000001234567';
 const XJUST = 'Cupom emitido em duplicidade por engano do caixa';
@@ -96,8 +99,22 @@ describe('evento de cancelamento da NFC-e (110111)', () => {
     expect(() => montarCancelamento(dados({ tpAmb: 3 as 1 }))).toThrow('Ambiente inválido');
     expect(() => montarCancelamento(dados({ cnpj: '123' }))).toThrow('CNPJ inválido');
     expect(() => montarCancelamento(dados({ chave: CHAVE.slice(1) }))).toThrow('Chave de acesso inválida');
+    expect(() => montarCancelamento(dados({ chave: CHAVE.slice(0, 43) + ((Number(CHAVE[43]) + 1) % 10) }))).toThrow('Chave de acesso inválida');
     expect(() => montarCancelamento(dados({ nProt: '1234' }))).toThrow('Protocolo de autorização inválido');
     expect(() => montarCancelamento(dados({ dhEvento: new Date('x') }))).toThrow('Data e hora');
+  });
+
+  it('chave com CNPJ alfanumérico (DV válido) é aceita, assinada e conferida', () => {
+    expect(CHAVE_ALFA.slice(6, 20)).toBe(CNPJ_ALFA);
+    const d = dados({ cnpj: CNPJ_ALFA, chave: CHAVE_ALFA });
+    expect(montarCancelamento(d)).toContain(`<CNPJ>${CNPJ_ALFA}</CNPJ><chNFe>${CHAVE_ALFA}</chNFe>`);
+    const ev = assinado(d);
+    expect(confere(ev, assinaturas(ev)[0])).toBe(true);
+  });
+
+  it('o CNPJ tem de ser o que está dentro da chave (frase fixa)', () => {
+    expect(() => montarCancelamento(dados({ cnpj: '11222333000181' }))).toThrow('O CNPJ não é o da chave de acesso do cancelamento.');
+    expect(() => montarCancelamento(dados({ cnpj: CNPJ_ALFA }))).toThrow('O CNPJ não é o da chave de acesso do cancelamento.');
   });
 
   it('o xml-crypto confere a assinatura do infEvento, sozinho e dentro do envelope SOAP sem prefixo inteiro', () => {
