@@ -115,14 +115,17 @@ function conferirLinha(l: sefaz_manifestacao | null, agora: Date): Recusa | null
 const cStatGravavel = (c: number | null): number | null => (c !== null && c >= 100 && c <= 9999 ? c : null);
 
 /**
- * Já saiu para a SEFAZ: gastou tentativa, ou o lote dele pode ter chegado lá (`resultadoDoLote` = resultado de cada lote, por id). Uma
- * falha ANTES de enviar não conta (a T2 desfaz o +1). O planejador e a caixa (rotas) usam a mesma conta.
+ * Já saiu para a SEFAZ: gastou tentativa, ou a SEFAZ já respondeu a ele alguma vez (`c_stat` gravado: a T2 guarda a última resposta e não
+ * a apaga num lote que não teve resposta para ele), ou o lote dele pode ter chegado lá (`resultadoDoLote` = resultado de cada lote, por
+ * id). Uma falha ANTES de enviar não conta (a T2 desfaz o +1). O planejador e a caixa (rotas) usam a mesma conta. Resíduo aceito
+ * (decisão do controlador): evento que saiu sem NENHUMA resposta, foi para "Tentar de novo" (0 tentativas) e cujo lote seguinte falhou
+ * antes de enviar parece "nunca saiu".
  */
 export function jaEnviada(
-  e: Pick<sefaz_manifestacoes, 'tentativas' | 'lote_id'>,
+  e: Pick<sefaz_manifestacoes, 'tentativas' | 'lote_id' | 'c_stat'>,
   resultadoDoLote: ReadonlyMap<string, string | null>,
 ): boolean {
-  return e.tentativas > 0 || (e.lote_id !== null && LOTE_SAIU.has(resultadoDoLote.get(e.lote_id) ?? ''));
+  return e.tentativas > 0 || e.c_stat !== null || (e.lote_id !== null && LOTE_SAIU.has(resultadoDoLote.get(e.lote_id) ?? ''));
 }
 
 /** A linha do banco no formato do planejador. */
@@ -534,17 +537,25 @@ export class RespostasSefazService {
       for (const de of d.eventos) {
         const ev = porId.get(de.id)!;
         const r = resp ? retornoDo(resp, ev) : null;
+        // A resposta da SEFAZ a este evento (o `retEvento` dele) substitui a anterior; um lote sem resposta para ele (falha antes de
+        // enviar, sem resposta, código do lote) mantém a última: `c_stat` gravado é a prova de que ele já saiu (`jaEnviada`).
+        const resposta =
+          de.cStat === null
+            ? {}
+            : {
+                c_stat: cStatGravavel(de.cStat),
+                x_motivo: r ? r.xMotivo.slice(0, 255) : null,
+                dh_reg_evento: r?.dhRegEvento?.slice(0, 40) ?? null,
+                xml_retorno: r?.xml ?? null,
+              };
         // Só quem ainda é deste lote e está `enviando` (outro processo pode ter interrompido o lote).
         await tx.sefaz_manifestacoes.updateMany({
           where: { id: de.id, lote_id: m.loteId, situacao: 'enviando' },
           data: {
             situacao: de.estado,
             tentativas: de.gastou ? ev.tentativas : ev.tentativas - 1,
-            c_stat: cStatGravavel(de.cStat),
-            x_motivo: r ? r.xMotivo.slice(0, 255) : null,
             n_prot: de.protocolo,
-            dh_reg_evento: r?.dhRegEvento?.slice(0, 40) ?? null,
-            xml_retorno: r?.xml ?? null,
+            ...resposta,
             atualizada_em: agora,
           },
         });

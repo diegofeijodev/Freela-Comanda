@@ -11,7 +11,8 @@ import type { RetornoEvento, SefazEventosPort } from '../../sefaz/eventos.port';
 import { sefazErro, type SefazErro } from '../../sefaz/sefaz-erro';
 import { CicloSefazService } from '../ciclo.service';
 import { FRASE_RESPOSTA } from '../frases';
-import { CHAVE_TRAVA_SEFAZ_EVENTOS, ERRO_LOCAL, ERRO_RELOGIO, RespostasSefazService } from '../respostas.service';
+import { CaixaSefazService } from '../caixa.service';
+import { CHAVE_TRAVA_SEFAZ_EVENTOS, ERRO_LOCAL, ERRO_RELOGIO, jaEnviada, RespostasSefazService } from '../respostas.service';
 import { linhaCom, montarPrismaSefaz, type TabelasSefaz } from './prisma-sefaz.falso';
 
 const AGORA = new Date('2026-11-17T17:05:00Z'); // 14h05 em Brasília
@@ -62,7 +63,7 @@ function montar(
   portas.push(porta);
   /** Outro processo da API no mesmo banco (ex.: depois de um reinício), com a sua porta. */
   const api = (p: SefazEventosPort) => new RespostasSefazService(prisma, config, ciclo, certificados, p, notas);
-  return { svc: api(porta), api, t, porta, trava, travaEventos, chavesUsadas, certificados, prisma };
+  return { svc: api(porta), api, t, porta, trava, travaEventos, chavesUsadas, certificados, prisma, ciclo, notas };
 }
 
 const nota = (chave: string, x: Partial<notas_sefaz> = {}) =>
@@ -453,6 +454,38 @@ describe('RespostasSefazService', () => {
     });
 
     describe('ja_enviada (notas 8 e 9): o que conta como já saiu para a SEFAZ', () => {
+      it('qualquer resposta da SEFAZ ao evento (c_stat gravado) prova que ele saiu, mesmo sem tentativa e sem lote que saiu', () => {
+        const falhaAntes = new Map([['L', 'falha_antes_de_enviar']]);
+        expect(jaEnviada({ tentativas: 0, lote_id: null, c_stat: 999 }, new Map())).toBe(true);
+        expect(jaEnviada({ tentativas: 0, lote_id: 'L', c_stat: 656 }, falhaAntes)).toBe(true);
+        expect(jaEnviada({ tentativas: 0, lote_id: 'L', c_stat: null }, falhaAntes)).toBe(false);
+        expect(jaEnviada({ tentativas: 0, lote_id: null, c_stat: null }, new Map())).toBe(false);
+      });
+
+      it('999 três vezes → "Tentar de novo" → tique que falha ANTES de enviar (reescreve o lote) → reabrir: continua na fila', async () => {
+        const { svc, t, porta, prisma, ciclo, notas, certificados } = montar();
+        const n = nota(VETOR, { ignorada_em: min(-60), ignorada_por_nome: 'Ana', motivo_ignorar: 'nao_reconheco' });
+        t.notas_sefaz.push(n);
+        t.sefaz_manifestacoes.push(evento(n, { tp_evento: '210220', origem: 'admin' }));
+        const caixa = new CaixaSefazService(prisma, ciclo, notas, certificados, svc);
+        responder(porta, 999);
+        for (const m of [0, 15, 30]) expect(await svc.processar(em(min(m)))).toEqual({ fim: 'feito', enviados: 1 });
+        expect(evDa(t, n, '210220')).toMatchObject({ situacao: 'falhou', tentativas: 3, c_stat: 999 });
+
+        await caixa.responderDeNovo(n.id, { id: randomUUID(), nome: 'Ana' }, min(45));
+        porta.aoChamar = undefined;
+        porta.proximas.push(sefazErro('SEFAZ_REDE', false));
+        expect(await svc.processar(em(min(45)))).toEqual({ fim: 'feito', enviados: 1 });
+        const depois = evDa(t, n, '210220');
+        const loteNovo = t.sefaz_eventos_lotes.find((l) => l.id === depois.lote_id)!;
+        expect(loteNovo.resultado).toBe('falha_antes_de_enviar'); // o lote das 999 foi trocado por um que não saiu
+        expect(depois).toMatchObject({ situacao: 'na_fila', tentativas: 0, c_stat: 999 }); // a última resposta da SEFAZ fica
+
+        await caixa.reabrir(n.id, { id: randomUUID(), nome: 'Ana' }, min(46));
+        expect(evDa(t, n, '210220').situacao).toBe('na_fila');
+        expect(porta.chamadas).toHaveLength(4);
+      });
+
       it('falha antes de enviar não conta: a ciência da nota que deixou de servir é cancelada', async () => {
         const { svc, t, porta } = montar();
         const n = nota(VETOR);
