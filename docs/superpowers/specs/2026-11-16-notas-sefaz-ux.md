@@ -152,3 +152,69 @@ Tratamento "você"; verbos no imperativo; códigos da SEFAZ só entre parêntese
 6. "Buscar agora": normal, buscando (desabilitado, anunciado), espera com a hora, busca desligada (sem botão). Vazio, carregando e erro da lista.
 7. Painel: sem certificado, vencido, sem CNPJ, parada por erro (cada texto da seção 4 anunciado como alerta), diálogo de ligar com a frase do contador e foco em "Agora não".
 8. Aba por teclado (setas, Enter); zoom 200%; nenhum dado da nota nem chave em `localStorage`/`sessionStorage`.
+
+## 8. Respostas à SEFAZ (etapa 2, entrega 3; desligadas até o OK do contador)
+Complementa a Etapa 2 do desenho (17/11). Na tela nunca aparecem "ciência", "manifestação", "desconhecimento" nem códigos de evento (§5). Tudo desta seção só existe com o servidor em `SEFAZ_MANIFESTACAO=ligada`; sem ela, a tela é a da entrega 2 (o painel mostra só a linha "não estão ativadas neste servidor").
+
+**Frases da entrega 2 que mudam** (com as respostas ligadas; desligadas, valem as novas da coluna do meio):
+| Onde | Desligadas | Ligadas |
+|---|---|---|
+| §4 abertura, "Só consulta: não envia nada à SEFAZ. Hoje chega o resumo… só chega em alguns casos." | "A busca só consulta. O que o sistema envia à SEFAZ fica no quadro Respostas à SEFAZ, logo abaixo, e vem desligado." | "A busca só consulta. Com as respostas ligadas, a nota completa costuma chegar algumas horas depois do resumo." |
+| §3 "Por quê?" ("…e este sistema ainda não faz essa confirmação…") | "A SEFAZ entrega só o resumo da nota (fornecedor, valor e data) até a empresa avisar que a recebeu, e as respostas à SEFAZ estão desligadas. Por isso, para dar entrada, envie o XML, o PDF ou a foto. Se o seu contador ou o portal da SEFAZ já avisou, a nota completa pode aparecer aqui." | "O sistema já avisou a SEFAZ que a nota chegou. A nota completa costuma aparecer aqui algumas horas depois (a SEFAZ não fixa o prazo). Se tiver pressa, lance pelo XML, pelo PDF ou pela foto." |
+| §3 Ignorar: "Nada é enviado à SEFAZ e nada é lançado." | igual | "Ela sai da lista 'A conferir'. Nada é lançado." + a linha do motivo (abaixo) |
+| §3 Ignorar, sob "Não reconheço": "Aqui a nota só fica escondida." | igual | texto do motivo (abaixo) |
+| §5 "Evitar: ciente, ciência da operação, desconhecimento, manifestação" | igual | igual; usar "avisar a SEFAZ que a nota chegou", "confirmar a compra na SEFAZ", "não reconheço", "a compra não aconteceu", "resposta final", "prazo para responder à SEFAZ" |
+
+**Painel (Configurações, no mesmo `Panel` "Notas da SEFAZ", abaixo da busca; subtítulo "Respostas à SEFAZ"; âncora `#respostas-sefaz`):**
+- Abertura: "Com as respostas ligadas, o Freela Comanda avisa a SEFAZ, em nome da empresa e com o certificado digital: que recebeu cada nota nova (assim a nota completa chega aqui para conferir); que a compra aconteceu, quando a nota é lançada; e que a empresa não reconhece uma nota, quando você tocar em Não reconheço." Linha fixa, sempre visível, em negrito: "**Ligue só depois de o seu contador concordar.**"
+- Botão com verbo (§6): **Ligar as respostas** (primário) / **Desligar as respostas** (outline). Tag: "Ligadas" (ok), "Desligadas" (muted), "Paradas" (bad), "Esperando a SEFAZ" (warn, `pausa_ate` no futuro).
+- **Ligar** abre `AlertDialog` "Ligar as respostas à SEFAZ?": "O sistema vai avisar a SEFAZ, em nome da empresa, que recebeu cada nota nova de compra. Depois desse aviso, cada nota precisa de uma resposta final em até 90 dias da data dela: lançar a nota já responde que a compra aconteceu; para as outras, o sistema avisa antes do prazo. **Ligue só depois de o seu contador concordar.**" Botões **Ligar as respostas** e **Agora não** (foco inicial). Sucesso: toast "Respostas ligadas. As primeiras saem em até 5 minutos."
+- **Desligar:** sem diálogo; toast "Respostas desligadas." + **Desfazer** (8 s). Linha fixa desligada: "Com as respostas desligadas, nada é enviado à SEFAZ. O que estava na fila espera até você ligar de novo."
+- **Dados (ligadas):** "Ligadas por Diego em 17/11/2026 às 10h05" · "3 respostas na fila" (some com 0) · "2 notas precisam de resposta até 15/02/2027" [Ver as notas] (só com `prazo_perto` > 0) · "1 resposta não foi enviada" [Ver] (só com `falharam` > 0).
+- **Servidor sem a variável:** "As respostas à SEFAZ não estão ativadas neste servidor. Fale com o suporte do Freela Comanda se quiser usá-las." (sem botões). Sem certificado, sem CNPJ, vencido, outro CNPJ: as mesmas frases e o mesmo botão desabilitado do §4.
+- **Paradas e esperas** (vermelha = parou e desligou, com **Ligar as respostas de novo**; âmbar = espera; `role="alert"`):
+| Situação | Tom | Texto |
+|---|---|---|
+| 108, 109, 5xx | âmbar | "A SEFAZ está fora do ar. As respostas saem de novo às 15h10." |
+| Falha antes de enviar | âmbar | "Não consegui falar com a SEFAZ. Nova tentativa às 14h20." |
+| 656 | âmbar | "A SEFAZ pediu para esperar. As respostas saem de novo às 15h10." |
+| Relógio (577–579, ou diferença > 2 min) | âmbar | "O relógio do servidor está diferente do da SEFAZ. As respostas esperam até 15h05; se repetir, fale com o suporte do Freela Comanda." |
+| Relógio de novo | vermelha | "As respostas pararam: o relógio do servidor está fora da hora certa. Fale com o suporte do Freela Comanda." |
+| 656 duas vezes em 24 h | vermelha | "A SEFAZ bloqueou as respostas duas vezes em 24 horas. Por segurança, elas foram desligadas. Fale com o suporte do Freela Comanda antes de ligar de novo." |
+| 280–286, 290–296, 213, 403 | vermelha | "A SEFAZ recusou o certificado digital (código N). Confira o certificado digital em Configurações e ligue as respostas de novo." |
+| 3 remessas sem resposta legível | vermelha | "As respostas pararam: a SEFAZ respondeu 3 vezes de um jeito que o sistema não entende. Fale com o suporte do Freela Comanda." |
+| Defeito nosso ou código desconhecido (lote) | vermelha | "As respostas pararam por um problema que o sistema não resolve sozinho (código N). Fale com o suporte do Freela Comanda e informe este código." |
+
+**Aba "Notas da SEFAZ":**
+- **Faixa do prazo** (âmbar, `role="status"`, acima das abas, abaixo da de cancelamento; só com `prazo_perto` > 0): uma nota: "A NF 4411 de ATACADÃO S.A. precisa de uma resposta à SEFAZ até 15/02/2027. Lance a nota, toque em Não reconheço ou escolha um motivo em Ignorar." Várias: "N notas precisam de uma resposta à SEFAZ. A primeira vence em 15/02/2027." [Ver] abre "A conferir" com foco na primeira.
+- **Prazo no cartão** (notas com o aviso de chegada registrado e sem resposta final): linha "Responder à SEFAZ até 15/02/2027" (neutra); do 80º dia em diante, âmbar com `CircleAlert`: "Faltam 6 dias para responder à SEFAZ (até 15/02/2027)."; no último dia "Último dia para responder à SEFAZ."; passado: muted "Passou o prazo: a SEFAZ considera esta compra confirmada." (sem ações de resposta).
+- **Linha da resposta** (discreta, sob a situação; ícone + texto, `aria-live="polite"` quando muda):
+| Estado | Texto |
+|---|---|
+| aviso de chegada na fila / enviando | "Avisando a SEFAZ que a nota chegou…" |
+| aviso de chegada registrado | "A SEFAZ já sabe que a nota chegou (17/11)." |
+| final na fila (`Loader2`) | "Resposta à SEFAZ na fila: sai em alguns minutos." |
+| confirmação registrada | "Compra confirmada na SEFAZ em 17/11." |
+| não reconheço registrado | "Você avisou a SEFAZ que não reconhece esta nota (17/11). Para mudar, fale com o seu contador: a SEFAZ aceita corrigir uma vez, em até 30 dias." |
+| não aconteceu registrado | "Você avisou a SEFAZ que a compra não aconteceu (17/11). Para mudar, fale com o seu contador: a SEFAZ aceita corrigir uma vez, em até 30 dias." |
+| recusada (cancelada/denegada) | "A SEFAZ não aceitou a resposta: a nota foi cancelada ou recusada." |
+| recusada (fora do prazo) | "A SEFAZ não aceitou a resposta: passou o prazo." |
+| recusada (já respondida por outro, 655) | "Esta nota já tinha resposta à SEFAZ, dada por outro sistema ou pelo portal." |
+| recusada (não é desta empresa, 575) | "A SEFAZ não aceitou a resposta: a nota não é para o CNPJ da empresa." |
+| recusada (chave inválida) | "A SEFAZ não aceitou a resposta: a chave de acesso não confere." |
+| recusada (outro código) | "A SEFAZ não aceitou a resposta (código N). Fale com o seu contador." |
+| falhou | "Não consegui enviar a resposta à SEFAZ depois de 3 tentativas." + **Tentar de novo** (outline, 44 px; sucesso: toast "Resposta de volta à fila.") |
+- **Botão "Não reconheço…"** (secundário, `Ban`) em "Falta lançar" e "Parece já lançada" quando `pode_responder`: abre o diálogo Ignorar com "Não reconheço esta nota" já marcado. Ordem no celular: primária, **Ignorar…**, **Não reconheço…**, **Copiar chave**.
+- **"É a mesma nota"** (1 toque) com as respostas ligadas e `pode_responder`: toast "Nota marcada como já lançada. A confirmação vai para a SEFAZ em alguns minutos." + **Desfazer** (8 s).
+- **Diálogo Ignorar com as respostas ligadas** (motivos na ordem: "Já lancei de outro jeito" · "Não é compra" · "Não reconheço esta nota" · "A compra não aconteceu (devolvi ou cancelei)" · "Outro motivo"; o 4º só com `pode_responder`). Linha sob cada motivo, quando marcado:
+  - Já lancei de outro jeito: "A SEFAZ é avisada de que a compra aconteceu, como quando você lança a nota."
+  - Não é compra: `Checkbox` "Avisar a SEFAZ que a compra aconteceu" (desmarcado) + "Marque se a nota é verdadeira e só não vai para o estoque (por exemplo, um equipamento)."
+  - Não reconheço: "A SEFAZ é avisada de que a empresa não reconhece esta nota. Use quando você não conhece o fornecedor ou não pediu nada a ele. Depois de enviado, não dá para desfazer aqui." Botão primário vira **Avisar a SEFAZ e ignorar**.
+  - A compra não aconteceu: campo obrigatório "Conte o que houve" (`Textarea`, contador "15 a 255 letras", exemplo no rótulo de ajuda: "mercadoria devolvida na entrega, pedido cancelado") + "A SEFAZ é avisada de que a compra não aconteceu, com o seu texto. Depois de enviado, não dá para desfazer aqui." Botão **Avisar a SEFAZ e ignorar**. Erros em caixa no diálogo: "Conte o que houve com pelo menos 15 letras." · "Use no máximo 255 letras." · "Use só letras, números e pontuação comum (sem emoji)."
+  - Outro motivo: "Nada é enviado à SEFAZ."
+  - Sem `pode_responder` (nota de saída, cancelada, prazo passado, já respondida), o diálogo é o da entrega 2, mais a linha "Esta nota não aceita resposta à SEFAZ." quando o motivo seria um aviso.
+  - Sucesso com aviso: toast "Nota ignorada. A resposta vai para a SEFAZ em alguns minutos." + **Desfazer** (8 s). Desfazer depois de a resposta sair (raro; o servidor espera 60 s): toast "A resposta já tinha ido para a SEFAZ e não dá para desfazer aqui. A nota voltou para a lista."
+- **Dar entrada pela aba (Conferir)** com as respostas ligadas: o toast de sucesso de hoje ganha a 2ª linha "A confirmação da compra vai para a SEFAZ em alguns minutos."
+- **Modo de teste** (homologação): as respostas vão para o ambiente de teste; o painel diz "Modo de teste da SEFAZ: as respostas valem só para notas de mentira."
+
+**Conferir no navegador (360 px e desktop), além do §7:** painel com as respostas desligadas, ligadas, esperando e paradas; diálogo de ligar com foco em "Agora não"; faixa do prazo e as três linhas de prazo no cartão; cada linha da resposta; "Não reconheço…" abrindo o diálogo já marcado; "A compra não aconteceu" com os três erros do campo; Desfazer; "Tentar de novo"; com a variável desligada, nenhum elemento desta seção.

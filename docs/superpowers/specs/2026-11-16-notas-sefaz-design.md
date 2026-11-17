@@ -1,9 +1,11 @@
 # Notas da SEFAZ (Distribuição DF-e, só leitura), nota repetida, IA no XML e CNPJ com letras — desenho
 
-Data: 16/11/2026 · Ramo `feat/notas-sefaz` · Substitui o rascunho do mesmo dia, agora com as decisões do dono. Nada implementado. Nenhuma chamada à SEFAZ
-(nem homologação) e nenhum handshake com os servidores dela. 3º de quatro projetos: foto → certificado A1 → **notas da SEFAZ** → NFC-e. Consome a porta
-`CERTIFICADO_DIGITAL` e deixa para a NFC-e o transporte SOAP 1.2 com mTLS e o leitor de XML (a assinatura fica desenhada na etapa 2).
+Data: 16/11/2026, Etapa 2 reescrita em 17/11/2026 · Ramo `feat/notas-sefaz` · Entregas 1 (etapa 0, A, B) e 2 (etapa 1) prontas no ramo; a Etapa 2
+vira a entrega 3 (plano `docs/superpowers/plans/2026-11-17-notas-sefaz-entrega-3.md`). Nenhuma chamada à SEFAZ (nem homologação) e nenhum handshake com
+os servidores dela até o 1º teste real. 3º de quatro projetos: foto → certificado A1 → **notas da SEFAZ** → NFC-e. Consome a porta
+`CERTIFICADO_DIGITAL` e deixa para a NFC-e o transporte SOAP 1.2 com mTLS, o leitor de XML e a assinatura XMLDSig (`modules/sefaz/assinatura-xml.ts`).
 Marcas: *conferido* = li no documento citado; *minha* = decisão do construtor; *não confirmado* = sem fonte primária, vira risco do 1º teste real.
+Na Etapa 2 valem também as marcas da pesquisa de 17/11: [P] fonte primária, [S] secundária, [N] não encontrado.
 
 ## Por quê
 
@@ -18,9 +20,9 @@ e o XML sem a ajuda da IA para escolher o insumo.
 |---|---|---|---|
 | 1 | O contador já consome a distribuição de DF-e deste CNPJ? | "Não sei, provavelmente não." Não bloqueia. | Detectores D1/D2 (etapa 1) e a frase na ativação: "Se o seu contador também baixa as notas pela SEFAZ, avise antes de ligar". |
 | 2 | Construir agora? | Sim. | Escopo. |
-| 3 | 1ª etapa só de leitura, sem ciência? | Sim. A ciência automática vai para a etapa 2. | Etapa 2: só desenho. |
-| 4 | Confirmar a operação na SEFAZ ao "Dar entrada"? | Não. | Fora. |
-| 5 | Botão "Desconhecimento da operação"? | Depois. | Fora. Até lá, "Ignorar" com o motivo "Não reconheço". |
+| 3 | 1ª etapa só de leitura, sem ciência? | Sim. A ciência automática vai para a etapa 2. | Etapa 2. |
+| 4 | Confirmar a operação na SEFAZ ao "Dar entrada"? | Não. **Substituída em 17/11** (decisão 2 de 17/11: confirma sozinho). | Etapa 2. |
+| 5 | Botão "Desconhecimento da operação"? | Depois. **Substituída em 17/11** (decisão 3 de 17/11: botão "Não reconheço"). | Etapa 2. |
 | 6 | IA sugerindo o insumo dos itens do XML? | Sim, também no XML enviado à mão. | Parte B. |
 | 7 | Nota cancelada pelo fornecedor depois de lançada? | Só avisar. | Etapa 1: faixa e linha vermelhas; estoque e contas intocados. |
 | 8 | Corrigir antes o CNPJ com letras? | Sim, como etapa 0. | Etapa 0. |
@@ -31,13 +33,14 @@ e o XML sem a ajuda da IA para escolher o insumo.
 - **Esta entrega, nesta ordem** (cada parte já serve sozinha): **Etapa 0** (CNPJ e chave com letras) → **A** (aviso de nota repetida) → **B** (IA nos itens
   do XML) → **Etapa 1** (busca na SEFAZ só de leitura, caixa de entrada e aviso de cancelamento). A etapa 1 vem **desligada** de duas formas: variável de
   ambiente e interruptor na tela. A 1ª consulta em produção só com o "eu autorizo" do dono.
-- **Etapa 2 (só desenho, abaixo):** ciência automática e, com ela, o XML completo de rotina.
-- **Depois (sem desenho):** lacunas de NSU por `consNSU`; "Baixar agora" por `consChNFe`; carta de correção na tela; Desconhecimento manual; importar vários
-  XML de uma vez; mais de um CNPJ; CT-e/NFS-e. NFC-e é o projeto 4.
-- **Fora por decisão:** Confirmação da Operação (4); estorno de nota cancelada (7).
+- **Etapa 2 (desenho abaixo, entrega 3, desligada):** respostas à SEFAZ: ciência automática (e, com ela, o XML completo de rotina), confirmação ao dar
+  entrada, "Não reconheço", "A compra não aconteceu" e o aviso do prazo de 90 dias.
+- **Depois (sem desenho):** lacunas de NSU por `consNSU`; "Baixar agora" por `consChNFe`; carta de correção na tela; retificar uma resposta final;
+  importar vários XML de uma vez; mais de um CNPJ; CT-e/NFS-e. NFC-e é o projeto 4.
+- **Fora por decisão:** estorno de nota cancelada (7).
 - **Não pode:** consultar antes da espera da NT (o 656 bloqueia o CNPJ para **todos** os sistemas, inclusive o do contador) · `rejectUnauthorized: false` ·
-  chave, PEM ou XML em log · teste com rede · loja alcançar rota nova · vir ligado de fábrica · nota de homologação chegar ao "Dar entrada" · qualquer
-  evento enviado à SEFAZ nesta entrega.
+  chave, PEM ou XML em log · teste com rede · loja alcançar rota nova · vir ligado de fábrica · nota de homologação chegar ao "Dar entrada" · evento
+  enviado à SEFAZ com as respostas desligadas, ou antes do OK do contador e do "eu autorizo" do dono.
 
 ## O que muda para quem usa (só admin)
 
@@ -66,6 +69,9 @@ CERVEJARIA K            15 / 1      16/11          0,00  Falta lançar · entrad
    Sem marcar a caixa, "Dar entrada" pede confirmação.
 4. **XML com IA:** as linhas sem vínculo salvo recebem a sugestão da IA ("sugestão — confira" / "novo — confira"), como já acontece com foto e PDF. Sem
    chave de IA, tudo segue como hoje.
+5. **Respostas à SEFAZ (etapa 2, entrega 3, desligadas):** no mesmo painel, "Ligar as respostas" (só depois de o contador concordar). Ligadas, o
+   Comanda avisa a SEFAZ que recebeu cada nota nova (e a nota completa passa a chegar), confirma a compra quando a nota é lançada, e a aba ganha "Não
+   reconheço…", o motivo "A compra não aconteceu" e o aviso do prazo de 90 dias. Textos na UX §8.
 
 ## Regras da SEFAZ que amarram o desenho (conferido, salvo marca)
 
@@ -421,53 +427,224 @@ export interface SefazDfePort {
 - **O resto são constantes no código**, porque vêm da NT e não devem ser ajustadas em produção: espera de 65 min (1 h da NT + 5 min de folga), tique de
   5 min, 10 páginas por ciclo, tempo limite de 30 s, tetos de 16 MB e 4 MB, `cUFAutor` 35.
 
-## Etapa 2 — Ciência automática (só desenho; não construir agora)
+## Etapa 2 — Respostas à SEFAZ: ciência automática, confirmação, "Não reconheço" e prazo de 90 dias (entrega 3, desligada)
 
-**Tela:** um 2º interruptor, "Registrar a Ciência da Operação automaticamente", desligado, com o texto "a ciência é registrada na SEFAZ em nome da
-empresa". Grava quem ligou e quando.
+Reescrita em 17/11/2026 com as decisões do dono do mesmo dia e a pesquisa `2026-11-17-pesquisa-ciencia-e-nfce.md` (Parte A). Nada é enviado à SEFAZ
+até o 1º teste real (roteiro no fim do plano da entrega 3). Na tela, "manifestação" vira **"respostas à SEFAZ"** (UX §8).
 
-**Quando registrar:** resumo com `cSitNFe = 1` e `tpNF = 1`, autorizado há no máximo 9 dias (o prazo é 10), não lançado, não ignorado e sem
-manifestação. Lotes de até 20.
+### Decisões do dono (17/11/2026, por escrito; substituem as 4 e 5 de 16/11)
 
-**Evento:**
-- `NFeRecepcaoEvento4` do AN: `https://www.nfe.fazenda.gov.br/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx` (em homologação, `hom1`).
-- SOAP 1.2 sem `nfeCabecMsg`; `envEvento versao="1.00"`.
-- `infEvento Id` = "ID" + tpEvento + chave + nSeq com 2 dígitos.
-- `cOrgao` 91; `CNPJ` do destinatário; `nSeqEvento` 1; `verEvento` 1.00; `descEvento` "Ciencia da Operacao".
-- `dhEvento` com fuso `±hh:00` e sem `Z` (padrão `TDateTimeUTC`, como no rascunho).
+| # | Decisão | Onde entra |
+|---|---|---|
+| 1 | Ciência da Operação (210210) **automática**. | Planejador: nota nova, autorizada, de compra, até 9 dias. |
+| 2 | Ao dar entrada numa nota vinda da SEFAZ, o Comanda registra a **Confirmação da Operação (210200)** sozinho. | Planejador: nota da caixa lançada pela chave. |
+| 3 | Botão **"Não reconheço"** na aba (Desconhecimento da Operação, 210220). | Cartão da nota e diálogo "Ignorar". |
+| 4 | **Aviso antes dos 90 dias** para as notas com ciência que sobrarem sem resposta final. | Faixa, cartão e painel. |
+| 5 | Tudo nasce **desligado** e só liga depois de o contador concordar; a tela e o README dizem isso. | Variável + botão; textos da UX §8; README. |
 
-**Assinatura:**
-- XMLDSig *enveloped*, só com o `X509Certificate` da folha.
-- C14N 2001-03-15 + enveloped-signature; `rsa-sha1` com digest `sha1`.
-- `Reference URI="#ID…"`; a `Signature` fica como irmã de `infEvento`.
-- Feita à mão com `node:crypto`, em ~100 linhas; `xml-crypto` só como devDependency, de oráculo.
-- A mesma função assina `infNFe` na NFC-e.
+### Por que a ciência pede o resto (conferido na pesquisa, A.2 e A.5)
 
-**Retornos:**
+- Ciência: até **10 dias** da autorização (596 fora do prazo) [P: Ajuste SINIEF 07/05, cl. 15ª-C § 4º; NT 2020.001 §4].
+- Registrada a ciência, **fica obrigatória** uma resposta final (210200, 210220 ou 210240) [P: cl. 15ª-C § 5º]. A NT 2020.001 §3.D acrescenta "nos casos de
+  obrigatoriedade"; o conflito das duas leituras é do contador.
+- Resposta final: até **90 dias da autorização** desde 01/06/2026 [P: Ajuste 14/26; NT 2020.001 v1.60 §3.D]. Passados 90 dias sem resposta, vale como
+  Confirmação [P: § 6º], com ou sem ciência.
+- Cada resposta final pode ser registrada até 2 vezes (`nSeqEvento` até 2), vale a última, até 30 dias da 1ª [P: Ajuste 43/23; NT 2020.001 §3.E e regra
+  H02]. A ciência só tem `nSeqEvento` 1 e é recusada depois de uma resposta final (655, H06).
+- Só a Confirmação impede o fornecedor de cancelar a nota [P: NT 2020.001 §3.A].
 
-| Código | Tratamento |
+### Decisões do construtor (*minha*)
+
+1. **Um controle só, "Responder à SEFAZ"**, por (ambiente, CNPJ), cobre as quatro decisões. Motivo: o OK do contador é um só, e duas chaves dobram os
+   estados da tela e dos testes. Se o contador aceitar só uma parte, separar é uma coluna a mais.
+   - Variável nova `SEFAZ_MANIFESTACAO` = `desligada` (padrão; ausente ou vazia) | `ligada`. `ligada` com `SEFAZ_DFE_AMBIENTE` em `desligado` derruba a
+     subida (contradição de configuração, como valor desconhecido). Os eventos usam o **mesmo ambiente** da busca.
+   - Ligar pede as mesmas conferências de "Ligar a busca" (ambiente, CNPJ, certificado da mesma raiz), mas **não** pede a busca ligada. Busca desligada
+     ou parada não para a fila: a ciência só acontece para notas da caixa, e uma resposta final já pedida tem de sair.
+   - CNPJ ou ambiente novo = linha nova, desligada (como a busca). Desligar não apaga a fila: o que estava "na fila" espera.
+2. **"Dar entrada" nunca fala com a SEFAZ nem escreve na fila.** O lançamento continua local e na transação de hoje. A Confirmação é **derivada** pelo
+   planejador no tique seguinte (≤ 5 min): nota da caixa com chave igual a uma nota lançada **depois** de ligar as respostas, por qualquer caminho (Conferir,
+   XML, PDF ou foto). Assim a SEFAZ nunca impede um lançamento, a falha vira nova tentativa limitada, e não há dependência circular entre `notas` e
+   `notas-sefaz`. Nota lançada antes de ligar não é confirmada sozinha.
+3. **"Ignorar" e os eventos** (só com as respostas ligadas e a nota "respondível", ver o planejador):
+
+   | Motivo (tela) | Evento | Como |
+   |---|---|---|
+   | "Já lancei de outro jeito" (e o toque "É a mesma nota") | 210200 | Sempre: é o mesmo caso do "Dar entrada" (decisão 2). |
+   | "Não é compra" | 210200 opcional | Caixa "Avisar a SEFAZ que a compra aconteceu", desmarcada (1 toque): compra real que não vai para o estoque. |
+   | "Não reconheço esta nota" (e o botão "Não reconheço…") | 210220 | Sempre, com o texto do que acontece e o botão "Avisar a SEFAZ e ignorar". Sem `xJust`. |
+   | "A compra não aconteceu" (motivo novo `compra_nao_aconteceu`) | 210240 | Justificativa obrigatória, 15 a 255 caracteres. |
+   | "Outro motivo" | nenhum | Como hoje. |
+
+   Com as respostas desligadas, o "Ignorar" é exatamente o da entrega 2 e "A compra não aconteceu" não aparece.
+4. **210240 entra.** O aviso dos 90 dias empurra o admin a fechar cada nota com ciência, e cada caso precisa de uma saída verdadeira. O caso comum de
+   restaurante, "conheço o fornecedor, mas recusei a entrega ou o pedido foi cancelado e ele não cancelou a nota", não tem saída honesta só com 210200 e
+   210220: "Não reconheço" seria falso, e o silêncio vira Confirmação (§ 6º). Custo pequeno: a mesma porta, um `xJust` e um campo no diálogo.
+5. **Desfazer e reabrir.** Evento pedido pelo admin espera **60 s** na fila (`enviar_apos`), então o "Desfazer" de 8 s sempre o encontra "na fila" e o
+   cancela. "Voltar para a lista" também cancela um evento ainda na fila. Depois de sair, não há volta aqui: "Voltar para a lista" só mostra a nota de
+   novo, com a resposta registrada. **Nada de retificação nesta entrega:** `nSeqEvento` é sempre 1; registrada uma resposta final (nossa), o Comanda não
+   manda outra para a mesma chave, nem a Confirmação automática de um "Dar entrada" posterior. A tela diz "para mudar, fale com o contador (a SEFAZ aceita
+   corrigir uma vez, em até 30 dias)".
+6. **Fila própria.** Uma remessa (lote) de até 20 eventos por tique de 5 min, sob a trava `CHAVE_TRAVA_SEFAZ_EVENTOS = 7_011_171_202`, com o diário em
+   `sefaz_eventos_lotes` (nunca em `sefaz_consultas`, cuja agenda conta toda linha do (ambiente, CNPJ)). Volume: 60 notas por mês ≈ 120 eventos.
+7. **Código desconhecido nunca repete:** no evento = recusa definitiva daquela nota; no lote = as respostas param (desligam).
+8. **Sem validador de XSD.** `libxmljs2` é nativo e pesado; `xmllint` não está na máquina nem na imagem. Os testes conferem o XML montado contra os
+   padrões copiados dos esquemas (lista em "Montagem").
+9. **Prazo e aviso:** prazo final = `autorizada_em` (ou `emitida_em`, se faltar) + 90 dias; aviso a partir do 80º dia (faltam 10 ou menos) para as notas
+   com **ciência nossa registrada** e sem resposta final registrada; passado o prazo, a nota mostra "a SEFAZ considera a compra confirmada" e não aceita
+   mais resposta (o servidor recusa com `SEFAZ_PRAZO_PASSOU`).
+
+### Planejador (puro, `notas-sefaz/respostas-plano.ts`)
+
+Roda no tique, depois da busca e da classificação, com as respostas ligadas. Para cada nota da caixa do (ambiente, CNPJ):
+
+- **"Respondível"** = `situacao_sefaz = autorizada` · `tp_nf = 1` · dentro do prazo final · sem resposta final ativa (na fila, enviando, registrada ou
+  falhou). Nota de saída (`tp_nf = 0`), cancelada ou denegada nunca recebe evento.
+- **210210 (ciência):** respondível · `agora − autorizada_em ≤ 9 dias` · situação `falta_lancar` ou `parece_lancada` (não ignorada) · sem XML completo
+  (`documento_completo_id` nulo: se já chegou, alguém já respondeu) · nenhuma ciência nossa (de qualquer situação, menos `cancelada`).
+- **210200 automático (`dar_entrada`):** respondível · lançada pela **chave** (`ja_lancada`) · `notas_entrada.created_at ≥ ligada_em` das respostas.
+- Resposta final pedida para uma nota com ciência ainda **na fila** = a ciência é cancelada (seria 655 depois).
+- Saída: os eventos a criar, a ordem de envio (finais primeiro; depois ciências pela autorização mais antiga, que vence antes) e, por nota, o
+  `prazo_final`, `prazo_perto` (≥ 80º dia) e `prazo_passou`.
+
+### Fila e envio (`notas-sefaz/respostas.service.ts`)
+
+1. **Condições** (sem rede): ambiente ≠ `desligado` · `SEFAZ_MANIFESTACAO=ligada` · respostas ligadas e `situacao = ok` · `agora ≥ pausa_ate` ·
+   `emUso()` sem erro e da mesma raiz do CNPJ · relógio: se a última consulta respondida da busca (24 h) mostra `|dhResp − terminada_em| > 2 min`, não
+   envia (margem nossa; a SEFAZ tolera 5 min).
+2. **T1, sob a trava:** fecha como `interrompida` o lote que ficou aberto e devolve os eventos dele à fila; aplica o planejador (insere os automáticos);
+   escolhe até 20 eventos `na_fila` com `enviar_apos ≤ agora`; para cada um, gera `dh_evento` e o XML **assinado** e grava `enviando` + o XML +
+   `tentativas + 1` **antes** de a rede sair; cria a linha do lote com `id_lote` = milissegundos do relógio (13 dígitos).
+3. **Fora de transação:** `SefazEventosPort.enviarLote(…)`.
+4. **T2, sob a trava:** aplica `decidirLote` (puro, `notas-sefaz/respostas-agenda.ts`) a cada evento e ao lote; grava `c_stat`, `x_motivo`, `n_prot`,
+   `dh_reg_evento` e o `retEvento` de cada um; fecha o lote.
+5. **Nunca em laço:** um lote por tique; nenhuma repetição imediata; cada evento tem no máximo **3 tentativas** que contam (enviado e sem resposta útil, ou
+   999); 108/109, 656, relógio e falha antes de enviar não gastam tentativa, mas sempre põem `pausa_ate` no futuro; três lotes seguidos sem resposta
+   legível = as respostas param. "Tentar de novo" (evento `falhou`) é ação do admin e zera as tentativas daquele evento.
+
+### Retornos → ação → o que o admin vê
+
+`cStat` com 3 ou 4 dígitos (`^[0-9]{3,4}$`); `nProt` com 15 ou 17 (`^[0-9]{15}([0-9]{2})?$`; outro formato = sem protocolo + alerta no log) [P: NT
+2025.002 §5.1; `tiposBasico_v1.03.xsd`]. O `retEvento` casa com o evento por (`chNFe`, `tpEvento`, `nSeqEvento`); evento nosso sem `retEvento` num 128
+volta à fila e gasta tentativa. Frases exatas na UX §8.
+
+**Lote (`retEnvEvento` e transporte):**
+
+| Situação | Ação |
 |---|---|
-| 135, 136 | registrado (NT 2020.001, tabela de códigos) |
-| 573, 655 | já manifestada (ok) |
-| 650 | nota cancelada |
-| 596 | fora do prazo: "envie por arquivo" |
-| 280–298, 213 | desligam a ciência |
-| 578, ou relógio > 2 min do `dhResp` | não envia |
-| os demais | até 3 tentativas |
+| 128 | lê cada `retEvento` |
+| 108, 109, HTTP 5xx | todos voltam à fila sem gastar tentativa; `pausa_ate` +60 min; "fora do ar" |
+| 656 (*precaução*: a NT 2020.001 não lista para eventos) | voltam sem gastar; `pausa_ate` +65; o 2º em 24 h para (`parada_656`) |
+| falha antes de enviar (DNS, TLS, recusa) | voltam sem gastar; recuo 15, 30 e 60 min (`falhas_seguidas`) |
+| enviado sem resposta útil (tempo, queda, ilegível, teto) | voltam **gastando** tentativa (o reenvio de um registrado volta 573); `pausa_ate` +15; o 3º lote seguido assim para (`parada_configuracao`) |
+| 280–286, HTTP 403 | voltam sem gastar; param (`parada_certificado`) |
+| 214, 225, 252, 402, 404, 516, 517, 587, 588 | defeito nosso: voltam sem gastar; param (`parada_configuracao`) |
+| 999 | voltam gastando; `pausa_ate` +15 |
+| outro código ou outro HTTP 4xx | param (`parada_configuracao`), com o código na frase |
 
-**Dados:** `sefaz_manifestacoes`, só inserção, com:
-- chave, `tp_evento`, `n_seq`, `id_lote`, `dh_evento`;
-- autoria (automático, quem ligou) e impressão digital do certificado;
-- `situacao` (`enviando` → `respondida`), `c_stat`, `x_motivo`, `n_prot`, `dh_reg_evento`;
-- o XML enviado e o de retorno.
+**Evento (`retEvento/infEvento`):**
 
-Cada evento é gravado como `enviando` antes do envio. Se cair, o reenvio volta 573, que conta como ok.
+| Código | Estado do evento | Efeito |
+|---|---|---|
+| 135, 136 | `registrada` | 136 = nota ainda não vinculada no AN; o XML completo pode demorar mais |
+| 573 | `registrada` | duplicidade = o mesmo evento já existia (reenvio depois de queda); pode vir sem protocolo |
+| 655 (só ciência) | `recusada` | já existe resposta final de outro sistema ou do portal; nenhuma ciência e nenhum aviso de prazo para a nota |
+| 650, 651 | `recusada` | nota cancelada ou denegada |
+| 596 | `recusada` | fora do prazo |
+| 575 | `recusada` | a nota não é para este CNPJ |
+| 236, 496, 614–619 | `recusada` | chave inválida |
+| 577, 578, 579 | volta à fila sem gastar | relógio; `pausa_ate` +60; o 2º lote seguido com relógio para (`parada_relogio`) |
+| 250 | volta sem gastar; param (`parada_configuracao`) | `cOrgao` 91 recusado: rever (pesquisa A.1) |
+| 213, 290–296 | volta sem gastar; param (`parada_certificado`) | certificado da assinatura |
+| 252, 489, 490, 491–493, 572, 594, 595, 297, 298 | volta sem gastar; param (`parada_configuracao`) | defeito nosso (Id, esquema, assinatura, ambiente) |
+| 999 | volta gastando | até 3; depois `falhou` |
+| outro | `recusada` | "código N"; não repete |
 
-**Porta:** separada, `SefazEventosPort.manifestar(cert, ambiente, cnpjAutor, idLote, eventos)`. A distribuição não muda.
+### Montagem, assinatura e porta (`modules/sefaz/`)
 
-**Efeito:** o XML completo chega num NSU novo, num prazo que a NT não fixa, e o "Conferir" vira rotina.
+- **Endereços** [P: Relação de Serviços Web, 17/11]: produção `https://www.nfe.fazenda.gov.br/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx`; homologação
+  `https://hom1.nfe.fazenda.gov.br/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx`.
+- **SOAP 1.2 sem cabeçalho** [P: MOC 7.0 §4.2; NT 2016.002 §1.1–2.4]. O `soap12:Body` leva **direto** `<nfeDadosMsg
+  xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4">` (sem o elemento da operação que a distribuição usa); action
+  `http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4/nfeRecepcaoEvento`; resposta em `nfeResultMsg` [S: cópia pública do WSDL do SVRS,
+  `akretion/nfelib`, `nfe/wsdl/v4_0/recepcaoevento4.wsdl`, lida em 17/11; conferir no 1º teste]. O `chamarSoap12` da entrega 2 serve sem mudança.
+- **Evento** (um documento por evento, depois juntados no lote): `<evento xmlns="http://www.portalfiscal.inf.br/nfe" versao="1.00"><infEvento
+  Id="ID{tpEvento}{chave}01">` com, nesta ordem, `cOrgao` 91, `tpAmb` 1/2, `CNPJ` do destinatário, `chNFe`, `dhEvento`, `tpEvento`, `nSeqEvento` 1,
+  `verEvento` 1.00 e `detEvento versao="1.00"` com `descEvento` e, só no 210240, `xJust`. `Signature` logo depois de `</infEvento>`, dentro de `evento`.
+  Lote: `<envEvento xmlns="http://www.portalfiscal.inf.br/nfe" versao="1.00"><idLote>…</idLote>` + 1 a 20 `evento`.
+- **Padrões conferidos nos testes** [P: `leiauteEvento_v1.00.xsd` do 010d v1.03; `e210200`/`e210210`/`e210220`/`e210240_v1.00.xsd` do pacote de 2014]:
+  - `Id` `ID[0-9]{12}[0-9A-Z]{12}[0-9]{28}`; `chNFe` `[0-9]{6}[0-9A-Z]{12}[0-9]{26}`; `CNPJ` `[0-9A-Z]{12}[0-9]{2}`; `idLote` `[0-9]{1,15}`; até 20 eventos;
+  - `dhEvento` `AAAA-MM-DDThh:mm:ss-03:00` (fuso obrigatório, minutos `00`, sem `Z`); `tpEvento` `[0-9]{6}`; `nSeqEvento` `[1-9][0-9]?`;
+  - `descEvento` exatamente "Confirmacao da Operacao", "Ciencia da Operacao", "Desconhecimento da Operacao" ou "Operacao nao Realizada";
+  - `xJust` de 15 a 255 caracteres, só U+0020–U+00FF, sem espaço nas pontas (`[!-ÿ]{1}[ -ÿ]{0,}[!-ÿ]{1}`). Aspas e travessões do teclado do celular
+    viram `'`, `"` e `-`; espaços repetidos e quebras de linha viram um espaço; sobrou caractere fora da faixa = 400 com frase.
+- **Assinatura — interface FIXA** (a NFC-e usa igual), em `modules/sefaz/assinatura-xml.ts`:
+  ```ts
+  export function assinarXmlEnveloped(xml: string, idDoElemento: string, cert: CertificadoEmUso): string;
+  ```
+  - XMLDSig *enveloped* [P: MOC 7.0 §4.2.4; `xmldsig-core-schema_v1.01.xsd`, algoritmos `fixed`]: C14N `http://www.w3.org/TR/2001/REC-xml-c14n-20010315` +
+    `enveloped-signature`; `rsa-sha1` com digest `sha1`; `Reference URI="#{Id}"`; `KeyInfo/X509Data/X509Certificate` **só da folha** (DER em base64);
+    nada de `KeyValue`, `X509IssuerSerial` ou `X509SubjectName`; `Signature xmlns="http://www.w3.org/2000/09/xmldsig#"` sem prefixo, irmã do elemento.
+  - Feita com `node:crypto` (`crypto.sign('RSA-SHA1', …, cert.chavePrivada)`, a chave como `KeyObject`, nunca exportada) e o leitor de `xml-leitura.ts`.
+    C14N restrita ao que NF-e e eventos usam: um namespace padrão, sem prefixos, sem comentários nem instruções de processamento no elemento
+    (outra coisa = erro de frase fixa). O elemento leva o `xmlns` herdado do pai, como manda a C14N inclusiva.
+  - `xml-crypto` **6.4.0** (publicada em 14/10/2026), versão exata, só como devDependency e só nos testes, de oráculo nos dois sentidos. Traz
+    `@xmldom/xmldom` 0.8.x como dependência dela, só no ambiente de desenvolvimento.
+  - SHA-256: nenhum cronograma encontrado [N]; trocar = mudar as duas URIs e o nome do hash.
+- **Porta** (`modules/sefaz/eventos.port.ts`), separada; a distribuição não muda:
+  ```ts
+  export const SEFAZ_EVENTOS = Symbol('SEFAZ_EVENTOS');
+  export type TipoEvento = '210200' | '210210' | '210220' | '210240';
+  export interface RetornoEvento { chave: string | null; tpEvento: string | null; nSeq: number | null; cStat: number; xMotivo: string;
+    nProt: string | null; dhRegEvento: string | null; xml: string }
+  export interface RespostaLoteEventos { cStat: number; xMotivo: string; retornos: RetornoEvento[] } // 0–20 retornos
+  export interface SefazEventosPort {
+    /** Um `nfeRecepcaoEvento` ao AN com 1–20 eventos JÁ assinados (gravados antes). Lança SefazErro. Não decide quando enviar. */
+    enviarLote(cert: CertificadoEmUso, ambiente: AmbienteSefaz, idLote: bigint, eventosAssinados: string[]): Promise<RespostaLoteEventos>;
+  }
+  ```
+- **Confiança:** o host de produção do evento é `www`, não o `www1` da distribuição: Let's Encrypt, cadeia até **ISRG Root X1**, que troca a folha a
+  cada ~90 dias [P: crt.sh e aperto de mão do portal, pesquisa A.3]. Conferido em 17/11 no Node 20.19.4 local: `tls.rootCertificates` tem ISRG Root X1
+  (SHA-256 `96:BC:EC:06:…:08:C6`, vale até 2035) e não tem `Root YR`. Como o `ca` = raízes do Node + ICP, um teste fixa a X1 pela impressão digital; no
+  Node 22 da imagem, o 1º teste real confere de novo.
 
-**Antes de construir:** abrir as NT republicadas em 2026 e o pacote 010d (ver "Não confirmado").
+### Dados (migração `notas_sefaz_respostas`, nova; as antigas não mudam)
+
+- **`sefaz_manifestacao`** (uma linha por ambiente + CNPJ, nasce desligada): `ligada bool`, `situacao CHECK IN ('ok','parada_certificado',
+  'parada_configuracao','parada_656','parada_relogio')`, `mensagem`, `pausa_ate`, `falhas_seguidas`, `ligada_em` (base do 210200 automático), autoria
+  (`alterada_por`, `alterada_por_nome`, `alterada_em`), `criada_em`.
+- **`sefaz_distribuicao_historico.evento`** passa a aceitar também `respostas_ligadas`, `respostas_desligadas` e `respostas_paradas` (troca do CHECK).
+- **`sefaz_eventos_lotes`** (diário, só inserção mais o fechamento): `ambiente`, `cnpj`, `id_lote`, `iniciado_em`, `terminado_em`, `resultado` (os quatro
+  da consulta), `c_stat`, `x_motivo`, `eventos`, `erro_code`.
+- **`sefaz_manifestacoes`** (uma linha por evento; a situação muda, o resto não): `nota_sefaz_id`, `ambiente`, `cnpj`, `chave`, `tp_evento`,
+  `n_seq` (1–2; esta entrega só usa 1), `x_just` (só e sempre no 210240, 15–255), `origem CHECK IN ('ciencia_automatica','dar_entrada','admin')`,
+  `pedida_por`, `pedida_por_nome`, `pedida_em`, `enviar_apos`, `situacao CHECK IN ('na_fila','enviando','registrada','recusada','falhou','cancelada')`,
+  `tentativas` (0–3), `lote_id`, `dh_evento`, `c_stat` (100–9999), `x_motivo`, `n_prot` (15 ou 17 dígitos), `dh_reg_evento`, `xml_evento` (o assinado),
+  `xml_retorno`, `impressao_digital` (do certificado que assinou), `criada_em`, `atualizada_em`.
+  - Únicos parciais: (ambiente, chave, tp_evento, n_seq) fora de `cancelada`; e **uma resposta final ativa por chave**: (ambiente, chave) com `tp_evento <>
+    '210210'` e situação em `na_fila`, `enviando`, `registrada` ou `falhou`. Duas abas ou um "Dar entrada" depois de um "Não reconheço" esbarram aqui.
+  - `xml_evento` traz o certificado público da folha: fica no banco, nunca em log nem em resposta da API.
+- **`notas_sefaz.motivo_ignorar`** aceita também `compra_nao_aconteceu` (troca do CHECK).
+
+### Rotas (todas `@AdminOnly()`; a lista da loja não muda)
+
+- `GET /v1/notas-sefaz/situacao` ganha `respostas`: `{ disponivel, ligadas, situacao, mensagem, pausa_ate, ligadas_por_nome, ligadas_em, na_fila,
+  falharam, prazos_perto }` (`prazos_perto` = as notas no aviso, a que vence primeiro antes, como `canceladas_depois`).
+- `PUT /v1/notas-sefaz/respostas` `{ ligadas }` → a situação. 503 `SEFAZ_RESPOSTAS_DESLIGADAS` com a variável desligada; 422 como em "Ligar a busca".
+  Ligar zera `falhas_seguidas` e grava `ligada_em`; ligar e desligar nunca mexem em `pausa_ate` nem na fila.
+- `GET /v1/notas-sefaz` → cada linha ganha `resposta: { ciencia, final, prazo_final, prazo_perto, prazo_passou, pode_responder }`.
+- `POST /v1/notas-sefaz/:id/ignorar` ganha `avisar_sefaz?: boolean` e o motivo `compra_nao_aconteceu` (texto = justificativa). Nota e evento na mesma
+  transação. Erros: 409 `SEFAZ_RESPOSTAS_NAO_LIGADAS`, `SEFAZ_JA_RESPONDIDA`, `SEFAZ_PRAZO_PASSOU`, `SEFAZ_NAO_RESPONDIVEL`; 400 da justificativa.
+- `POST /v1/notas-sefaz/:id/reabrir` cancela o evento pedido pelo admin que ainda está na fila.
+- `POST /v1/notas-sefaz/:id/responder-de-novo` → o evento `falhou` da nota volta à fila com 0 tentativas.
+
+### Verificação da etapa 2 (detalhe no plano da entrega 3)
+
+jest sem rede: assinatura contra o `xml-crypto` (verifica a nossa; a nossa `SignatureValue` é igual à dele, byte a byte), montagem contra os padrões dos
+esquemas, leitura dos retornos (fixtures fictícias 128/135/573/108), cada linha das duas tabelas acima, planejador com relógio injetado (9 dias, 90 dias,
+80º dia, ligada depois do lançamento), fila com porta falsa (gravado `enviando` antes da porta, queda entre T1 e T2, Desfazer, duas finais), rotas e
+permissões. Smoke com `SEFAZ_MANIFESTACAO=ligada` e sem certificado: nenhuma linha de lote nem de evento além das semeadas. Browser-check com as duas
+variáveis vazias e tudo "ligado" por `page.route`.
 
 ## Verificação
 
@@ -572,6 +749,17 @@ Com o dono presente, o certificado verdadeiro e no servidor. Cada passo só com 
   - falso negativo (foto sem CNPJ ou sem número) → não confere.
 - **IA:** sugestão errada aparece sempre como "sugestão — confira". Cada nota de fornecedor novo custa uma chamada.
 - **CNPJ em Configurações agora validado.** Pode recusar um valor antigo digitado errado. É de propósito: a SEFAZ usa esse CNPJ.
+- **Etapa 2 — a ciência cria dever.** Cada ciência pede uma resposta final em 90 dias (cl. 15ª-C § 5º). Mitigação: tudo desligado até o OK do contador,
+  confirmação automática no lançamento, aviso a partir do 80º dia, e as três saídas (confirmar, não reconheço, não aconteceu).
+- **Etapa 2 — silêncio vira Confirmação** (§ 6º), inclusive de nota que a empresa não reconhece. Mitigação: "Não reconheço" na aba e o aviso do prazo.
+- **Etapa 2 — outro sistema também responde** (contador ou portal). Nosso 210200 sobre um 210220 dele vira retificação e passa a valer o nosso (vale o
+  último). Só sabemos do que nós enviamos; 655 e 573 cobrem parte. Mitigação: a pergunta ao contador antes de ligar.
+- **Etapa 2 — host do evento com Let's Encrypt** (troca de folha a cada ~90 dias; cadeia por ISRG Root X1). Mitigação: X1 fixada por teste; uma troca de
+  raiz aparece como "não consegui falar com a SEFAZ" e não gasta tentativa.
+- **Etapa 2 — assinatura escrita à mão.** Dois códigos que concordam (o nosso e o `xml-crypto`) ainda podem errar juntos o perfil da SEFAZ. Mitigação:
+  vetores do esquema nos testes e o 1º evento real em homologação, com lote de 1.
+- **Etapa 2 — SHA-1.** A SEFAZ ainda exige; nenhum cronograma de SHA-256 encontrado [N]. Mitigação: o 1º teste real confere a assinatura SHA-1 no Node 22
+  da imagem.
 
 ## Não confirmado (passo do 1º teste real ou pesquisa antes da etapa 2)
 
@@ -581,12 +769,14 @@ Com o dono presente, o certificado verdadeiro e no servidor. Cada passo só com 
 - Se o endpoint aceita SOAP 1.2, como diz o WSDL, e se exige `cUFAutor`. Passo 1.
 - Se o cancelamento sem manifestação chega como `resEvento` ou `procEventoNFe`. Tratamos os dois.
 - Que NFC-e, SAT, CT-e e NFS-e ficam fora: é inferência.
-- Para a etapa 2:
-  - o prazo entre a ciência e o NSU com a NF-e;
-  - os limites do `NFeRecepcaoEvento4`;
-  - a regra de manifestação de SP para restaurante (contador);
-  - as NT republicadas em 2026 e ainda não abertas: 2021.003 v1.50, 2023.003 v1.40, 2023.002 v1.02, 2014.001 v1.41, 2024.003 v1.10, 2022.002 v1.30a;
-  - o pacote 010d_v1.01.
+- Para a etapa 2 (pesquisa de 17/11 fechou as NT republicadas, o pacote 010d, os limites e o leiaute):
+  - o prazo entre a ciência e o NSU com a NF-e completa (nenhuma NT fixa; relatos de segundos a dias) [N];
+  - se `cOrgao` 91 é aceito sem 250 (texto da NT ambíguo) e a action/namespace exatos do WSDL do AN (cópia do SVRS) [S]: 1º teste, homologação;
+  - se o `NFeRecepcaoEvento4` devolve 656 por consumo (tratado por precaução) [N];
+  - quem emite o certificado TLS de `www.nfe.fazenda.gov.br` no dia, e se a X1 está no Node 22 da imagem: 1º teste;
+  - cronograma de SHA-256 [N];
+  - a leitura do contador sobre o § 5º ("ciência obriga resposta final"), a multa de SP por não responder, e se o contador já responde por este CNPJ;
+  - se trocar de resposta final (210220 → 210200) exige `nSeqEvento` 2 ou aceita 1 (esta entrega não retifica).
 
 ## Fontes
 
@@ -601,4 +791,8 @@ Com o dono presente, o certificado verdadeiro e no servidor. Cada passo só com 
 - WSDL da distribuição, cópias públicas (secundárias; ramo padrão `master` conferido): https://github.com/akretion/nfelib/blob/master/nfelib/nfe/wsdl/v4_0/nfedistribuicaodfe.wsdl · https://github.com/JuniorPolegato/pole/tree/master/NFe/wsdl/AN
 - Certificados TLS do AN no CT (16/11/2026): https://crt.sh/?q=www1.nfe.fazenda.gov.br · https://crt.sh/?q=hom1.nfe.fazenda.gov.br · folha mais nova de `www1`: https://crt.sh/?id=25624206118
 - Biblioteca XML (registro npm, 16/11): https://www.npmjs.com/package/@xmldom/xmldom · alertas: https://github.com/advisories?query=xmldom
+- Etapa 2: pesquisa `docs/superpowers/specs/2026-11-17-pesquisa-ciencia-e-nfce.md`, Parte A (NT 2020.001 v1.60 §3–§7; Ajuste SINIEF 07/05 cl. 15ª-C;
+  Ajustes 14/26 e 43/23; esquemas 010d v1.03 e "Evento Manifesta Destinatário v1.01", com os links) · WSDL do evento, cópia pública do SVRS (secundária):
+  https://github.com/akretion/nfelib/blob/master/nfelib/nfe/wsdl/v4_0/recepcaoevento4.wsdl · `xml-crypto` (registro npm, 17/11):
+  https://www.npmjs.com/package/xml-crypto
 - Secundárias sobre dois sistemas no mesmo CNPJ: https://focusnfe.com.br/blog/rejeicao-656/ · https://www.projetoacbr.com.br/forum/topic/79694-consumo-indevido-em-apenas-um-cliente/
