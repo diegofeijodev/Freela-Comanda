@@ -1,7 +1,7 @@
 // Regras puras da tela "Notas da SEFAZ": horas, frases, estado do painel de ativação e a tag de cada nota. Nada aqui lê relógio nem rede
 // (o relógio vem por parâmetro). Textos literais da UX (docs/superpowers/specs/2026-11-16-notas-sefaz-ux.md §3 e §4).
 import { dataHoraSp } from "./certificado";
-import type { MotivoIgnorar, NotaSefaz, SituacaoBuscaSefaz, SituacaoSefazLigada } from "./erp-api";
+import type { MotivoIgnorar, NotaSefaz, RespostaNota, SituacaoBuscaSefaz, SituacaoSefazLigada } from "./erp-api";
 import { origemPorExtenso } from "./nota-repetida";
 
 const FUSO = "America/Sao_Paulo";
@@ -112,6 +112,7 @@ export const TEXTO_MOTIVO: Record<MotivoIgnorar, string> = {
   lancada_de_outro_jeito: "Já lancei de outro jeito",
   nao_e_compra: "Não é compra",
   nao_reconheco: "Não reconheço esta nota",
+  compra_nao_aconteceu: "A compra não aconteceu (devolvi ou cancelei)",
   outro: "Outro motivo",
   cancelamento_conferido: "Marcada como vista",
 };
@@ -126,6 +127,14 @@ export type ResumoPainelSefaz = {
   caixas: { tom: "neutro" | "warn" | "bad"; texto: string; irParaCertificado?: true }[];
   linhas: string[];
 };
+
+/** Abertura do painel da busca (UX §4 com a §8): a segunda frase muda conforme as respostas à SEFAZ estejam ligadas. Sem a variável, vale a "desligadas". */
+export function aberturaBusca(respostasLigadas: boolean): string {
+  const comeco = "Traz para a Entrada de Notas as notas emitidas para a sua empresa, para você ver o que falta lançar e saber se um fornecedor cancelou uma nota. ";
+  return comeco + (respostasLigadas
+    ? "A busca só consulta. Com as respostas ligadas, a nota completa costuma chegar algumas horas depois do resumo."
+    : "A busca só consulta. O que o sistema envia à SEFAZ fica no quadro Respostas à SEFAZ, logo abaixo, e vem desligado.");
+}
 
 const FRASE_SERVIDOR_DESLIGADO = "A busca de notas na SEFAZ não está ativada neste servidor. Fale com o suporte do Freela Comanda se quiser usá-la.";
 const FRASE_60_DIAS = "Com a busca desligada por mais de 60 dias, a SEFAZ para de guardar as notas deste CNPJ para você, e as desse período não voltam.";
@@ -246,19 +255,25 @@ export function linhasHistoricoSefaz(h: SituacaoSefazLigada["historico"]): strin
 
 // ------------------------------------------------------------------------------------------------ ações de cada nota
 
-export type AcaoNota = "marcar_visto" | "voltar_lista" | "mesma_nota" | "lancar_mesmo_assim" | "conferir" | "lancar_por_arquivo" | "ignorar" | "copiar_chave";
+export type AcaoNota =
+  | "marcar_visto" | "voltar_lista" | "mesma_nota" | "lancar_mesmo_assim" | "conferir" | "lancar_por_arquivo" | "ignorar" | "nao_reconheco" | "copiar_chave";
 
-/** UX §3, coluna "Ações": o que cada situação oferece. Os componentes só desenham o que esta tabela devolve. */
-export function acoesDaNota(n: NotaSefaz): { primaria: AcaoNota | null; secundarias: AcaoNota[] } {
+/**
+ * UX §3 e §8, coluna "Ações": o que cada situação oferece. Os componentes só desenham o que esta tabela devolve. "Não reconheço…" pede a
+ * nota respondível (`resposta.pode_responder`, que não olha as respostas ligadas) E as respostas ligadas (`respostasLigadas`, do quadro):
+ * quem chama diz; sem dizer, nunca oferece.
+ */
+export function acoesDaNota(n: NotaSefaz, respostasLigadas = false): { primaria: AcaoNota | null; secundarias: AcaoNota[] } {
+  const naoReconheco: AcaoNota[] = respostasLigadas && n.resposta?.pode_responder ? ["nao_reconheco"] : [];
   switch (n.situacao) {
     case "cancelada_depois_de_lancada":
       return { primaria: "marcar_visto", secundarias: [] };
     case "ignorada":
       return { primaria: "voltar_lista", secundarias: [] };
     case "parece_lancada":
-      return { primaria: "mesma_nota", secundarias: ["lancar_mesmo_assim"] };
+      return { primaria: "mesma_nota", secundarias: ["lancar_mesmo_assim", ...naoReconheco] };
     case "falta_lancar":
-      return { primaria: n.pode_conferir ? "conferir" : "lancar_por_arquivo", secundarias: ["ignorar", "copiar_chave"] };
+      return { primaria: n.pode_conferir ? "conferir" : "lancar_por_arquivo", secundarias: ["ignorar", ...naoReconheco, "copiar_chave"] };
     default:
       return { primaria: null, secundarias: [] };
   }
@@ -272,6 +287,7 @@ export const TEXTO_ACAO: Record<AcaoNota, string> = {
   conferir: "Conferir",
   lancar_por_arquivo: "Lançar por arquivo ou foto",
   ignorar: "Ignorar…",
+  nao_reconheco: "Não reconheço…",
   copiar_chave: "Copiar chave",
 };
 
@@ -285,4 +301,196 @@ export function emissaoSp(iso: string | null): string {
 /** "Conferir"/"Lançar mesmo assim" substituem a nota da aba Lançar nota: se já há uma em conferência, o admin confirma antes de perder o que preencheu. */
 export function precisaConfirmarTroca(notaEmConferencia: unknown): boolean {
   return notaEmConferencia !== null && notaEmConferencia !== undefined;
+}
+
+// ------------------------------------------------------------------------------------------------ respostas à SEFAZ (UX §8)
+
+export const FRASE_RESPOSTAS_INDISPONIVEIS = "As respostas à SEFAZ não estão ativadas neste servidor. Fale com o suporte do Freela Comanda se quiser usá-las.";
+const FRASE_RESPOSTAS_DESLIGADAS = "Com as respostas desligadas, nada é enviado à SEFAZ. O que estava na fila espera até você ligar de novo.";
+export const ABERTURA_RESPOSTAS =
+  "Com as respostas ligadas, o Freela Comanda avisa a SEFAZ, em nome da empresa e com o certificado digital: que recebeu cada nota nova " +
+  "(assim a nota completa chega aqui para conferir); que a compra aconteceu, quando a nota é lançada; e que a empresa não reconhece uma nota, " +
+  "quando você tocar em Não reconheço.";
+
+export type ResumoRespostas = {
+  tag: { tom: TomSefaz; texto: "Ligadas" | "Desligadas" | "Paradas" | "Esperando a SEFAZ" } | null;
+  caixa: { tom: "neutro" | "warn" | "bad"; texto: string; irParaCertificado?: true } | null;
+  botao: "ligar" | "desligar" | "ligar_de_novo" | null;
+  botaoDesabilitado: boolean;
+  linhas: string[];
+};
+
+/**
+ * O quadro "Respostas à SEFAZ". A `mensagem` das respostas (espera ou parada) vem pronta do servidor e é mostrada como vem. Sem certificado
+ * ou sem CNPJ, "Ligar" fica desabilitado com as mesmas frases da busca.
+ */
+export function resumoRespostas(s: SituacaoSefazLigada, agora: Date): ResumoRespostas {
+  const r = s.respostas;
+  if (!r.disponivel) return { tag: null, caixa: { tom: "neutro", texto: FRASE_RESPOSTAS_INDISPONIVEIS }, botao: null, botaoDesabilitado: false, linhas: [] };
+
+  const parada = r.situacao.startsWith("parada_");
+  const esperando = r.ligadas && r.pausa_ate !== null && new Date(r.pausa_ate).getTime() > agora.getTime();
+  const tag: NonNullable<ResumoRespostas["tag"]> = parada
+    ? { tom: "bad", texto: "Paradas" }
+    : esperando
+      ? { tom: "warn", texto: "Esperando a SEFAZ" }
+      : r.ligadas
+        ? { tom: "ok", texto: "Ligadas" }
+        : { tom: "muted", texto: "Desligadas" };
+  const botao = r.ligadas ? "desligar" : parada ? "ligar_de_novo" : "ligar";
+  const botaoDesabilitado = !r.ligadas && (!s.certificado.ok || s.cnpj === null);
+
+  let caixa: ResumoRespostas["caixa"] = null;
+  if (parada && r.mensagem) caixa = { tom: "bad", texto: r.mensagem };
+  else if (esperando && r.mensagem) caixa = { tom: "warn", texto: r.mensagem };
+  else if (!r.ligadas && !s.certificado.ok && s.certificado.mensagem) {
+    const c = s.certificado.code;
+    const ir = c === "CERTIFICADO_NAO_CADASTRADO" || c === "CERTIFICADO_VENCIDO" || c === "CERTIFICADO_ILEGIVEL";
+    caixa = { tom: c === "CERTIFICADO_NAO_CADASTRADO" ? "neutro" : "bad", texto: s.certificado.mensagem, ...(ir ? { irParaCertificado: true as const } : {}) };
+  }
+
+  const linhas: string[] = [];
+  if (r.ligadas) {
+    if (r.ligadas_em) linhas.push(`Ligadas${r.ligadas_por_nome ? ` por ${r.ligadas_por_nome}` : ""} em ${dataHoraSp(r.ligadas_em)}`);
+    if (r.na_fila > 0) linhas.push(`${r.na_fila} ${plural(r.na_fila, "resposta", "respostas")} na fila`);
+    const p = r.prazos_perto;
+    if (p.length > 0) linhas.push(`${p.length} ${plural(p.length, "nota precisa", "notas precisam")} de resposta até ${emissaoSp(p[0]!.prazo_final)}`);
+    if (r.falharam > 0) linhas.push(`${r.falharam} ${plural(r.falharam, "resposta não foi enviada", "respostas não foram enviadas")}`);
+  } else {
+    linhas.push(FRASE_RESPOSTAS_DESLIGADAS);
+  }
+  if (s.ambiente === "homologacao") linhas.push("Modo de teste da SEFAZ: as respostas valem só para notas de mentira.");
+  return { tag, caixa, botao, botaoDesabilitado, linhas };
+}
+
+export const toastRespostasLigadas = (): string => "Respostas ligadas. As primeiras saem em até 5 minutos.";
+
+/** Dias de calendário (Brasília) de `de` até `ate`; negativo = já passou. */
+function diasAte(ate: Date, de: Date): number {
+  const [a, b] = [diaSp(ate), diaSp(de)].map((d) => Date.UTC(+d.slice(0, 4), +d.slice(5, 7) - 1, +d.slice(8, 10)));
+  return Math.round((a! - b!) / DIA_MS);
+}
+
+/**
+ * A linha do prazo no cartão da nota (UX §8). Âmbar só na nota com o aviso de chegada registrado e sem resposta final (`prazo_perto`, do 80º
+ * dia em diante); a respondível comum leva a linha neutra; passado o prazo, só quem tem o aviso registrado e nenhuma resposta ativa.
+ */
+export function linhaPrazo(r: RespostaNota, agora: Date): { tom: "neutro" | "warn" | "muted"; texto: string } | null {
+  const finalAtiva = r.final !== null && (r.final.estado === "registrada" || r.final.estado === "na_fila" || r.final.estado === "enviando");
+  if (r.prazo_passou) {
+    return r.ciencia?.estado === "registrada" && !finalAtiva
+      ? { tom: "muted", texto: "Passou o prazo: a SEFAZ considera esta compra confirmada." }
+      : null;
+  }
+  if (!r.pode_responder || !r.prazo_final) return null;
+  const ate = emissaoSp(r.prazo_final);
+  if (r.prazo_perto) {
+    const dias = diasAte(new Date(r.prazo_final), agora);
+    if (dias <= 0) return { tom: "warn", texto: "Último dia para responder à SEFAZ." };
+    return { tom: "warn", texto: `${plural(dias, "Falta", "Faltam")} ${dias} ${plural(dias, "dia", "dias")} para responder à SEFAZ (até ${ate}).` };
+  }
+  return { tom: "neutro", texto: `Responder à SEFAZ até ${ate}` };
+}
+
+const FRASE_TROCAR = "Para mudar, fale com o seu contador: a SEFAZ aceita corrigir uma vez, em até 30 dias.";
+
+/**
+ * A linha da resposta no cartão (UX §8): a resposta final, se houver; senão o aviso de chegada. A frase da recusa vem do servidor (pelo
+ * código); `tentarDeNovo` só no que falhou.
+ */
+export function linhaResposta(r: RespostaNota): { icone: "Loader2" | "CheckCircle2" | "Ban" | "CircleAlert"; texto: string; tentarDeNovo: boolean } | null {
+  const f = r.final && r.final.estado !== "cancelada" ? r.final : null;
+  const c = r.ciencia && r.ciencia.estado !== "cancelada" ? r.ciencia : null;
+  const e = f ?? c;
+  if (!e) return null;
+  const dia = ddmm(e.em);
+  const linha = (icone: "Loader2" | "CheckCircle2" | "Ban" | "CircleAlert", texto: string, tentarDeNovo = false) => ({ icone, texto, tentarDeNovo });
+  switch (e.estado) {
+    case "na_fila":
+    case "enviando":
+      return f ? linha("Loader2", "Resposta à SEFAZ na fila: sai em alguns minutos.") : linha("Loader2", "Avisando a SEFAZ que a nota chegou…");
+    case "registrada":
+      if (!f) return linha("CheckCircle2", `A SEFAZ já sabe que a nota chegou (${dia}).`);
+      if (f.tipo === "confirmacao") return linha("CheckCircle2", `Compra confirmada na SEFAZ em ${dia}.`);
+      if (f.tipo === "nao_reconheco") return linha("CheckCircle2", `Você avisou a SEFAZ que não reconhece esta nota (${dia}). ${FRASE_TROCAR}`);
+      return linha("CheckCircle2", `Você avisou a SEFAZ que a compra não aconteceu (${dia}). ${FRASE_TROCAR}`);
+    case "recusada":
+      return linha("Ban", e.mensagem ?? `A SEFAZ não aceitou a resposta${e.c_stat !== null ? ` (código ${e.c_stat})` : ""}. Fale com o seu contador.`);
+    case "falhou":
+      return linha("CircleAlert", e.mensagem ?? "Não consegui enviar a resposta à SEFAZ depois de 3 tentativas.", true);
+    default:
+      return null;
+  }
+}
+
+/** A faixa âmbar do prazo, acima das abas (UX §8). `prazos_perto` já vem com a nota que vence primeiro na frente. */
+export function faixaPrazo(p: SituacaoSefazLigada["respostas"]["prazos_perto"]): string | null {
+  if (p.length === 0) return null;
+  const primeiro = emissaoSp(p[0]!.prazo_final);
+  if (p.length === 1) {
+    return `A NF ${p[0]!.numero} de ${p[0]!.emitente_nome} precisa de uma resposta à SEFAZ até ${primeiro}. Lance a nota, toque em Não reconheço ou escolha um motivo em Ignorar.`;
+  }
+  return `${p.length} notas precisam de uma resposta à SEFAZ. A primeira vence em ${primeiro}.`;
+}
+
+export const ROTULO_AVISAR_COMPRA = "Avisar a SEFAZ que a compra aconteceu";
+const FRASE_NAO_ACEITA = "Esta nota não aceita resposta à SEFAZ.";
+const FRASE_NAO_RECONHECO_E2 = "Se você não conhece este fornecedor, fale com o seu contador. Aqui a nota só fica escondida.";
+
+/**
+ * A linha sob cada motivo do diálogo Ignorar, se a SEFAZ é avisada (`avisa`) e o rótulo do botão primário (UX §8). `podeResponder` = a nota
+ * é respondível; `respostasLigadas` = o quadro está ligado (desligadas, o diálogo é o da entrega 2).
+ */
+export function avisoDoMotivo(
+  m: MotivoIgnorar, podeResponder: boolean, respostasLigadas = true,
+): { linha: string | null; avisa: "sempre" | "opcional" | "nunca"; botao: string } {
+  const BOTAO = "Ignorar nota";
+  const sem = (linha: string | null) => ({ linha, avisa: "nunca" as const, botao: BOTAO });
+  if (m === "cancelamento_conferido") return sem(null);
+  if (!respostasLigadas) return sem(m === "nao_reconheco" ? FRASE_NAO_RECONHECO_E2 : null);
+  if (m === "outro") return sem("Nada é enviado à SEFAZ.");
+  if (!podeResponder) return sem(m === "nao_reconheco" ? `${FRASE_NAO_RECONHECO_E2} ${FRASE_NAO_ACEITA}` : FRASE_NAO_ACEITA);
+  const AVISAR = "Avisar a SEFAZ e ignorar";
+  switch (m) {
+    case "lancada_de_outro_jeito":
+      return { linha: "A SEFAZ é avisada de que a compra aconteceu, como quando você lança a nota.", avisa: "sempre", botao: BOTAO };
+    case "nao_e_compra":
+      return { linha: "Marque se a nota é verdadeira e só não vai para o estoque (por exemplo, um equipamento).", avisa: "opcional", botao: BOTAO };
+    case "nao_reconheco":
+      return {
+        linha: "A SEFAZ é avisada de que a empresa não reconhece esta nota. Use quando você não conhece o fornecedor ou não pediu nada a ele. Depois de enviado, não dá para desfazer aqui.",
+        avisa: "sempre", botao: AVISAR,
+      };
+    default:
+      return { linha: "A SEFAZ é avisada de que a compra não aconteceu, com o seu texto. Depois de enviado, não dá para desfazer aqui.", avisa: "sempre", botao: AVISAR };
+  }
+}
+
+/** O texto do "Por quê?" (UX §3 com a §8). Sem a variável no servidor, vale o das respostas desligadas. */
+export function textoPorQue(ligadas: boolean): string {
+  return ligadas
+    ? "O sistema já avisou a SEFAZ que a nota chegou. A nota completa costuma aparecer aqui algumas horas depois (a SEFAZ não fixa o prazo). " +
+      "Se tiver pressa, lance pelo XML, pelo PDF ou pela foto."
+    : "A SEFAZ entrega só o resumo da nota (fornecedor, valor e data) até a empresa avisar que a recebeu, e as respostas à SEFAZ estão desligadas. " +
+      "Por isso, para dar entrada, envie o XML, o PDF ou a foto. Se o seu contador ou o portal da SEFAZ já avisou, a nota completa pode aparecer aqui.";
+}
+
+export type Justificativa = { ok: true; texto: string } | { ok: false; erro: "curta" | "longa" | "caractere" };
+
+/**
+ * `xJust` do 210240 (15 a 255, só U+0020–U+00FF, sem espaço nas pontas). CÓPIA de `normalizarJustificativa` em
+ * `api/src/modules/sefaz/eventos-xml.ts`: mudar uma = mudar a outra (os testes das duas usam os mesmos vetores).
+ */
+export function normalizarJustificativa(t: string): Justificativa {
+  const texto = t
+    .replace(/[‘’]/g, "'")
+    .replace(/[“”]/g, '"')
+    .replace(/[–—]/g, "-")
+    .replace(/[\s\u0085]+/g, " ") // \s já pega U+2028 e U+2029; U+0085 (NEL) não
+    .trim();
+  const tamanho = Array.from(texto).length; // caracteres, não unidades UTF-16
+  if (tamanho < 15) return { ok: false, erro: "curta" };
+  if (tamanho > 255) return { ok: false, erro: "longa" };
+  if (!/^[ -ÿ]*$/.test(texto)) return { ok: false, erro: "caractere" };
+  return { ok: true, texto };
 }

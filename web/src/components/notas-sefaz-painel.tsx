@@ -14,11 +14,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { errMsg } from "@/lib/db";
 import { SITUACAO_SEFAZ_KEY, useSituacaoSefaz } from "@/hooks/use-notas-sefaz";
-import { linhasHistoricoSefaz, resumoPainel, semToqueDuplo, toastBuscaLigada } from "@/lib/notas-sefaz";
-
-const ABERTURA =
-  "Traz para a Entrada de Notas as notas emitidas para a sua empresa, para você ver o que falta lançar e saber se um fornecedor cancelou uma nota. " +
-  "Só consulta: não envia nada à SEFAZ. Hoje chega o resumo da nota (fornecedor, valor e data); o arquivo completo só chega em alguns casos.";
+import { aberturaBusca, linhasHistoricoSefaz, resumoPainel, semToqueDuplo, toastBuscaLigada } from "@/lib/notas-sefaz";
+import { NotasSefazRespostas } from "@/components/notas-sefaz-respostas";
 
 const CAIXA: Record<"neutro" | "warn" | "bad", string> = {
   neutro: "border-border bg-muted/40",
@@ -86,7 +83,7 @@ export function NotasSefazPainel() {
   return (
     <div id="notas-sefaz" className="scroll-mt-4">
       <Panel title="Notas da SEFAZ">
-        <p className="mb-3 text-sm text-muted-foreground">{ABERTURA}</p>
+        <p className="mb-3 text-sm text-muted-foreground">{aberturaBusca(ligadaInfo?.respostas.disponivel === true && ligadaInfo.respostas.ligadas)}</p>
 
         {isPending && <div className="space-y-2" aria-busy="true"><Skeleton className="h-6 w-1/2" /><Skeleton className="h-4 w-3/4" /><Skeleton className="h-4 w-2/3" /></div>}
         {isError && !data && (
@@ -158,6 +155,8 @@ export function NotasSefazPainel() {
             )}
           </div>
         )}
+
+        {data && <NotasSefazRespostas data={data} />}
       </Panel>
 
       <AlertDialog open={confirmar} onOpenChange={(o) => !ocupado && setConfirmar(o)}>

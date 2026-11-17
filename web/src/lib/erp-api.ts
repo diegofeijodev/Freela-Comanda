@@ -388,7 +388,7 @@ export const notasRepetidas = (p: { cnpj: string; numero: string; serie: string 
   get<NotaParecida[]>('/v1/notas/repetidas', { cnpj: p.cnpj, numero: p.numero, serie: p.serie ?? undefined });
 export const vinculos = (cnpj: string) => get<Vinculo[]>('/v1/vinculos', { cnpj });
 // ---------- Notas da SEFAZ (admin; etapa 1, só leitura). Tipos iguais aos da API (caixa.service.ts); datas chegam como string ISO.
-export type MotivoIgnorar = 'lancada_de_outro_jeito' | 'nao_e_compra' | 'nao_reconheco' | 'cancelamento_conferido' | 'outro';
+export type MotivoIgnorar = 'lancada_de_outro_jeito' | 'nao_e_compra' | 'nao_reconheco' | 'compra_nao_aconteceu' | 'cancelamento_conferido' | 'outro';
 export type SituacaoNotaSefaz = 'cancelada_depois_de_lancada' | 'ignorada' | 'cancelada' | 'denegada' | 'ja_lancada' | 'parece_lancada' | 'falta_lancar';
 export type SituacaoBuscaSefaz =
   | { ambiente: 'desligado' }
@@ -413,7 +413,34 @@ export type SituacaoBuscaSefaz =
       contagem: { falta_lancar: number; parece_lancada: number; cancelada_depois_de_lancada: number };
       canceladas_depois: { id: string; numero: string; serie: string; emitente_nome: string }[];
       historico: { evento: 'ligada' | 'desligada' | 'parada_automatica'; feito_por_nome: string | null; feito_em: string; c_stat: number | null }[];
+      respostas: RespostasSefaz;
     };
+/** Quadro "Respostas à SEFAZ" (entrega 3). Sem `SEFAZ_MANIFESTACAO=ligada` no servidor: `disponivel = false` e o resto vazio. */
+export type RespostasSefaz = {
+  disponivel: boolean;
+  ligadas: boolean;
+  situacao: 'ok' | 'parada_certificado' | 'parada_configuracao' | 'parada_656' | 'parada_relogio';
+  mensagem: string | null;
+  pausa_ate: string | null;
+  ligadas_por_nome: string | null;
+  ligadas_em: string | null;
+  na_fila: number;
+  falharam: number;
+  /** As notas no aviso do prazo (`prazo_perto`), a que vence primeiro antes. */
+  prazos_perto: { id: string; numero: string; serie: string; emitente_nome: string; prazo_final: string }[];
+};
+export type EstadoEventoSefaz = 'na_fila' | 'enviando' | 'registrada' | 'recusada' | 'falhou' | 'cancelada';
+/** `em` = última mudança; `mensagem` = a frase da recusa (pelo código) ou do evento que não assinou, senão null. */
+export type EstadoResposta = { estado: EstadoEventoSefaz; em: string; protocolo: string | null; c_stat: number | null; mensagem: string | null };
+/** `pode_responder` NÃO olha se as respostas estão ligadas: a tela combina com `respostas.ligadas`. */
+export type RespostaNota = {
+  ciencia: EstadoResposta | null;
+  final: (EstadoResposta & { tipo: 'confirmacao' | 'nao_reconheco' | 'nao_aconteceu'; origem: 'ciencia_automatica' | 'dar_entrada' | 'admin' }) | null;
+  prazo_final: string | null;
+  prazo_perto: boolean;
+  prazo_passou: boolean;
+  pode_responder: boolean;
+};
 export type SituacaoSefazLigada = Exclude<SituacaoBuscaSefaz, { ambiente: 'desligado' }>;
 export type NotaSefaz = {
   id: string;
@@ -433,9 +460,12 @@ export type NotaSefaz = {
   pode_conferir: boolean;
   nao_parece_compra: boolean;
   ignorada: { em: string; por_nome: string | null; motivo: MotivoIgnorar; texto: string | null } | null;
+  /** null com a variável `SEFAZ_MANIFESTACAO` desligada. */
+  resposta: RespostaNota | null;
 };
 export const situacaoSefaz = () => get<SituacaoBuscaSefaz>('/v1/notas-sefaz/situacao');
 export const configurarBuscaSefaz = (busca_ligada: boolean) => put<SituacaoBuscaSefaz>('/v1/notas-sefaz/configuracao', { busca_ligada });
+export const configurarRespostasSefaz = (ligadas: boolean) => put<SituacaoBuscaSefaz>('/v1/notas-sefaz/respostas', { ligadas });
 export const buscarSefazAgora = () => post<{ iniciada: true }>('/v1/notas-sefaz/buscar');
 export const listarNotasSefaz = (filtro: 'a_conferir' | 'todas') => get<NotaSefaz[]>('/v1/notas-sefaz', { filtro, limite: 500 });
 // `responseType: 'text'`: o corpo do erro (`{ error: { code, message } }`) também chega como TEXTO. Volta a ser objeto aqui, para o
@@ -457,8 +487,10 @@ function corpoDoErroXml(texto: string): unknown {
   }
   return { error: { message: 'Não consegui abrir o XML desta nota. Tente de novo.' } };
 }
-export const ignorarNotaSefaz = (id: string, motivo: MotivoIgnorar, texto?: string) =>
-  post<NotaSefaz>(`/v1/notas-sefaz/${id}/ignorar`, texto ? { motivo, texto } : { motivo });
+/** `avisarSefaz` pede o evento do motivo à SEFAZ (só vale com as respostas ligadas); ausente = o Ignorar da entrega 2 (nada sai). */
+export const ignorarNotaSefaz = (id: string, motivo: MotivoIgnorar, texto?: string, avisarSefaz?: boolean) =>
+  post<NotaSefaz>(`/v1/notas-sefaz/${id}/ignorar`, { motivo, ...(texto ? { texto } : {}), ...(avisarSefaz === undefined ? {} : { avisar_sefaz: avisarSefaz }) });
+export const responderDeNovoSefaz = (id: string) => post<NotaSefaz>(`/v1/notas-sefaz/${id}/responder-de-novo`);
 export const reabrirNotaSefaz = (id: string) => post<NotaSefaz>(`/v1/notas-sefaz/${id}/reabrir`);
 export const lancarNota = (n: unknown) => post<{ id: string; contas: number; a_vista: boolean; insumos_criados: number }>('/v1/notas', n);
 const enviarPdf = async <T>(url: string, f: File) => {

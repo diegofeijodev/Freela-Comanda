@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import type { NotaParecida, NotaSefaz, SituacaoBuscaSefaz, SituacaoSefazLigada } from "../erp-api";
+import type { EstadoResposta, NotaParecida, NotaSefaz, RespostaNota, SituacaoBuscaSefaz, SituacaoSefazLigada } from "../erp-api";
 import {
   acoesDaNota, contagemAba, precisaConfirmarTroca, emissaoSp, estadoBuscar, linhasHistoricoSefaz, faixaCancelamento, horaSp, linhaEspera, linhaProxima, linhaUltimaBusca, quando, resumoPainel, tagDaNota, TEXTO_MOTIVO,
-  semToqueDuplo, toastBuscaFeita, toastBuscaLigada,
+  semToqueDuplo, toastBuscaFeita, toastBuscaLigada, TEXTO_ACAO,
+  aberturaBusca, avisoDoMotivo, faixaPrazo, linhaPrazo, linhaResposta, normalizarJustificativa, resumoRespostas, textoPorQue, toastRespostasLigadas,
 } from "../notas-sefaz";
 
 const AGORA = new Date("2026-11-17T17:05:00Z"); // 14h05 em Brasília
@@ -14,6 +15,10 @@ const base: SituacaoSefazLigada = {
   ligada_por_nome: "Ana", ligada_em: "2026-11-16T17:32:00Z", outro_cnpj_ou_modo: false,
   certificado: { ok: true, code: null, mensagem: null, avisos: [] },
   contagem: { falta_lancar: 2, parece_lancada: 1, cancelada_depois_de_lancada: 0 }, canceladas_depois: [], historico: [],
+  respostas: {
+    disponivel: true, ligadas: false, situacao: "ok", mensagem: null, pausa_ate: null, ligadas_por_nome: null, ligadas_em: null,
+    na_fila: 0, falharam: 0, prazos_perto: [],
+  },
 };
 const com = (p: Partial<SituacaoSefazLigada>): SituacaoSefazLigada => ({ ...base, ...p });
 const desligada = (p: Partial<SituacaoSefazLigada> = {}) => com({ busca_ligada: false, ...p });
@@ -117,7 +122,7 @@ describe("TEXTO_MOTIVO", () => {
   it("frases da tela", () => {
     expect(TEXTO_MOTIVO).toEqual({
       lancada_de_outro_jeito: "Já lancei de outro jeito", nao_e_compra: "Não é compra", nao_reconheco: "Não reconheço esta nota",
-      outro: "Outro motivo", cancelamento_conferido: "Marcada como vista",
+      compra_nao_aconteceu: "A compra não aconteceu (devolvi ou cancelei)", outro: "Outro motivo", cancelamento_conferido: "Marcada como vista",
     });
   });
 });
@@ -211,7 +216,7 @@ describe("tagDaNota", () => {
   const parecida: NotaParecida = { id: "p", numero: "880", serie: "1", fornecedor_nome: "X", data_emissao: "2026-11-14", data_entrada: "2026-11-15", valor_total: 10, origem: "foto", created_at: "2026-11-15T12:00:00Z" };
   const nota = (p: Partial<NotaSefaz>): NotaSefaz => ({
     id: "n", chave: "1".repeat(44), emitente_cnpj: "1", emitente_nome: "ATACADÃO", numero: "4411", serie: "1", emitida_em: null, autorizada_em: null, valor_total: 1,
-    situacao_sefaz: "autorizada", cancelada_em: null, situacao: "falta_lancar", lancada: null, parecidas: [], pode_conferir: true, nao_parece_compra: false, ignorada: null, ...p,
+    situacao_sefaz: "autorizada", cancelada_em: null, situacao: "falta_lancar", lancada: null, parecidas: [], pode_conferir: true, nao_parece_compra: false, ignorada: null, resposta: null, ...p,
   });
   it("as 7 situações", () => {
     expect(tagDaNota(nota({ situacao: "cancelada_depois_de_lancada" }))).toMatchObject({ tom: "bad", icone: "CircleAlert", texto: "Cancelada pelo fornecedor depois de você lançar", detalhe: null });
@@ -249,7 +254,7 @@ describe("linhasHistoricoSefaz", () => {
 describe("acoesDaNota", () => {
   const n = (p: Partial<NotaSefaz>): NotaSefaz => ({
     id: "n", chave: "1".repeat(44), emitente_cnpj: "1", emitente_nome: "ATACADÃO", numero: "4411", serie: "1", emitida_em: null, autorizada_em: null, valor_total: 1,
-    situacao_sefaz: "autorizada", cancelada_em: null, situacao: "falta_lancar", lancada: null, parecidas: [], pode_conferir: true, nao_parece_compra: false, ignorada: null, ...p,
+    situacao_sefaz: "autorizada", cancelada_em: null, situacao: "falta_lancar", lancada: null, parecidas: [], pode_conferir: true, nao_parece_compra: false, ignorada: null, resposta: null, ...p,
   });
   it("cancelada depois de lançada: só marcar como visto", () => {
     expect(acoesDaNota(n({ situacao: "cancelada_depois_de_lancada" }))).toEqual({ primaria: "marcar_visto", secundarias: [] });
@@ -282,5 +287,290 @@ describe("precisaConfirmarTroca", () => {
     expect(precisaConfirmarTroca({ numero: "1" })).toBe(true);
     expect(precisaConfirmarTroca(null)).toBe(false);
     expect(precisaConfirmarTroca(undefined)).toBe(false);
+  });
+});
+
+// ------------------------------------------------------------------------------------------------ respostas à SEFAZ (entrega 3)
+
+const respostasCom = (p: Partial<SituacaoSefazLigada["respostas"]>): SituacaoSefazLigada =>
+  com({ respostas: { ...base.respostas, ...p } });
+
+describe("resumoRespostas", () => {
+  const r = (p: Partial<SituacaoSefazLigada["respostas"]>) => resumoRespostas(respostasCom(p), AGORA);
+  it("servidor sem a variável: sem tag, sem botão, só a frase", () => {
+    expect(r({ disponivel: false })).toEqual({
+      tag: null, botaoDesabilitado: false, botao: null, linhas: [],
+      caixa: { tom: "neutro", texto: "As respostas à SEFAZ não estão ativadas neste servidor. Fale com o suporte do Freela Comanda se quiser usá-las." },
+    });
+  });
+  it("desligadas: tag, botão e a linha fixa", () => {
+    const x = r({});
+    expect(x.tag).toEqual({ tom: "muted", texto: "Desligadas" });
+    expect(x.botao).toBe("ligar");
+    expect(x.botaoDesabilitado).toBe(false);
+    expect(x.caixa).toBeNull();
+    expect(x.linhas).toEqual(["Com as respostas desligadas, nada é enviado à SEFAZ. O que estava na fila espera até você ligar de novo."]);
+  });
+  it("desligadas sem certificado ou sem CNPJ: botão desabilitado e a frase do certificado", () => {
+    const cert = { ok: false, code: "CERTIFICADO_NAO_CADASTRADO", mensagem: "Envie o certificado digital da empresa no quadro acima para ligar a busca.", avisos: [] };
+    const x = resumoRespostas(com({ certificado: cert, respostas: base.respostas }), AGORA);
+    expect(x.botaoDesabilitado).toBe(true);
+    expect(x.caixa).toEqual({ tom: "neutro", texto: cert.mensagem, irParaCertificado: true });
+    expect(resumoRespostas(com({ cnpj: null, respostas: base.respostas }), AGORA).botaoDesabilitado).toBe(true);
+  });
+  it("ligadas: tag, botão, quem ligou e a fila", () => {
+    const x = r({ ligadas: true, ligadas_por_nome: "Diego", ligadas_em: "2026-11-17T13:05:00Z", na_fila: 3 });
+    expect(x.tag).toEqual({ tom: "ok", texto: "Ligadas" });
+    expect(x.botao).toBe("desligar");
+    expect(x.caixa).toBeNull();
+    expect(x.linhas).toEqual(["Ligadas por Diego em 17/11/2026 às 10h05", "3 respostas na fila"]);
+  });
+  it("na fila no singular, some com 0; prazo e falhas; modo de teste", () => {
+    expect(r({ ligadas: true, na_fila: 1 }).linhas).toEqual(["1 resposta na fila"]);
+    const x = resumoRespostas(com({
+      ambiente: "homologacao",
+      respostas: {
+        ...base.respostas, ligadas: true, falharam: 1,
+        prazos_perto: [
+          { id: "a", numero: "1", serie: "1", emitente_nome: "A", prazo_final: "2027-02-16T02:30:00Z" },
+          { id: "b", numero: "2", serie: "1", emitente_nome: "B", prazo_final: "2027-02-20T02:30:00Z" },
+        ],
+      },
+    }), AGORA);
+    expect(x.linhas).toEqual([
+      "2 notas precisam de resposta até 15/02/2027", "1 resposta não foi enviada", "Modo de teste da SEFAZ: as respostas valem só para notas de mentira.",
+    ]);
+    expect(r({ ligadas: true, falharam: 2 }).linhas).toEqual(["2 respostas não foram enviadas"]);
+    expect(r({ ligadas: true, prazos_perto: [{ id: "a", numero: "1", serie: "1", emitente_nome: "A", prazo_final: "2027-02-16T02:30:00Z" }] }).linhas)
+      .toEqual(["1 nota precisa de resposta até 15/02/2027"]);
+  });
+  it("pausa no futuro: Esperando a SEFAZ e caixa âmbar com a mensagem como vem", () => {
+    const m = "A SEFAZ está fora do ar. As respostas saem de novo às 15h10.";
+    const x = r({ ligadas: true, pausa_ate: "2026-11-17T18:10:00Z", mensagem: m });
+    expect(x.tag).toEqual({ tom: "warn", texto: "Esperando a SEFAZ" });
+    expect(x.caixa).toEqual({ tom: "warn", texto: m });
+    expect(x.botao).toBe("desligar");
+    // pausa que já passou: nada de espera
+    expect(r({ ligadas: true, pausa_ate: "2026-11-17T17:00:00Z", mensagem: m }).tag).toEqual({ tom: "ok", texto: "Ligadas" });
+    expect(r({ ligadas: true, pausa_ate: "2026-11-17T17:00:00Z", mensagem: m }).caixa).toBeNull();
+  });
+  it("parada: Paradas, caixa vermelha com a mensagem do servidor e ligar de novo", () => {
+    const m = "A SEFAZ recusou o certificado digital (código 280). Confira o certificado digital em Configurações e ligue as respostas de novo.";
+    const x = r({ situacao: "parada_certificado", mensagem: m });
+    expect(x.tag).toEqual({ tom: "bad", texto: "Paradas" });
+    expect(x.caixa).toEqual({ tom: "bad", texto: m });
+    expect(x.botao).toBe("ligar_de_novo");
+    expect(r({ situacao: "parada_656", mensagem: "x" }).botao).toBe("ligar_de_novo");
+  });
+  it("toast de ligar", () => {
+    expect(toastRespostasLigadas()).toBe("Respostas ligadas. As primeiras saem em até 5 minutos.");
+  });
+});
+
+describe("linhaPrazo", () => {
+  const ciencia: EstadoResposta = { estado: "registrada", em: "2026-11-17T12:00:00Z", protocolo: "1", c_stat: 135, mensagem: null };
+  const resp = (p: Partial<RespostaNota>): RespostaNota => ({
+    ciencia: null, final: null, prazo_final: "2027-02-16T02:30:00Z", prazo_perto: false, prazo_passou: false, pode_responder: true, ...p,
+  });
+  const em = (iso: string) => new Date(iso);
+  it("nota respondível sem aviso de prazo: neutra, nunca âmbar (inclusive sem ciência)", () => {
+    expect(linhaPrazo(resp({}), AGORA)).toEqual({ tom: "neutro", texto: "Responder à SEFAZ até 15/02/2027" });
+  });
+  it("prazo perto: âmbar com os dias que faltam (dia de Brasília)", () => {
+    const r = resp({ ciencia, prazo_perto: true });
+    expect(linhaPrazo(r, em("2027-02-09T15:00:00Z"))).toEqual({ tom: "warn", texto: "Faltam 6 dias para responder à SEFAZ (até 15/02/2027)." });
+    expect(linhaPrazo(r, em("2027-02-14T15:00:00Z"))).toEqual({ tom: "warn", texto: "Falta 1 dia para responder à SEFAZ (até 15/02/2027)." });
+    expect(linhaPrazo(r, em("2027-02-15T15:00:00Z"))).toEqual({ tom: "warn", texto: "Último dia para responder à SEFAZ." });
+    // 02h UTC de 16/02 ainda é 15/02 em Brasília
+    expect(linhaPrazo(r, em("2027-02-16T02:00:00Z"))).toEqual({ tom: "warn", texto: "Último dia para responder à SEFAZ." });
+  });
+  it("prazo passado, com aviso de chegada registrado e sem resposta final: muted", () => {
+    const passou = { tom: "muted", texto: "Passou o prazo: a SEFAZ considera esta compra confirmada." };
+    expect(linhaPrazo(resp({ ciencia, prazo_passou: true, pode_responder: false }), AGORA)).toEqual(passou);
+    expect(linhaPrazo(resp({ ciencia, prazo_passou: true, pode_responder: false, prazo_final: null }), AGORA)).toEqual(passou);
+    // sem aviso de chegada registrado, ou com resposta final ativa: nada
+    expect(linhaPrazo(resp({ prazo_passou: true, pode_responder: false }), AGORA)).toBeNull();
+    const final = { ...ciencia, tipo: "confirmacao" as const, origem: "dar_entrada" as const };
+    expect(linhaPrazo(resp({ ciencia, final, prazo_passou: true, pode_responder: false }), AGORA)).toBeNull();
+  });
+  it("sem pode_responder e sem prazo passado: null", () => {
+    expect(linhaPrazo(resp({ pode_responder: false }), AGORA)).toBeNull();
+  });
+});
+
+describe("linhaResposta", () => {
+  const ev = (estado: EstadoResposta["estado"], p: Partial<EstadoResposta> = {}): EstadoResposta => ({
+    estado, em: "2026-11-17T15:00:00Z", protocolo: null, c_stat: null, mensagem: null, ...p,
+  });
+  const fin = (tipo: "confirmacao" | "nao_reconheco" | "nao_aconteceu", e: EstadoResposta) => ({ ...e, tipo, origem: "admin" as const });
+  const resp = (p: Partial<RespostaNota>): RespostaNota => ({ ciencia: null, final: null, prazo_final: null, prazo_perto: false, prazo_passou: false, pode_responder: false, ...p });
+  const trocar = "Para mudar, fale com o seu contador: a SEFAZ aceita corrigir uma vez, em até 30 dias.";
+
+  it("sem evento: null", () => {
+    expect(linhaResposta(resp({}))).toBeNull();
+  });
+  it("aviso de chegada", () => {
+    for (const e of ["na_fila", "enviando"] as const) {
+      expect(linhaResposta(resp({ ciencia: ev(e) }))).toEqual({ icone: "Loader2", texto: "Avisando a SEFAZ que a nota chegou…", tentarDeNovo: false });
+    }
+    expect(linhaResposta(resp({ ciencia: ev("registrada") }))).toEqual({ icone: "CheckCircle2", texto: "A SEFAZ já sabe que a nota chegou (17/11).", tentarDeNovo: false });
+  });
+  it("resposta final na fila e registrada (as três)", () => {
+    expect(linhaResposta(resp({ ciencia: ev("registrada"), final: fin("confirmacao", ev("na_fila")) })))
+      .toEqual({ icone: "Loader2", texto: "Resposta à SEFAZ na fila: sai em alguns minutos.", tentarDeNovo: false });
+    expect(linhaResposta(resp({ final: fin("confirmacao", ev("enviando")) }))?.icone).toBe("Loader2");
+    expect(linhaResposta(resp({ final: fin("confirmacao", ev("registrada")) })))
+      .toEqual({ icone: "CheckCircle2", texto: "Compra confirmada na SEFAZ em 17/11.", tentarDeNovo: false });
+    expect(linhaResposta(resp({ final: fin("nao_reconheco", ev("registrada")) })))
+      .toEqual({ icone: "CheckCircle2", texto: `Você avisou a SEFAZ que não reconhece esta nota (17/11). ${trocar}`, tentarDeNovo: false });
+    expect(linhaResposta(resp({ final: fin("nao_aconteceu", ev("registrada")) })))
+      .toEqual({ icone: "CheckCircle2", texto: `Você avisou a SEFAZ que a compra não aconteceu (17/11). ${trocar}`, tentarDeNovo: false });
+  });
+  it("recusada: a frase do servidor como vem; sem frase, a do código", () => {
+    const frases = [
+      "A SEFAZ não aceitou a resposta: a nota foi cancelada ou recusada.",
+      "A SEFAZ não aceitou a resposta: passou o prazo.",
+      "Esta nota já tinha resposta à SEFAZ, dada por outro sistema ou pelo portal.",
+      "A SEFAZ não aceitou a resposta: a nota não é para o CNPJ da empresa.",
+      "A SEFAZ não aceitou a resposta: a chave de acesso não confere.",
+      "A SEFAZ não aceitou a resposta (código 999). Fale com o seu contador.",
+    ];
+    for (const mensagem of frases) {
+      expect(linhaResposta(resp({ final: fin("confirmacao", ev("recusada", { c_stat: 650, mensagem })) }))).toEqual({ icone: "Ban", texto: mensagem, tentarDeNovo: false });
+    }
+    expect(linhaResposta(resp({ final: fin("confirmacao", ev("recusada", { c_stat: 493 })) }))?.texto)
+      .toBe("A SEFAZ não aceitou a resposta (código 493). Fale com o seu contador.");
+    // recusa do aviso de chegada (655: já respondida por outro) quando não há resposta final
+    expect(linhaResposta(resp({ ciencia: ev("recusada", { c_stat: 655, mensagem: frases[2]! }) }))?.texto).toBe(frases[2]);
+  });
+  it("falhou: Tentar de novo (só aqui)", () => {
+    expect(linhaResposta(resp({ final: fin("confirmacao", ev("falhou")) })))
+      .toEqual({ icone: "CircleAlert", texto: "Não consegui enviar a resposta à SEFAZ depois de 3 tentativas.", tentarDeNovo: true });
+    expect(linhaResposta(resp({ ciencia: ev("falhou") }))?.tentarDeNovo).toBe(true);
+    // evento que não assinou: a frase do servidor
+    expect(linhaResposta(resp({ final: fin("confirmacao", ev("falhou", { mensagem: "Não consegui assinar." })) }))).toEqual({ icone: "CircleAlert", texto: "Não consegui assinar.", tentarDeNovo: true });
+    for (const e of ["na_fila", "registrada", "recusada"] as const) {
+      expect(linhaResposta(resp({ final: fin("confirmacao", ev(e)) }))?.tentarDeNovo).toBe(false);
+    }
+  });
+  it("evento cancelado não aparece", () => {
+    expect(linhaResposta(resp({ ciencia: ev("cancelada") }))).toBeNull();
+  });
+});
+
+describe("faixaPrazo", () => {
+  const n = (numero: string, nome: string, prazo_final: string) => ({ id: numero, numero, serie: "1", emitente_nome: nome, prazo_final });
+  it("0, 1 e várias", () => {
+    expect(faixaPrazo([])).toBeNull();
+    expect(faixaPrazo([n("4411", "ATACADÃO S.A.", "2027-02-16T02:30:00Z")])).toBe(
+      "A NF 4411 de ATACADÃO S.A. precisa de uma resposta à SEFAZ até 15/02/2027. Lance a nota, toque em Não reconheço ou escolha um motivo em Ignorar.",
+    );
+    expect(faixaPrazo([n("1", "A", "2027-02-16T02:30:00Z"), n("2", "B", "2027-02-20T12:00:00Z"), n("3", "C", "2027-03-01T12:00:00Z")])).toBe(
+      "3 notas precisam de uma resposta à SEFAZ. A primeira vence em 15/02/2027.",
+    );
+  });
+});
+
+describe("avisoDoMotivo", () => {
+  const BOTAO = "Ignorar nota";
+  const AVISAR = "Avisar a SEFAZ e ignorar";
+  it("com resposta possível: os cinco motivos", () => {
+    expect(avisoDoMotivo("lancada_de_outro_jeito", true)).toEqual({ linha: "A SEFAZ é avisada de que a compra aconteceu, como quando você lança a nota.", avisa: "sempre", botao: BOTAO });
+    expect(avisoDoMotivo("nao_e_compra", true)).toEqual({
+      linha: "Marque se a nota é verdadeira e só não vai para o estoque (por exemplo, um equipamento).", avisa: "opcional", botao: BOTAO,
+    });
+    expect(avisoDoMotivo("nao_reconheco", true)).toEqual({
+      linha: "A SEFAZ é avisada de que a empresa não reconhece esta nota. Use quando você não conhece o fornecedor ou não pediu nada a ele. Depois de enviado, não dá para desfazer aqui.",
+      avisa: "sempre", botao: AVISAR,
+    });
+    expect(avisoDoMotivo("compra_nao_aconteceu", true)).toEqual({
+      linha: "A SEFAZ é avisada de que a compra não aconteceu, com o seu texto. Depois de enviado, não dá para desfazer aqui.", avisa: "sempre", botao: AVISAR,
+    });
+    expect(avisoDoMotivo("outro", true)).toEqual({ linha: "Nada é enviado à SEFAZ.", avisa: "nunca", botao: BOTAO });
+    expect(avisoDoMotivo("cancelamento_conferido", true)).toEqual({ linha: null, avisa: "nunca", botao: BOTAO });
+  });
+  it("nota que não aceita resposta (respostas ligadas): nunca avisa e diz por quê", () => {
+    const nao = "Esta nota não aceita resposta à SEFAZ.";
+    expect(avisoDoMotivo("lancada_de_outro_jeito", false)).toEqual({ linha: nao, avisa: "nunca", botao: BOTAO });
+    expect(avisoDoMotivo("nao_e_compra", false)).toEqual({ linha: nao, avisa: "nunca", botao: BOTAO });
+    expect(avisoDoMotivo("nao_reconheco", false)).toEqual({
+      linha: `Se você não conhece este fornecedor, fale com o seu contador. Aqui a nota só fica escondida. ${nao}`, avisa: "nunca", botao: BOTAO,
+    });
+    expect(avisoDoMotivo("compra_nao_aconteceu", false)).toEqual({ linha: nao, avisa: "nunca", botao: BOTAO });
+    expect(avisoDoMotivo("outro", false)).toEqual({ linha: "Nada é enviado à SEFAZ.", avisa: "nunca", botao: BOTAO });
+  });
+  it("respostas desligadas: o diálogo da entrega 2", () => {
+    expect(avisoDoMotivo("nao_reconheco", true, false)).toEqual({
+      linha: "Se você não conhece este fornecedor, fale com o seu contador. Aqui a nota só fica escondida.", avisa: "nunca", botao: BOTAO,
+    });
+    expect(avisoDoMotivo("lancada_de_outro_jeito", true, false)).toEqual({ linha: null, avisa: "nunca", botao: BOTAO });
+    expect(avisoDoMotivo("outro", true, false)).toEqual({ linha: null, avisa: "nunca", botao: BOTAO });
+  });
+});
+
+describe("textos que dependem de as respostas estarem ligadas", () => {
+  it("textoPorQue", () => {
+    expect(textoPorQue(false)).toBe(
+      "A SEFAZ entrega só o resumo da nota (fornecedor, valor e data) até a empresa avisar que a recebeu, e as respostas à SEFAZ estão desligadas. " +
+      "Por isso, para dar entrada, envie o XML, o PDF ou a foto. Se o seu contador ou o portal da SEFAZ já avisou, a nota completa pode aparecer aqui.",
+    );
+    expect(textoPorQue(true)).toBe(
+      "O sistema já avisou a SEFAZ que a nota chegou. A nota completa costuma aparecer aqui algumas horas depois (a SEFAZ não fixa o prazo). " +
+      "Se tiver pressa, lance pelo XML, pelo PDF ou pela foto.",
+    );
+  });
+  it("aberturaBusca", () => {
+    const comeco = "Traz para a Entrada de Notas as notas emitidas para a sua empresa, para você ver o que falta lançar e saber se um fornecedor cancelou uma nota. ";
+    expect(aberturaBusca(false)).toBe(`${comeco}A busca só consulta. O que o sistema envia à SEFAZ fica no quadro Respostas à SEFAZ, logo abaixo, e vem desligado.`);
+    expect(aberturaBusca(true)).toBe(`${comeco}A busca só consulta. Com as respostas ligadas, a nota completa costuma chegar algumas horas depois do resumo.`);
+  });
+});
+
+describe("normalizarJustificativa (cópia da API: os mesmos vetores de api/src/modules/sefaz/__tests__/eventos-xml.spec.ts)", () => {
+  it.each<[string, string]>([
+    ["Mercadoria devolvida — “recusada” na porta’", "Mercadoria devolvida - \"recusada\" na porta'"],
+    ["  pedido\ncancelado pelo fornecedor  ", "pedido cancelado pelo fornecedor"],
+    ["Pedido cancelad", "Pedido cancelad"],
+    ["‘Devolvido’ – \t\r\n inteiro", "'Devolvido' - inteiro"],
+    ["a".repeat(255), "a".repeat(255)],
+  ])("ok: %j", (entrada, texto) => {
+    expect(normalizarJustificativa(entrada)).toEqual({ ok: true, texto });
+  });
+  it.each<[string, "curta" | "longa" | "caractere"]>([
+    ["Pedido cancela", "curta"],
+    ["   Pedido   cancela   ", "curta"],
+    ["", "curta"],
+    ["a".repeat(256), "longa"],
+    ["Devolvido 🍅 inteiro", "caractere"],
+    ["Devolvido \u0001 inteiro", "caractere"],
+    ["Devolvido Ā inteiro", "caractere"],
+  ])("recusa %j: %s", (entrada, erro) => {
+    expect(normalizarJustificativa(entrada)).toEqual({ ok: false, erro });
+  });
+  it("U+0085, U+2028 e U+2029 viram um espaço", () => {
+    for (const c of [0x85, 0x2028, 0x2029]) {
+      expect(normalizarJustificativa(`Mercadoria${String.fromCharCode(c)}devolvida`)).toEqual({ ok: true, texto: "Mercadoria devolvida" });
+    }
+    expect(normalizarJustificativa(`Mercadoria \u0085 \u2028devolvida`)).toEqual({ ok: true, texto: "Mercadoria devolvida" });
+  });
+});
+
+describe("acoesDaNota com resposta à SEFAZ", () => {
+  const resposta = (pode_responder: boolean): RespostaNota => ({ ciencia: null, final: null, prazo_final: null, prazo_perto: false, prazo_passou: false, pode_responder });
+  const n = (p: Partial<NotaSefaz>): NotaSefaz => ({
+    id: "n", chave: "1".repeat(44), emitente_cnpj: "1", emitente_nome: "A", numero: "1", serie: "1", emitida_em: null, autorizada_em: null, valor_total: 1,
+    situacao_sefaz: "autorizada", cancelada_em: null, situacao: "falta_lancar", lancada: null, parecidas: [], pode_conferir: true, nao_parece_compra: false, ignorada: null,
+    resposta: null, ...p,
+  });
+  it("Não reconheço só com pode_responder E as respostas ligadas, em falta lançar e parece lançada", () => {
+    expect(acoesDaNota(n({ resposta: resposta(true) }), true)).toEqual({ primaria: "conferir", secundarias: ["ignorar", "nao_reconheco", "copiar_chave"] });
+    expect(acoesDaNota(n({ situacao: "parece_lancada", resposta: resposta(true) }), true))
+      .toEqual({ primaria: "mesma_nota", secundarias: ["lancar_mesmo_assim", "nao_reconheco"] });
+    expect(acoesDaNota(n({ resposta: resposta(false) }), true).secundarias).toEqual(["ignorar", "copiar_chave"]);
+    expect(acoesDaNota(n({ resposta: null }), true).secundarias).toEqual(["ignorar", "copiar_chave"]);
+    expect(acoesDaNota(n({ resposta: resposta(true) }), false).secundarias).toEqual(["ignorar", "copiar_chave"]);
+    expect(acoesDaNota(n({ resposta: resposta(true) })).secundarias).toEqual(["ignorar", "copiar_chave"]); // sem dizer que estão ligadas: nunca oferece
+    expect(acoesDaNota(n({ situacao: "ja_lancada", resposta: resposta(true) }), true)).toEqual({ primaria: null, secundarias: [] });
+    expect(TEXTO_ACAO.nao_reconheco).toBe("Não reconheço…");
   });
 });
