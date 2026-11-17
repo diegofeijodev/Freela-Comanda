@@ -26,6 +26,7 @@ import {
   type CertificadoEmUso,
 } from '../certificado-digital/certificado-digital.port';
 import { SEFAZ_DFE, SefazErro, type AmbienteSefaz, type RespostaDistribuicao, type SefazDfePort } from '../sefaz/distribuicao.port';
+import type { CodigoFault, PassoLeitura } from '../sefaz/sefaz-erro';
 import { XmlInvalido } from '../sefaz/xml-leitura';
 import {
   condicoes,
@@ -80,6 +81,15 @@ const TX2 = { maxWait: 10_000, timeout: 30_000 };
 const tentarTrava = (tx: Prisma.TransactionClient) =>
   tx.$queryRaw<{ ok: boolean }[]>`SELECT pg_try_advisory_xact_lock(${CHAVE_TRAVA_SEFAZ}::bigint) AS ok`;
 export const esperarTrava = (tx: Prisma.TransactionClient) => tx.$executeRaw`SELECT pg_advisory_xact_lock(${CHAVE_TRAVA_SEFAZ}::bigint)`;
+
+/**
+ * `x_motivo` de uma consulta sem retorno legível: o status HTTP, o passo em que a leitura parou e o código do SOAP Fault, só rótulos
+ * de listas fechadas (ex.: "HTTP 500 · passo http · Fault VersionMismatch"); nunca o corpo da resposta. Nada disso = null.
+ */
+export function motivoDoErro(httpStatus?: number, passo?: PassoLeitura, fault?: CodigoFault): string | null {
+  const partes = [httpStatus !== undefined ? `HTTP ${httpStatus}` : null, passo ? `passo ${passo}` : null, fault ? `Fault ${fault}` : null];
+  return partes.filter((x) => x !== null).join(' · ') || null;
+}
 
 /** Classe e `code` do erro, nunca a mensagem (pode trazer texto de biblioteca, SQL ou dado). */
 export function descreverErro(e: unknown): string {
@@ -332,10 +342,14 @@ export class CicloSefazService {
     let resp: RespostaDistribuicao | null = null;
     let erro: Extract<Chamada, { tipo: 'erro' }> | null = null;
     let causa: string | null = null; // só o `code` do Node, só para o log (nem banco nem agenda)
+    let diagnostico: { passo?: PassoLeitura; fault?: CodigoFault } = {}; // rótulos fechados: banco (x_motivo) e log, nunca a agenda
     try {
       resp = await this.sefaz.distribuirPorNsu(p.cert, p.ambiente, p.cnpj, r.contexto.ultNsuNosso);
     } catch (e) {
-      if (e instanceof SefazErro) causa = e.causa ?? null;
+      if (e instanceof SefazErro) {
+        causa = e.causa ?? null;
+        diagnostico = { passo: e.passo, fault: e.fault };
+      }
       erro =
         e instanceof SefazErro
           ? { tipo: 'erro', code: e.code, enviado: e.enviado, httpStatus: e.httpStatus }
@@ -373,7 +387,7 @@ export class CicloSefazService {
           terminada_em: agora,
           resultado: acao.resultado,
           c_stat: resp?.cStat ?? null,
-          x_motivo: resp ? resp.xMotivo.slice(0, 255) : erro?.httpStatus !== undefined ? `HTTP ${erro.httpStatus}` : null,
+          x_motivo: resp ? resp.xMotivo.slice(0, 255) : motivoDoErro(erro?.httpStatus, diagnostico.passo, diagnostico.fault),
           dh_resp: resp ? resp.dhResp.slice(0, 40) : null,
           ult_nsu: resp?.ultNsu ?? null,
           max_nsu: resp?.maxNsu ?? null,
@@ -436,6 +450,8 @@ export class CicloSefazService {
         erro_code: erro?.code ?? null,
         http_status: erro?.httpStatus ?? null,
         causa,
+        passo: diagnostico.passo ?? null,
+        fault: diagnostico.fault ?? null,
         documentos: resp?.documentos.length ?? 0,
         ult_nsu: resp?.ultNsu?.toString() ?? null,
         max_nsu: resp?.maxNsu?.toString() ?? null,

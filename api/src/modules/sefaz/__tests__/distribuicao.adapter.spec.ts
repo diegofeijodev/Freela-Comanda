@@ -14,7 +14,7 @@ import {
 import { SefazErro } from '../distribuicao.port';
 import { sefazErro } from '../sefaz-erro';
 import type { ChamadaSoap12 } from '../transporte-soap12';
-import { docZip, retornoSoap } from './retorno-falso';
+import { docZip, faultSoap12, retornoSoap, SENTINELA_FAULT } from './retorno-falso';
 
 const fx = (n: string): string => readFileSync(join(__dirname, 'fixtures', n), 'utf8');
 const INVALIDO = { code: 'SEFAZ_RESPOSTA_INVALIDA', enviado: true };
@@ -122,16 +122,24 @@ describe('lerRetornoDistribuicao', () => {
     );
     expect(lerRetornoDistribuicao(corpo).documentos).toEqual([{ nsu: 1n, schema: 'resNFe_v1.01.xsd', xml: null, bruto: b64 }]);
   });
-  it('resposta inválida vira SEFAZ_RESPOSTA_INVALIDA já enviada', () => {
+  it('resposta inválida vira SEFAZ_RESPOSTA_INVALIDA já enviada, com o passo em que a leitura parou', () => {
     const docs = Array.from({ length: 51 }, (_, i) => ({ nsu: BigInt(i + 1), schema: 's', conteudo: '<a/>' }));
-    const ruins = [
-      '<soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope"><soap12:Body/></soap12:Envelope>',
-      '<!DOCTYPE x [<!ENTITY a "b">]>' + fx('ret-137.xml'),
-      retornoSoap({ cStat: 138 }).replace('<cStat>138</cStat>', '<cStat>abc</cStat>'),
-      retornoSoap({ cStat: 138, ultNsu: 51n, maxNsu: 51n, docs }),
-      'não é xml',
+    const ruins: [string, string][] = [
+      ['soap', '<soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope"><soap12:Body/></soap12:Envelope>'],
+      ['xml', '<!DOCTYPE x [<!ENTITY a "b">]>' + fx('ret-137.xml')],
+      ['cStat', retornoSoap({ cStat: 138 }).replace('<cStat>138</cStat>', '<cStat>abc</cStat>')],
+      ['docZip', retornoSoap({ cStat: 138, ultNsu: 51n, maxNsu: 51n, docs })],
+      [
+        'docZip',
+        retornoSoap({ cStat: 138, ultNsu: 1n, maxNsu: 1n, docs: [{ nsu: 1n, schema: 's', conteudo: '<a/>' }] }).replace(
+          /NSU="0+1"/,
+          'NSU="x"',
+        ),
+      ],
+      ['nsu', retornoSoap({ cStat: 137, ultNsu: 1n, maxNsu: 1n }).replace('<maxNSU>000000000000001</maxNSU>', '<maxNSU>1e3</maxNSU>')],
+      ['xml', 'não é xml'],
     ];
-    for (const corpo of ruins) {
+    for (const [passo, corpo] of ruins) {
       let erro: unknown;
       try {
         lerRetornoDistribuicao(corpo);
@@ -139,8 +147,20 @@ describe('lerRetornoDistribuicao', () => {
         erro = e;
       }
       expect(erro).toBeInstanceOf(SefazErro);
-      expect(erro).toMatchObject(INVALIDO);
+      expect(erro).toMatchObject({ ...INVALIDO, passo });
+      expect((erro as SefazErro).fault).toBeUndefined();
     }
+  });
+  it('HTTP 200 com SOAP Fault no lugar do retorno: passo soap e o código do Fault, sem o texto dele', () => {
+    let erro: unknown;
+    try {
+      lerRetornoDistribuicao(faultSoap12('soap:Sender'));
+    } catch (e) {
+      erro = e;
+    }
+    expect(erro).toMatchObject({ ...INVALIDO, passo: 'soap', fault: 'Sender' });
+    expect(JSON.stringify(erro)).not.toContain(SENTINELA_FAULT);
+    expect((erro as Error).message).toBe('A resposta da SEFAZ não pôde ser lida.');
   });
   it('50 docZip passa', () => {
     const docs = Array.from({ length: 50 }, (_, i) => ({ nsu: BigInt(i + 1), schema: 's', conteudo: '<a/>' }));

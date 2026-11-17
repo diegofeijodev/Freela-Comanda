@@ -11,7 +11,8 @@ import { inspect } from 'node:util';
 import tlsDoNode = require('node:tls');
 import type { CertificadoEmUso } from '../../certificado-digital/certificado-digital.port';
 import { SefazErro } from '../sefaz-erro';
-import { chamarSoap12, envelopeSoap12, type ChamadaSoap12 } from '../transporte-soap12';
+import { chamarSoap12, envelopeSoap12, faultDoCorpo, TETO_CORPO_ERRO_BYTES, type ChamadaSoap12 } from '../transporte-soap12';
+import { faultSoap11, faultSoap12, SENTINELA_FAULT } from './retorno-falso';
 
 // Só servidor HTTPS LOCAL (127.0.0.1, porta aleatória) com certificados fictícios de fixtures/tls
 // (api/scripts/gerar-certificados-teste.sh --tls). Nenhum teste fala com a SEFAZ nem com a rede de fora.
@@ -83,6 +84,40 @@ describe('envelopeSoap12', () => {
         'xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap12="http://www.w3.org/2003/05/soap-envelope">' +
         '<soap12:Body><a/></soap12:Body></soap12:Envelope>',
     );
+  });
+});
+
+describe('faultDoCorpo (só o código do SOAP Fault, de uma lista fechada)', () => {
+  it.each([
+    ['1.2 VersionMismatch', faultSoap12('soap:VersionMismatch'), 'VersionMismatch'],
+    [
+      '1.2 Sender (o Value do Subcode fica de fora)',
+      faultSoap12('soap:Sender', '<soap:Subcode><soap:Value>soap:Receiver</soap:Value></soap:Subcode>'),
+      'Sender',
+    ],
+    ['1.2 Receiver sem prefixo', faultSoap12('Receiver'), 'Receiver'],
+    ['1.2 MustUnderstand', faultSoap12('soap:MustUnderstand'), 'MustUnderstand'],
+    ['1.2 DataEncodingUnknown', faultSoap12('soap:DataEncodingUnknown'), 'DataEncodingUnknown'],
+    ['1.2 código fora da lista', faultSoap12('soap:Qualquer'), 'outro'],
+    ['1.2 Code sem Value', faultSoap12('').replace('<soap:Value></soap:Value>', ''), 'outro'],
+    ['1.1 VersionMismatch pelo faultcode', faultSoap11('soap:VersionMismatch'), 'VersionMismatch'],
+    ['1.1 Client (nome do 1.1, fora da lista)', faultSoap11('soap:Client'), 'outro'],
+  ])('%s', (_nome, corpo, esperado) => {
+    expect(faultDoCorpo(corpo)).toBe(esperado);
+  });
+
+  it.each([
+    ['vazio', ''],
+    ['HTML', '<html><body>500 Internal Server Error</body></html>'],
+    ['texto', 'Service Unavailable'],
+    ['XML sem Fault', '<a><b/></a>'],
+    ['DOCTYPE', '<!DOCTYPE x [<!ENTITY a "b">]>' + faultSoap12('soap:Sender')],
+    [
+      'acima do teto de 8 KB',
+      faultSoap12('soap:Sender').replace('</soap:Envelope>', `<!--${'x'.repeat(TETO_CORPO_ERRO_BYTES)}--></soap:Envelope>`),
+    ],
+  ])('sem Fault legível (%s) = null', (_nome, corpo) => {
+    expect(faultDoCorpo(corpo)).toBeNull();
   });
 });
 
@@ -190,9 +225,53 @@ describe('chamarSoap12 (servidor HTTPS local)', () => {
     });
 
     const e = await falha(chamarSoap12(chamada(url)));
-    expect(e).toMatchObject({ code: 'SEFAZ_HTTP', enviado: true, httpStatus: 500 });
+    expect(e).toMatchObject({ code: 'SEFAZ_HTTP', enviado: true, httpStatus: 500, passo: 'http' });
+    expect(e.fault).toBeUndefined(); // não é um Fault legível
     expect(e.message).not.toContain('SEGREDO-DO-CORPO');
     expect(inspect(e)).not.toContain('SEGREDO-DO-CORPO');
+  });
+
+  it('HTTP 500 com SOAP Fault VersionMismatch: SEFAZ_HTTP com o status, o passo http e o código do Fault, nunca o texto dele', async () => {
+    const url = await subir((req, res) => {
+      req.resume();
+      req.on('end', () =>
+        res.writeHead(500, { 'Content-Type': 'application/soap+xml; charset=utf-8' }).end(faultSoap12('soap:VersionMismatch')),
+      );
+    });
+
+    const e = await falha(chamarSoap12(chamada(url)));
+    expect(e).toMatchObject({ code: 'SEFAZ_HTTP', enviado: true, httpStatus: 500, passo: 'http', fault: 'VersionMismatch' });
+    expect(e.message).toBe('A SEFAZ respondeu com um erro HTTP.');
+    expect(inspect(e)).not.toContain(SENTINELA_FAULT);
+  });
+
+  it('status ≠ 200 continua SEFAZ_HTTP com o status mesmo se o corpo cai no meio, não acaba no prazo ou passa de 8 KB', async () => {
+    const casos: { status: number; responder: (res: ServerResponse) => void; tempoLimiteMs?: number }[] = [
+      {
+        status: 503,
+        responder: (res) => (
+          res.writeHead(503, { 'Content-Length': '500' }).write('<soap:Env'),
+          setTimeout(() => res.socket?.destroy(), 20)
+        ),
+      },
+      { status: 500, responder: (res) => res.writeHead(500).write('<soap:Env'), tempoLimiteMs: 300 }, // nunca termina
+      { status: 502, responder: (res) => res.writeHead(502).end('a'.repeat(TETO_CORPO_ERRO_BYTES * 3)) },
+    ];
+    for (const caso of casos) {
+      const url = await subir((req, res) => {
+        req.resume();
+        req.on('end', () => caso.responder(res));
+      });
+      const inicio = Date.now();
+      const e = await falha(chamarSoap12(chamada(url, caso.tempoLimiteMs ? { tempoLimiteMs: caso.tempoLimiteMs } : {})));
+      expect(e).toMatchObject({ code: 'SEFAZ_HTTP', enviado: true, httpStatus: caso.status, passo: 'http' });
+      expect(e.fault).toBeUndefined();
+      expect(Date.now() - inicio).toBeLessThan(3_000);
+      const s = servidor!;
+      servidor = undefined;
+      s.closeAllConnections();
+      await new Promise<void>((ok) => s.close(() => ok()));
+    }
   });
 
   it('teto: resposta maior que o teto vira SEFAZ_RESPOSTA_INVALIDA com envio', async () => {
@@ -202,7 +281,7 @@ describe('chamarSoap12 (servidor HTTPS local)', () => {
     });
 
     const e = await falha(chamarSoap12(chamada(url, { tetoRespostaBytes: 1024 })));
-    expect(e).toMatchObject({ code: 'SEFAZ_RESPOSTA_INVALIDA', enviado: true });
+    expect(e).toMatchObject({ code: 'SEFAZ_RESPOSTA_INVALIDA', enviado: true, passo: 'tamanho' });
   });
 });
 

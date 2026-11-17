@@ -9,8 +9,8 @@ import {
   type RespostaDistribuicao,
   type SefazDfePort,
 } from './distribuicao.port';
-import { sefazErro } from './sefaz-erro';
-import { CHAMAR_SOAP12, TEMPO_LIMITE_MS, TETO_RESPOSTA_BYTES, type ChamarSoap12 } from './transporte-soap12';
+import { sefazErro, type CodigoFault, type PassoLeitura } from './sefaz-erro';
+import { CHAMAR_SOAP12, faultDe, TEMPO_LIMITE_MS, TETO_RESPOSTA_BYTES, type ChamarSoap12 } from './transporte-soap12';
 import { descompactarDocZip, elementos, lerXml, primeiro, texto, XmlInvalido, type NoXml } from './xml-leitura';
 
 export { SEFAZ_DFE };
@@ -54,17 +54,28 @@ function nsuOuNulo(v: string | null): bigint | null {
   return BigInt(v);
 }
 
-/** Lê o corpo HTTP (envelope SOAP) e devolve a resposta; qualquer defeito vira SEFAZ_RESPOSTA_INVALIDA (já enviado). */
+/**
+ * Lê o corpo HTTP (envelope SOAP) e devolve a resposta; qualquer defeito vira SEFAZ_RESPOSTA_INVALIDA (já enviado), com o passo em que
+ * a leitura parou e, se o envelope trouxer um SOAP Fault no lugar do retorno, o código dele (só os rótulos, nunca o texto).
+ */
 export function lerRetornoDistribuicao(
   corpoHttp: string,
   tetoDescompactado: number = TETO_DESCOMPACTADO_RESPOSTA_BYTES,
 ): RespostaDistribuicao {
+  let passo: PassoLeitura = 'xml';
+  let fault: CodigoFault | null = null;
   try {
     const doc = lerXml(corpoHttp);
+    passo = 'soap';
     const ret = primeiro(doc, 'retDistDFeInt');
-    if (!ret) throw new XmlInvalido();
+    if (!ret) {
+      fault = faultDe(doc);
+      throw new XmlInvalido();
+    }
+    passo = 'cStat';
     const cStatTxt = textoLimpo(ret, 'cStat');
     if (cStatTxt === null || !/^[0-9]{1,5}$/.test(cStatTxt)) throw new XmlInvalido();
+    passo = 'docZip';
     const zips = elementos(ret, 'docZip');
     if (zips.length > MAX_DOCZIP) throw new XmlInvalido();
     let descompactados = 0;
@@ -89,6 +100,7 @@ export function lerRetornoDistribuicao(
         bruto: 'bruto' in r ? r.bruto : null,
       };
     });
+    passo = 'nsu';
     return {
       cStat: Number(cStatTxt),
       xMotivo: textoLimpo(ret, 'xMotivo') ?? '',
@@ -98,7 +110,7 @@ export function lerRetornoDistribuicao(
       documentos,
     };
   } catch {
-    throw sefazErro('SEFAZ_RESPOSTA_INVALIDA', true);
+    throw sefazErro('SEFAZ_RESPOSTA_INVALIDA', true, undefined, undefined, { passo, ...(fault ? { fault } : {}) });
   }
 }
 

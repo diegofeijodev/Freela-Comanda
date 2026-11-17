@@ -28,3 +28,23 @@ export function retornoSoap(p: {
     '</retDistDFeInt></nfeDistDFeInteresseResult></nfeDistDFeInteresseResponse></soap12:Body></soap12:Envelope>'
   );
 }
+
+/** Texto que nunca pode aparecer em erro, log ou banco: vai no `Reason`/`faultstring` dos Faults abaixo. */
+export const SENTINELA_FAULT = 'SENTINELA-DO-CORPO-DO-FAULT';
+
+/** SOAP 1.2 Fault montado à mão (`valor` = o QName do `Code/Value`, ex.: `soap:VersionMismatch`; `subcode` vai dentro do `Code`). */
+export function faultSoap12(valor: string, subcode = ''): string {
+  return (
+    '<?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope"><soap:Body><soap:Fault>' +
+    `<soap:Code><soap:Value>${valor}</soap:Value>${subcode}</soap:Code>` +
+    `<soap:Reason><soap:Text xml:lang="pt-BR">${SENTINELA_FAULT}</soap:Text></soap:Reason></soap:Fault></soap:Body></soap:Envelope>`
+  );
+}
+
+/** SOAP 1.1 Fault montado à mão (`faultcode` sem namespace, como manda o 1.1). */
+export function faultSoap11(valor: string): string {
+  return (
+    '<?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body><soap:Fault>' +
+    `<faultcode>${valor}</faultcode><faultstring>${SENTINELA_FAULT}</faultstring></soap:Fault></soap:Body></soap:Envelope>`
+  );
+}

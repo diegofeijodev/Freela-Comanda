@@ -1,15 +1,18 @@
-import { randomUUID } from 'node:crypto';
+import { createPrivateKey, randomUUID, X509Certificate } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import * as https from 'node:https';
+import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import { HttpException, Logger } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 import { Prisma, type sefaz_distribuicao } from '@prisma/client';
 import { CertificadoErro, MSG_USO, type CertificadoEmUso } from '../../certificado-digital/certificado-digital.port';
 import type { CadeiaIcp } from '../../certificado-digital/cadeia';
-import { SefazDfeAdapter } from '../../sefaz/distribuicao.adapter';
+import { SefazDfeAdapter, URL_DISTRIBUICAO } from '../../sefaz/distribuicao.adapter';
 import type { DocumentoDistribuido, SefazDfePort } from '../../sefaz/distribuicao.port';
 import { sefazErro } from '../../sefaz/sefaz-erro';
-import { retornoSoap } from '../../sefaz/__tests__/retorno-falso';
+import { chamarSoap12 } from '../../sefaz/transporte-soap12';
+import { faultSoap12, retornoSoap, SENTINELA_FAULT } from '../../sefaz/__tests__/retorno-falso';
 import { resposta, SefazDfeFalso } from '../../sefaz/__tests__/sefaz-dfe.falso';
 import { CicloSefazService } from '../ciclo.service';
 import { FRASE } from '../frases';
@@ -646,6 +649,69 @@ describe('CicloSefazService', () => {
         dh_resp: '2026-11-17T09:00:00-03:00',
       });
       expect(linhaDe(t)).toMatchObject({ ult_nsu: 100n, ultima_consulta_em: AGORA, proxima_consulta_em: MAIS65 });
+    });
+
+    it('HTTP 500 com SOAP Fault VersionMismatch (HTTPS local, adaptador e transporte de verdade): o registro guarda o código e o passo', async () => {
+      // Só servidor HTTPS LOCAL com os certificados fictícios do teste do transporte; a URL da SEFAZ que o adaptador passa é TROCADA aqui.
+      const tlsFx = (n: string) => readFileSync(join(__dirname, '../../sefaz/__tests__/fixtures/tls', n), 'utf8');
+      const acTeste = tlsFx('ac-teste.pem');
+      const cliente = {
+        chavePrivada: createPrivateKey(tlsFx('cliente.key')),
+        certificado: new X509Certificate(tlsFx('cliente.pem')),
+        cadeia: [],
+      } as unknown as CertificadoEmUso;
+      const pedidos: string[] = [];
+      const servidor = https.createServer(
+        { key: tlsFx('servidor.key'), cert: tlsFx('servidor.pem'), ca: [acTeste], requestCert: true, rejectUnauthorized: true },
+        (req, res) => {
+          pedidos.push(String(req.headers['content-type']));
+          req.resume();
+          req.on('end', () =>
+            res.writeHead(500, { 'Content-Type': 'application/soap+xml; charset=utf-8' }).end(faultSoap12('soap:VersionMismatch')),
+          );
+        },
+      );
+      await new Promise<void>((ok) => servidor.listen(0, '127.0.0.1', ok));
+      const local = `https://127.0.0.1:${(servidor.address() as AddressInfo).port}/ws`;
+      const urlsPedidas: string[] = [];
+      try {
+        const { t, outraApi } = montar();
+        const adaptador = new SefazDfeAdapter({ ancoras: [] } as unknown as CadeiaIcp, (c) => {
+          urlsPedidas.push(c.url);
+          return chamarSoap12({ ...c, url: local, certificado: cliente, confianca: [acTeste], tempoLimiteMs: 5_000 });
+        });
+        expect(await outraApi(adaptador).ciclo('agendada', null, em(AGORA))).toEqual({ fim: 'feito', paginas: 1 });
+
+        expect(urlsPedidas).toEqual([URL_DISTRIBUICAO.producao]); // o que o adaptador pediu; a chamada foi para o servidor local
+        expect(pedidos).toHaveLength(1);
+        expect(t.sefaz_consultas[0]).toMatchObject({
+          resultado: 'respondida',
+          erro_code: 'SEFAZ_HTTP',
+          x_motivo: 'HTTP 500 · passo http · Fault VersionMismatch',
+          c_stat: null,
+        });
+        // a agenda não muda: 500 = fora do ar, +65 min
+        expect(linhaDe(t)).toMatchObject({ proxima_consulta_em: MAIS65, mensagem: FRASE.foraDoAr('15h10'), busca_ligada: true });
+        const linha = logs.find((l) => l.includes('sefaz.distribuicao'))!;
+        expect(JSON.parse(linha.slice(linha.indexOf('{')))).toMatchObject({ http_status: 500, passo: 'http', fault: 'VersionMismatch' });
+        const tudo = JSON.stringify([t.sefaz_consultas, t.sefaz_distribuicao], (_k, v: unknown) => (typeof v === 'bigint' ? String(v) : v));
+        for (const texto of [tudo, ...logs]) expect(texto).not.toContain(SENTINELA_FAULT);
+      } finally {
+        servidor.closeAllConnections();
+        await new Promise<void>((ok) => servidor.close(() => ok()));
+      }
+    });
+
+    it('resposta ilegível: o registro guarda o passo e o Fault (rótulos), a agenda segue a de sem resposta', async () => {
+      const { svc, t, sefaz } = montar();
+      sefaz.responder(sefazErro('SEFAZ_RESPOSTA_INVALIDA', true, undefined, undefined, { passo: 'soap', fault: 'Sender' }));
+      await svc.ciclo('agendada', null, em(AGORA));
+      expect(t.sefaz_consultas[0]).toMatchObject({
+        resultado: 'sem_resposta',
+        erro_code: 'SEFAZ_RESPOSTA_INVALIDA',
+        x_motivo: 'passo soap · Fault Sender',
+      });
+      expect(linhaDe(t)).toMatchObject({ proxima_consulta_em: MAIS65, falhas_seguidas: 1 });
     });
 
     it('enviado sem resposta mantém a reserva de 65 min', async () => {

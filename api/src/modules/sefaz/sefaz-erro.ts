@@ -12,25 +12,62 @@ export const MSG_SEFAZ_ERRO: Record<CodigoSefazErro, string> = {
   SEFAZ_RESPOSTA_INVALIDA: 'A resposta da SEFAZ não pôde ser lida.',
 };
 
+/** Código do SOAP Fault (`Code/Value` do 1.2 ou `faultcode` do 1.1, sem o prefixo): só esta lista fechada; qualquer outro = `outro`. */
+export const CODIGOS_FAULT = ['VersionMismatch', 'MustUnderstand', 'DataEncodingUnknown', 'Sender', 'Receiver'] as const;
+export type CodigoFault = (typeof CODIGOS_FAULT)[number] | 'outro';
+
+/**
+ * Passo em que a leitura da resposta parou: `http` (status ≠ 200), `tamanho` (corpo acima do teto), `xml` (XML ilegível ou recusado),
+ * `soap` (envelope sem `retDistDFeInt`), `cStat`, `docZip` (demais, ou sem NSU válido) e `nsu` (`ultNSU`/`maxNSU` inválidos).
+ */
+export type PassoLeitura = 'http' | 'tamanho' | 'xml' | 'soap' | 'cStat' | 'docZip' | 'nsu';
+
+/** Diagnóstico de uma resposta que não serviu: só rótulos das listas fechadas acima, nunca trecho do corpo. */
+export interface DiagnosticoLeitura {
+  passo: PassoLeitura;
+  fault?: CodigoFault;
+}
+
 export class SefazErro extends Error {
   /**
    * `enviado`: o pedido pode ter chegado à SEFAZ (o erro veio depois do handshake TLS).
    * `causa`: só o `code` do erro do Node (ex.: `CERT_HAS_EXPIRED`), para o log da consulta; nunca a mensagem, nunca PEM.
+   * `passo`/`fault`: onde a leitura da resposta parou e o código do SOAP Fault, quando houver (vão para o registro da consulta).
    */
+  readonly passo?: PassoLeitura;
+  readonly fault?: CodigoFault;
+
   constructor(
     message: string,
     readonly code: CodigoSefazErro,
     readonly enviado: boolean,
     readonly httpStatus?: number,
     readonly causa?: string,
+    diagnostico?: DiagnosticoLeitura,
   ) {
     super(message);
     this.name = 'SefazErro';
+    if (diagnostico) {
+      this.passo = diagnostico.passo;
+      if (diagnostico.fault) this.fault = diagnostico.fault;
+    }
   }
 }
 
-export function sefazErro(code: CodigoSefazErro, enviado: boolean, httpStatus?: number, causa?: string): SefazErro {
-  return new SefazErro(MSG_SEFAZ_ERRO[code], code, enviado, httpStatus, causa);
+export function sefazErro(
+  code: CodigoSefazErro,
+  enviado: boolean,
+  httpStatus?: number,
+  causa?: string,
+  diagnostico?: DiagnosticoLeitura,
+): SefazErro {
+  return new SefazErro(MSG_SEFAZ_ERRO[code], code, enviado, httpStatus, causa, diagnostico);
+}
+
+/** O valor lido do Fault reduzido à lista fechada (sem prefixo); nada de texto livre passa daqui. */
+export function codigoFault(valor: string | null | undefined): CodigoFault {
+  const local = (valor ?? '').trim().split(':').pop() ?? '';
+  return (CODIGOS_FAULT as readonly string[]).includes(local) ? (local as CodigoFault) : 'outro';
 }
 
 /** O `code` de um erro do Node, só se tiver a forma de um código (`UNABLE_TO_VERIFY_LEAF_SIGNATURE`); senão `undefined`. */
