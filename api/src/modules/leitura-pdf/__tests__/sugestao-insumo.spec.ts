@@ -94,7 +94,18 @@ describe('casarPorIndice', () => {
   it('índice repetido: o primeiro vence', () => {
     expect(casarPorIndice([s(1, 'primeiro'), s(1, 'segundo')], 3)).toEqual([sem('primeiro'), null, null]);
   });
-  it('índices 0, 4 e 1.5 são ignorados', () => {
-    expect(casarPorIndice([s(0, 'x'), s(4, 'x'), s(1.5, 'x'), null, 'lixo'], 3)).toEqual([null, null, null]);
+  it('itens que não são objeto são ignorados', () => {
+    expect(casarPorIndice([null, 'lixo', s(2, 'b')], 3)).toEqual([null, sem('b'), null]);
+  });
+  it('índices 1..n: como sempre', () => {
+    expect(casarPorIndice([s(1, 'a'), s(2, 'b'), s(3, 'c')], 3)).toEqual([sem('a'), sem('b'), sem('c')]);
+  });
+  it('IA numerando de 0 (0..n−1): a resposta inteira vira "sem sugestão"', () => {
+    expect(casarPorIndice([s(0, 'a'), s(1, 'b'), s(2, 'c')], 3)).toEqual([null, null, null]);
+  });
+  it('qualquer índice fora de 1..n ou não inteiro invalida a resposta inteira', () => {
+    expect(casarPorIndice([s(1, 'a'), s(4, 'x')], 3)).toEqual([null, null, null]);
+    expect(casarPorIndice([s(1, 'a'), s(1.5, 'x')], 3)).toEqual([null, null, null]);
+    expect(casarPorIndice([s(1, 'a'), s('2', 'x')], 3)).toEqual([null, null, null]);
   });
 });

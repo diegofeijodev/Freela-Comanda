@@ -95,6 +95,18 @@ describe('leitura de PDF', () => {
     expect(await lido('')).toBeNull();
   });
 
+  it('emitente_cnpj: tira o rótulo; só aceita CNPJ (14, DV ok) ou CPF (11, DV ok); lixo vira null', async () => {
+    const lido = async (emitente_cnpj: unknown) => ((await servico(new LeitorFalso({ emitente_cnpj, data_emissao: '2026-10-20', itens: [] })).lerNota(PDF)) as { emitente_cnpj?: unknown }).emitente_cnpj;
+    expect(await lido('CNPJ: 12.ABC.345/01DE-35')).toBe('12ABC34501DE35');
+    expect(await lido('cnpj 12.abc.345/01de-35')).toBe('12ABC34501DE35');
+    expect(await lido('CNPJ/CPF: 12.ABC.345/01DE-35')).toBe('12ABC34501DE35');
+    expect(await lido('cpf 123.456.789-09')).toBe('12345678909');
+    expect(await lido('CPF: 123.456.789-00')).toBeNull();
+    expect(await lido('12.ABC.345/01DE-36')).toBeNull();
+    expect(await lido('sem documento')).toBeNull();
+    expect(await lido(123)).toBeNull();
+  });
+
   it('DDA: devolve a lista de boletos', async () => {
     const leitor = new LeitorFalso({ boletos: [{ beneficiario: 'B', cnpj: null, vencimento: '2026-11-10T00:00', valor: 5, linha_digitavel: null }] });
     const r = await servico(leitor).lerDDA('JVBERi0=', '');

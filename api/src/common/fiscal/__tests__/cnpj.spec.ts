@@ -1,4 +1,4 @@
-import { cnpjDoCn, cnpjValido, compararCnpj, escolherCnpj, formatarCnpj, normalizarCnpj, titularDoCn } from '../cnpj';
+import { cnpjDoCn, cnpjValido, compararCnpj, documentoLidoPelaIa, escolherCnpj, formatarCnpj, normalizarCnpj, titularDoCn } from '../cnpj';
 
 describe('cnpj', () => {
   it('normaliza e formata (letras ficam, maiúsculas)', () => {
@@ -50,5 +50,14 @@ describe('cnpj', () => {
     ])('empresa %s → %s', (empresa, esperado) => {
       expect(compararCnpj(c, empresa)).toBe(esperado);
     });
+  });
+});
+
+describe('documentoLidoPelaIa', () => {
+  it('rótulo, CNPJ e CPF válidos; o resto é null', () => {
+    expect(documentoLidoPelaIa('CNPJ: 12.ABC.345/01DE-35')).toBe('12ABC34501DE35');
+    expect(documentoLidoPelaIa('cpf 123.456.789-09')).toBe('12345678909');
+    expect(documentoLidoPelaIa('lixo')).toBeNull();
+    expect(documentoLidoPelaIa('12.ABC.345/01DE-36')).toBeNull();
   });
 });

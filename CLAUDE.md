@@ -23,11 +23,12 @@ contrato: `docs/api-contract.md`. Protótipo de referência em `.prototype/` (gi
   No web, ler com `errMsg()` (`@/lib/db`) — nunca `error.message` do axios.
 - Id da URL passa por `ParseUuidPipe` (malformado = 404). DTO com `whitelist + forbidNonWhitelisted`; rotas estáticas antes das `:id`.
 - "Hoje" no servidor = `todaySp()`; o banco roda com `timezone = America/Sao_Paulo` (migração `regras`).
-- Leitura de PDF e de foto (1–4 imagens) por IA só pela porta `LEITOR_PDF` (`modules/leitura-pdf`; rotas `notas/ler-pdf` e `notas/ler-foto`): nenhum teste faz rede; sem chave de IA = "Leitura de PDF/nota não configurada".
+- Leitura de PDF e de foto (1–4 imagens) por IA só pela porta `LEITOR_PDF` (`modules/leitura-pdf`; rotas `notas/ler-pdf`, `notas/ler-foto` e `notas/sugerir-insumos`, esta só de texto: só descrição e unidade saem para a IA): nenhum teste faz rede; sem chave de IA = "Leitura de PDF/nota não configurada".
   A leitura nunca grava: insumo novo só nasce dentro da transação do "Dar entrada" (`POST /v1/notas`, `novo_insumo`).
 - Certificado digital A1 (`api/src/modules/certificado-digital`, rotas `/v1/certificado-digital`): **nada de .pfx, senha, chave ou PEM vai para log, resposta ou erro** (só frases fixas e a impressão digital).
   Projetos futuros (SEFAZ, NFC-e) só chegam à chave pela porta `CERTIFICADO_DIGITAL` (`emUso()`); node-forge 1.4.3 só em `pkcs12.adapter.ts`; segredo `CERTIFICADO_SECRET` (sem fallback no `JWT_SECRET`).
   Os .pfx de `__tests__/fixtures/` são versionados e fictícios (`api/scripts/gerar-certificados-teste.sh`; pacote ICP: `api/scripts/atualizar-cadeia-icp.sh`); nenhum teste usa certificado real nem faz rede.
+- Frases da nota repetida: `api/src/common/fiscal/nota-repetida.ts` e `web/src/lib/nota-repetida.ts` existem em cópia — mudar uma = mudar a outra.
 - CNPJ e chave: `api/src/common/fiscal` e `web/src/lib/fiscal.ts` iguais (como a ficha); normalizar = maiúsculas + `[0-9A-Z]`, nunca `\D` (só a linha digitável do DDA).
 - Web: storage do navegador só em `modules/auth/infrastructure/auth.storage.ts` (sessão `authUser`) e `modules/inventario/infrastructure/rascunho.storage.ts`
   (rascunho da contagem). Telas são `'use client'`; `@/lib/erp-api.ts` é o único lugar com chamadas HTTP.

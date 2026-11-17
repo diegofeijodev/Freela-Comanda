@@ -77,14 +77,17 @@ export function linhasNumeradas(itens: { descricao: string; unidade?: string | n
   return itens.map((it, i) => `${i + 1}. ${it.descricao}${it.unidade?.trim() ? ` (${it.unidade.trim()})` : ''}`).join('\n');
 }
 
-/** Junta a resposta da IA às `n` linhas pelo `indice` (inteiro de 1 a n). Repetido: o primeiro vence; fora disso: ignorado; faltando: null. */
+/**
+ * Junta a resposta da IA às `n` linhas pelo `indice` (inteiro de 1 a n). Repetido: o primeiro vence; faltando: null.
+ * Se qualquer índice devolvido for inválido (0, fora de 1..n ou não inteiro — sinal de que a IA numerou a partir de 0), a resposta inteira
+ * vale como "sem sugestão": não se tenta adivinhar o deslocamento, que levaria o vínculo para o insumo errado.
+ */
 export function casarPorIndice(resposta: unknown[], n: number): (Omit<SugestaoIa, 'indice'> | null)[] {
   const out: (Omit<SugestaoIa, 'indice'> | null)[] = Array.from({ length: n }, () => null);
-  for (const r of resposta) {
-    if (!r || typeof r !== 'object') continue;
-    const { indice, ...resto } = r as SugestaoIa;
-    if (!Number.isInteger(indice) || indice < 1 || indice > n || out[indice - 1]) continue;
-    out[indice - 1] = resto;
+  const objetos = resposta.filter((r): r is SugestaoIa => !!r && typeof r === 'object');
+  if (objetos.some((r) => !Number.isInteger(r.indice) || r.indice < 1 || r.indice > n)) return out;
+  for (const { indice, ...resto } of objetos) {
+    if (!out[indice - 1]) out[indice - 1] = resto;
   }
   return out;
 }

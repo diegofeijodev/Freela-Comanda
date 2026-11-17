@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { chaveValida, normalizarChave } from '../../common/fiscal/chave-acesso';
-import { normalizarCnpj } from '../../common/fiscal/cnpj';
+import { documentoLidoPelaIa } from '../../common/fiscal/cnpj';
 import { isDateString } from '../../common/time/dates';
 import { PrismaService } from '../../common/database/prisma.service';
 import { LEITOR_PDF, LeituraPdfErro, type ArquivoLeitura, type LeitorPdf } from './leitor-pdf.port';
@@ -60,7 +60,7 @@ export class LeituraPdfService {
     }
     r.data_emissao = diaValido(r.data_emissao);
     r.chave = chave44(r.chave);
-    r.emitente_cnpj = typeof r.emitente_cnpj === 'string' ? normalizarCnpj(r.emitente_cnpj) || null : null;
+    r.emitente_cnpj = typeof r.emitente_cnpj === 'string' ? documentoLidoPelaIa(r.emitente_cnpj) : null;
     r.parcelas = (r.parcelas ?? []).map((p) => ({ ...p, vencimento: diaValido(p.vencimento) }));
     return { ...r, itens: limparItens(r.itens, insumos, subgrupos) };
   }
