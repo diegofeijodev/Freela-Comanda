@@ -2,7 +2,8 @@
 // notas da caixa de um (ambiente, CNPJ): decide as respostas automáticas a criar (ciência em até 9 dias; confirmação da nota lançada pela
 // chave depois de ligar), as ciências na fila a cancelar, o prazo de 90 dias de cada nota e a ordem de envio. Regras: desenho, Etapa 2,
 // "Planejador" e decisão 9 do construtor, com as decisões do controlador de 17/11 (210200 por qualquer caminho, mesmo depois de "Ignorar";
-// ciência na fila que deixou de servir é cancelada; sem aviso de prazo em nota cancelada ou denegada).
+// ciência na fila que deixou de servir é cancelada, salvo a que já saiu para a SEFAZ; sem aviso de prazo em nota cancelada ou denegada;
+// ciência que já saiu sem resposta conta como talvez registrada para o aviso).
 //
 // Dias = 24 h em milissegundos: Brasília não tem horário de verão (UTC−3 fixo), então a conta é a mesma no fuso de Brasília e não depende
 // do TZ do processo (o contêiner roda em UTC).
@@ -37,6 +38,8 @@ export interface EventoExistente {
   situacao: EstadoEvento;
   origem: OrigemEvento;
   pedida_em: Date;
+  /** Já saiu para a SEFAZ ao menos uma vez (tentativas > 0 ou com lote): voltando à fila sem resposta, pode estar registrada lá. */
+  ja_enviada: boolean;
 }
 
 /** `prazo_perto` = agora ≥ base + 80 dias e < `prazo_final`; `prazo_passou` = agora ≥ `prazo_final`. */
@@ -54,6 +57,7 @@ export interface Plano {
 
 const CIENCIA: TipoEvento = '210210';
 const ATIVOS: ReadonlySet<EstadoEvento> = new Set<EstadoEvento>(['na_fila', 'enviando', 'registrada', 'falhou']);
+const TALVEZ_REGISTRADA: ReadonlySet<EstadoEvento> = new Set<EstadoEvento>(['na_fila', 'enviando', 'falhou']);
 
 const ehFinal = (tp: TipoEvento) => tp !== CIENCIA;
 const daNota = (id: string, ev: EventoExistente[]) => ev.filter((e) => e.nota_sefaz_id === id);
@@ -84,13 +88,19 @@ export function respondivel(n: NotaParaPlano, ev: EventoExistente[], agora: Date
   );
 }
 
-/** Aviso do prazo: nota autorizada (cancelada ou denegada não aceita resposta) · ciência nossa registrada · nenhuma resposta final
- * registrada · do 80º dia até o fim do prazo. */
+/** A ciência pode estar registrada na SEFAZ: registrada, ou já enviada e sem resposta definitiva (de volta à fila, enviando ou falhou). */
+const cienciaTalvezRegistrada = (e: EventoExistente) =>
+  e.tp_evento === CIENCIA && (e.situacao === 'registrada' || (e.ja_enviada && TALVEZ_REGISTRADA.has(e.situacao)));
+
+/**
+ * Aviso do prazo: nota autorizada (cancelada ou denegada não aceita resposta) · ciência nossa registrada, ou já enviada sem resposta
+ * definitiva (mais seguro avisar do que perder o prazo) · nenhuma resposta final registrada · do 80º dia até o fim do prazo.
+ */
 export function avisoDePrazo(n: NotaParaPlano, ev: EventoExistente[], agora: Date): boolean {
   const meus = daNota(n.id, ev);
   return (
     n.situacao_sefaz === 'autorizada' &&
-    meus.some((e) => e.tp_evento === CIENCIA && e.situacao === 'registrada') &&
+    meus.some(cienciaTalvezRegistrada) &&
     !meus.some((e) => ehFinal(e.tp_evento) && e.situacao === 'registrada') &&
     prazoDaNota(n, agora).prazo_perto
   );
@@ -122,8 +132,10 @@ function pedeConfirmacao(n: NotaParaPlano, ev: EventoExistente[], ligadaEm: Date
 
 /**
  * Os eventos automáticos a criar e as ciências na fila a cancelar. A ciência é o único evento que cria obrigação sozinho, então a que está
- * `na_fila` só fica se ainda serve: nota respondível (autorizada, de compra, no prazo, sem resposta final ativa), que ainda pede ciência e sem
- * 210200 criada agora (as duas no mesmo lote = 655). Ignorada, XML completo, 9º dia passado, cancelada, denegada ou já lançada = cancela.
+ * `na_fila` e nunca saiu só fica se ainda serve: nota respondível (autorizada, de compra, no prazo, sem resposta final ativa), que ainda pede
+ * ciência e sem 210200 criada agora (as duas no mesmo lote = 655). Ignorada, XML completo, 9º dia passado, cancelada, denegada ou já lançada =
+ * cancela. A que já saiu (`ja_enviada`) nunca é cancelada: pode estar registrada na SEFAZ, e o reenvio resolve (573 = registrada; 655/596 =
+ * recusada); cancelá-la apagaria o rastro da obrigação de 90 dias.
  */
 export function planejar(notas: NotaParaPlano[], eventos: EventoExistente[], ligadaEm: Date, agora: Date): Plano {
   const porNota = new Map<string, EventoExistente[]>();
@@ -142,7 +154,8 @@ export function planejar(notas: NotaParaPlano[], eventos: EventoExistente[], lig
     else if (cienciaServe && !ev.some((e) => e.tp_evento === CIENCIA && e.situacao !== 'cancelada')) {
       plano.criar.push({ nota_sefaz_id: n.id, tp_evento: '210210', origem: 'ciencia_automatica' });
     }
-    if (!cienciaServe && ev.some((e) => e.tp_evento === CIENCIA && e.situacao === 'na_fila')) plano.cancelarCiencias.push(n.id);
+    const cienciaNuncaEnviadaNaFila = ev.some((e) => e.tp_evento === CIENCIA && e.situacao === 'na_fila' && !e.ja_enviada);
+    if (!cienciaServe && cienciaNuncaEnviadaNaFila) plano.cancelarCiencias.push(n.id);
   }
   return plano;
 }
