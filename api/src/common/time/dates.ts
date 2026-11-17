@@ -49,3 +49,11 @@ export function monthRange(month: string): { from: string; to: string } {
   const lastDay = new Date(Date.UTC(y as number, m as number, 0)).getUTCDate();
   return { from: `${month.slice(0, 7)}-01`, to: `${month.slice(0, 7)}-${String(lastDay).padStart(2, '0')}` };
 }
+
+/** Hora em Brasília como "15h10" (24 h, dois dígitos), para frases de tela. */
+export function horaSp(d: Date): string {
+  const partes = new Intl.DateTimeFormat('en-GB', { timeZone: SP_TZ, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(d);
+  const h = partes.find((p) => p.type === 'hour')?.value ?? '00';
+  const m = partes.find((p) => p.type === 'minute')?.value ?? '00';
+  return `${h}h${m}`;
+}
