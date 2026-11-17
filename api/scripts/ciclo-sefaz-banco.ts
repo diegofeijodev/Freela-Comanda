@@ -2,6 +2,8 @@
 // porta da SEFAZ e o certificado FALSOS. Nenhuma rede: as respostas são envelopes montados à mão com as fixtures da Task 3.
 // Roda antes de a API do smoke subir e apaga tudo o que criou. Uso (o smoke-capped.sh já chama):
 //   DATABASE_URL=... npx ts-node --transpile-only scripts/ciclo-sefaz-banco.ts
+// Só roda no banco descartável do smoke: em qualquer outro, sai com erro ANTES de conectar (nada é apagado). Ele apaga as linhas
+// `homologacao` das tabelas sefaz_*, e depois do 1º teste real essas linhas são a prova das esperas.
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Logger } from '@nestjs/common';
@@ -14,6 +16,8 @@ import { lerRetornoDistribuicao } from '../src/modules/sefaz/distribuicao.adapte
 import { retornoSoap } from '../src/modules/sefaz/__tests__/retorno-falso';
 import { SefazDfeFalso } from '../src/modules/sefaz/__tests__/sefaz-dfe.falso';
 
+/** O nome que o `smoke-capped.sh` dá ao banco que ele recria a cada rodada. */
+const BANCO_DO_SMOKE = 'erpfreela_smoke';
 const AMB = 'homologacao';
 const CNPJ = '12345678000195';
 const fx = (nome: string) => readFileSync(join(__dirname, '../src/modules/sefaz/__tests__/fixtures', nome), 'utf8');
@@ -35,6 +39,15 @@ async function limpar(db: PrismaClient): Promise<void> {
   await db.sefaz_distribuicao.deleteMany(w);
 }
 
+/** Nome do banco na URL (só ele vai para a mensagem: a URL traz a senha); `null` se a URL não for lida. */
+function nomeDoBanco(url: string): string | null {
+  try {
+    return decodeURIComponent(new URL(url).pathname.replace(/^\//, '')) || null;
+  } catch {
+    return null;
+  }
+}
+
 function umaConexao(url: string): string {
   return `${url}${url.includes('?') ? '&' : '?'}connection_limit=1`;
 }
@@ -42,6 +55,10 @@ function umaConexao(url: string): string {
 async function main(): Promise<void> {
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error('DATABASE_URL ausente');
+  const banco = nomeDoBanco(url);
+  if (banco !== BANCO_DO_SMOKE) {
+    throw new Error(`recusado: só roda no banco descartável do smoke (${BANCO_DO_SMOKE}), não em "${banco ?? '?'}". Nada foi apagado.`);
+  }
   Logger.overrideLogger(['error', 'warn']);
   const db = new PrismaClient();
   // 2ª conexão (uma só no pool): segura a trava de sessão como "outro processo"
