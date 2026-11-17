@@ -86,6 +86,7 @@ export class LeituraPdfService {
       throw new LeituraPdfErro('Não consegui sugerir os insumos desta nota.', 422, 'SUGESTAO_ILEGIVEL');
     }
     const casadas = casarPorIndice(r.itens, linhas.length);
+    if (!casadas) throw new LeituraPdfErro('Não consegui usar a sugestão da IA para esta nota.', 422, 'SUGESTAO_ILEGIVEL');
     const juntos: ItemIa[] = linhas.map((l, i) => ({
       codigo: null,
       descricao: l.descricao,

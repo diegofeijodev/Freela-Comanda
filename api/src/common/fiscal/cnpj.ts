@@ -68,23 +68,15 @@ export function formatarCnpj(c: string): string {
   return `${c.slice(0, 2)}.${c.slice(2, 5)}.${c.slice(5, 8)}/${c.slice(8, 12)}-${c.slice(12)}`;
 }
 
-export function cpfValido(c: string): boolean {
-  if (!/^[0-9]{11}$/.test(c) || /^(\d)\1{10}$/.test(c)) return false;
-  const calc = (n: number) => {
-    let soma = 0;
-    for (let i = 0; i < n; i++) soma += Number(c[i]) * (n + 1 - i);
-    const r = (soma * 10) % 11;
-    return r === 10 ? 0 : r;
-  };
-  return calc(9) === Number(c[9]) && calc(10) === Number(c[10]);
-}
+const ROTULO_DOCUMENTO = /^\s*(?:C\.?N\.?P\.?J\.?(?:\s*\/\s*(?:CPF|MF))?(?:\s*N[ºo°]\.?(?=[\s:]))?|CPF(?:\s*\/\s*CNPJ)?)\s*:?\s*/i;
 
-const ROTULO_DOCUMENTO = /^\s*(?:CNPJ\s*\/\s*CPF|CPF\s*\/\s*CNPJ|CNPJ|CPF)\s*:?\s*/i;
-
-/** Documento lido pela IA: tira um rótulo no começo ("CNPJ:", "CPF", "CNPJ/CPF"), normaliza e só aceita CNPJ (14, DV ok) ou CPF (11, DV ok); senão null. */
+/**
+ * Documento lido pela IA: tira um rótulo no começo ("CNPJ:", "CNPJ/MF", "CNPJ nº", "C.N.P.J.", "CPF", "CNPJ/CPF", "CPF/CNPJ"), normaliza e devolve o
+ * valor se tiver formato de CNPJ (14 em [0-9A-Z]) ou de CPF (11 dígitos) — mesmo com DV errado: a tela avisa "não confere" e o admin corrige. Senão null.
+ */
 export function documentoLidoPelaIa(texto: string): string | null {
   const n = normalizarCnpj(texto.replace(ROTULO_DOCUMENTO, ''));
-  if (n.length === 14) return cnpjValido(n) ? n : null;
-  if (n.length === 11) return cpfValido(n) ? n : null;
+  if (/^[0-9A-Z]{14}$/.test(n)) return n;
+  if (/^[0-9]{11}$/.test(n)) return n;
   return null;
 }

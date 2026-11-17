@@ -54,10 +54,17 @@ describe('cnpj', () => {
 });
 
 describe('documentoLidoPelaIa', () => {
-  it('rótulo, CNPJ e CPF válidos; o resto é null', () => {
+  it('tira o rótulo e devolve o formato de CNPJ ou CPF, mesmo com DV errado', () => {
     expect(documentoLidoPelaIa('CNPJ: 12.ABC.345/01DE-35')).toBe('12ABC34501DE35');
+    expect(documentoLidoPelaIa('CNPJ/MF: 44.527.294/0001-80')).toBe('44527294000180');
+    expect(documentoLidoPelaIa('CNPJ nº 12.ABC.345/01DE-35')).toBe('12ABC34501DE35');
+    expect(documentoLidoPelaIa('cnpj no 12.ABC.345/01DE-35')).toBe('12ABC34501DE35');
+    expect(documentoLidoPelaIa('C.N.P.J.: 44.527.294/0001-80')).toBe('44527294000180');
+    expect(documentoLidoPelaIa('CPF/CNPJ 44.527.294/0001-80')).toBe('44527294000180');
+    expect(documentoLidoPelaIa('CNPJ/CPF: 12.ABC.345/01DE-35')).toBe('12ABC34501DE35');
     expect(documentoLidoPelaIa('cpf 123.456.789-09')).toBe('12345678909');
-    expect(documentoLidoPelaIa('lixo')).toBeNull();
-    expect(documentoLidoPelaIa('12.ABC.345/01DE-36')).toBeNull();
+    expect(documentoLidoPelaIa('12.ABC.345/01DE-36')).toBe('12ABC34501DE36');
+    expect(documentoLidoPelaIa('abc')).toBeNull();
+    expect(documentoLidoPelaIa('123456')).toBeNull();
   });
 });

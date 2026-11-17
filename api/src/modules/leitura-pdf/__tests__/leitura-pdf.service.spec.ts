@@ -95,15 +95,17 @@ describe('leitura de PDF', () => {
     expect(await lido('')).toBeNull();
   });
 
-  it('emitente_cnpj: tira o rótulo; só aceita CNPJ (14, DV ok) ou CPF (11, DV ok); lixo vira null', async () => {
+  it('emitente_cnpj: tira o rótulo; CNPJ/CPF com DV errado segue (a tela avisa); só lixo vira null', async () => {
     const lido = async (emitente_cnpj: unknown) => ((await servico(new LeitorFalso({ emitente_cnpj, data_emissao: '2026-10-20', itens: [] })).lerNota(PDF)) as { emitente_cnpj?: unknown }).emitente_cnpj;
     expect(await lido('CNPJ: 12.ABC.345/01DE-35')).toBe('12ABC34501DE35');
     expect(await lido('cnpj 12.abc.345/01de-35')).toBe('12ABC34501DE35');
     expect(await lido('CNPJ/CPF: 12.ABC.345/01DE-35')).toBe('12ABC34501DE35');
     expect(await lido('cpf 123.456.789-09')).toBe('12345678909');
-    expect(await lido('CPF: 123.456.789-00')).toBeNull();
-    expect(await lido('12.ABC.345/01DE-36')).toBeNull();
-    expect(await lido('sem documento')).toBeNull();
+    expect(await lido('CNPJ/MF: 44.527.294/0001-80')).toBe('44527294000180');
+    expect(await lido('CPF: 123.456.789-00')).toBe('12345678900');
+
+    expect(await lido('12.ABC.345/01DE-36')).toBe('12ABC34501DE36');
+    expect(await lido('abc')).toBeNull();
     expect(await lido(123)).toBeNull();
   });
 
@@ -163,7 +165,7 @@ describe('sugerirInsumos', () => {
 
   it('nada além de descrição e unidade vai para a IA', async () => {
     const leitor = new LeitorFalso(resposta);
-    await servico(leitor).sugerirInsumos([{ descricao: 'TOMATE', unidade: 'KG', valor_total: 99, fornecedor_cnpj: '12345678000195' } as never]);
+    await servico(leitor).sugerirInsumos([{ descricao: 'TOMATE', unidade: 'KG' }, { descricao: 'SACOLA', valor_total: 99, fornecedor_cnpj: '12345678000195' } as never]);
     expect(leitor.pedidos[0]!.pedido).not.toMatch(/99|12345678000195/);
   });
 
@@ -173,6 +175,17 @@ describe('sugerirInsumos', () => {
       status: 422,
       code: 'SUGESTAO_ILEGIVEL',
     });
+  });
+
+  it('IA numerando de 0 (0..n−1): 422 SUGESTAO_ILEGIVEL; 1..n segue normal', async () => {
+    const item = (indice: number) => ({ indice, insumo: null, novo_nome: null, novo_unidade: null, novo_subgrupo: null, fator: 1 });
+    await expect(servico(new LeitorFalso({ itens: [item(0), item(1), item(2)] })).sugerirInsumos(linhas)).rejects.toMatchObject({
+      message: 'Não consegui usar a sugestão da IA para esta nota.',
+      status: 422,
+      code: 'SUGESTAO_ILEGIVEL',
+    });
+    const ok = await servico(new LeitorFalso({ itens: [item(1), item(2), item(3)] })).sugerirInsumos(linhas);
+    expect(ok.itens).toHaveLength(3);
   });
 
   it('erro do leitor (503 sem chave) passa como está', async () => {

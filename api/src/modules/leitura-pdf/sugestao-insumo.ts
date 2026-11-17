@@ -80,12 +80,12 @@ export function linhasNumeradas(itens: { descricao: string; unidade?: string | n
 /**
  * Junta a resposta da IA às `n` linhas pelo `indice` (inteiro de 1 a n). Repetido: o primeiro vence; faltando: null.
  * Se qualquer índice devolvido for inválido (0, fora de 1..n ou não inteiro — sinal de que a IA numerou a partir de 0), a resposta inteira
- * vale como "sem sugestão": não se tenta adivinhar o deslocamento, que levaria o vínculo para o insumo errado.
+ * é inutilizável (devolve `null`; quem chama responde 422): não se tenta adivinhar o deslocamento, que levaria o vínculo para o insumo errado.
  */
-export function casarPorIndice(resposta: unknown[], n: number): (Omit<SugestaoIa, 'indice'> | null)[] {
+export function casarPorIndice(resposta: unknown[], n: number): (Omit<SugestaoIa, 'indice'> | null)[] | null {
   const out: (Omit<SugestaoIa, 'indice'> | null)[] = Array.from({ length: n }, () => null);
   const objetos = resposta.filter((r): r is SugestaoIa => !!r && typeof r === 'object');
-  if (objetos.some((r) => !Number.isInteger(r.indice) || r.indice < 1 || r.indice > n)) return out;
+  if (objetos.some((r) => !Number.isInteger(r.indice) || r.indice < 1 || r.indice > n)) return null;
   for (const { indice, ...resto } of objetos) {
     if (!out[indice - 1]) out[indice - 1] = resto;
   }
