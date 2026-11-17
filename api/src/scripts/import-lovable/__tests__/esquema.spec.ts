@@ -28,9 +28,10 @@ describe('esquema.ts × migrações', () => {
   it('ordem de carga respeita toda chave estrangeira (mãe antes da filha)', () => {
     const ordem = TABELAS.map((t) => t.nome);
     const fks = [...sql.matchAll(/ALTER TABLE "([a-z_]+)" ADD CONSTRAINT "[a-z_]+" FOREIGN KEY \("[a-z_]+"\) REFERENCES "([a-z_]+)"/g)];
-    expect(fks).toHaveLength(19);
+    expect(fks).toHaveLength(23);
     for (const [, filha, mae] of fks) {
       if (filha === mae) continue; // auto-referência (notas_entrada.repetida_de): sem ordem a respeitar
+      if ((TABELAS_SO_NOSSAS as readonly string[]).includes(filha!)) continue; // tabela só nossa (SEFAZ): a carga não toca
       expect([filha, ordem.indexOf(mae!) < ordem.indexOf(filha!)]).toEqual([filha, true]);
     }
   });

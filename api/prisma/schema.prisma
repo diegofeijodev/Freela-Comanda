@@ -74,6 +74,151 @@ model certificado_digital_historico {
   @@index([feito_em(sort: Desc)])
 }
 
+/// Busca de notas na SEFAZ: uma linha por (ambiente, CNPJ) com o ponteiro NSU, a agenda e a situação. Nasce desligada (`busca_ligada = false`). Só nossa.
+model sefaz_distribuicao {
+  ambiente             String
+  cnpj                 String    @db.Char(14)
+  busca_ligada         Boolean   @default(false)
+  situacao             String    @default("ok")
+  mensagem             String?
+  aviso                String?
+  ult_nsu              BigInt    @default(0)
+  max_nsu              BigInt?
+  primeira_consulta_em DateTime? @db.Timestamptz(6)
+  ultima_consulta_em   DateTime? @db.Timestamptz(6)
+  proxima_consulta_em  DateTime? @db.Timestamptz(6)
+  bloqueado_ate        DateTime? @db.Timestamptz(6)
+  em_andamento_desde   DateTime? @db.Timestamptz(6)
+  falhas_seguidas      Int       @default(0)
+  alterada_por         String?   @db.Uuid
+  alterada_por_nome    String?
+  alterada_em          DateTime? @db.Timestamptz(6)
+  criada_em            DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@id([ambiente, cnpj])
+}
+
+/// Trilha (só inserção) de quem ligou e desligou a busca e das paradas automáticas. `feito_por*` nulos na parada automática.
+model sefaz_distribuicao_historico {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ambiente       String
+  cnpj           String   @db.Char(14)
+  evento         String
+  situacao       String
+  c_stat         Int?
+  mensagem       String?
+  feito_por      String?  @db.Uuid
+  feito_por_nome String?
+  feito_em       DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([ambiente, cnpj, feito_em(sort: Desc)])
+}
+
+/// Diário das consultas à SEFAZ (só inserção, mais o fechamento da própria linha): aberta antes de enviar (`resultado` nulo), fechada depois.
+/// `ciclo_id` agrupa as páginas de um ciclo; `dh_resp` guarda o texto como veio.
+model sefaz_consultas {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ciclo_id          String    @db.Uuid
+  ambiente          String
+  cnpj              String    @db.Char(14)
+  servico           String    @default("distNSU")
+  origem            String
+  iniciada_por      String?   @db.Uuid
+  iniciada_por_nome String?
+  ult_nsu_enviado   BigInt
+  iniciada_em       DateTime  @db.Timestamptz(6)
+  terminada_em      DateTime? @db.Timestamptz(6)
+  resultado         String?
+  c_stat            Int?
+  x_motivo          String?
+  dh_resp           String?
+  ult_nsu           BigInt?
+  max_nsu           BigInt?
+  documentos        Int?
+  erro_code         String?
+
+  lacunas              sefaz_lacunas[]
+  documentos_recebidos sefaz_documentos[]
+
+  @@index([ambiente, cnpj, iniciada_em(sort: Desc)])
+}
+
+/// Buracos na sequência de NSU (outro sistema consumiu a faixa ou a resposta se perdeu). `preenchida_em` fica para a etapa do consNSU.
+model sefaz_lacunas {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ambiente      String
+  cnpj          String    @db.Char(14)
+  nsu_de        BigInt
+  nsu_ate       BigInt
+  causa         String
+  consulta_id   String    @db.Uuid
+  detectada_em  DateTime  @default(now()) @db.Timestamptz(6)
+  preenchida_em DateTime? @db.Timestamptz(6)
+
+  consulta sefaz_consultas @relation(fields: [consulta_id], references: [id], onDelete: Restrict)
+}
+
+/// Documentos recebidos da SEFAZ, um por NSU (só inserção); é também a guarda do XML. `conteudo_bruto` só existe quando `tipo = 'ilegivel'`.
+model sefaz_documentos {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ambiente           String
+  cnpj               String    @db.Char(14)
+  nsu                BigInt
+  schema             String
+  tipo               String
+  chave              String?   @db.VarChar(44)
+  tp_evento          String?   @db.VarChar(6)
+  xml                String?
+  conteudo_bruto     String?
+  consulta_id        String    @db.Uuid
+  recebido_em        DateTime  @default(now()) @db.Timestamptz(6)
+  processado_em      DateTime? @db.Timestamptz(6)
+  erro_processamento String?
+
+  consulta       sefaz_consultas @relation(fields: [consulta_id], references: [id], onDelete: Restrict)
+  notas_resumo   notas_sefaz[]   @relation("nota_sefaz_resumo")
+  notas_completo notas_sefaz[]   @relation("nota_sefaz_completo")
+
+  @@unique([ambiente, cnpj, nsu])
+  @@index([chave])
+}
+
+/// A caixa "Notas da SEFAZ" da Entrada de Notas: uma linha por chave de acesso e ambiente. `ignorada_*`/`motivo_*` guardam a última ação do admin.
+model notas_sefaz {
+  id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ambiente              String
+  cnpj_destinatario     String    @db.Char(14)
+  chave                 String    @db.VarChar(44)
+  emitente_cnpj         String    @db.VarChar(14)
+  emitente_nome         String    @default("")
+  numero                String
+  serie                 String
+  emitida_em            DateTime? @db.Timestamptz(6)
+  autorizada_em         DateTime? @db.Timestamptz(6)
+  valor_total           Decimal?  @db.Decimal(15, 2)
+  tp_nf                 Int?      @db.SmallInt
+  fin_nfe               Int?      @db.SmallInt
+  nat_op                String?
+  situacao_sefaz        String
+  cancelada_em          DateTime? @db.Timestamptz(6)
+  resumo_id             String?   @db.Uuid
+  documento_completo_id String?   @db.Uuid
+  ignorada_em           DateTime? @db.Timestamptz(6)
+  ignorada_por          String?   @db.Uuid
+  ignorada_por_nome     String?
+  motivo_ignorar        String?
+  motivo_texto          String?
+  criada_em             DateTime  @default(now()) @db.Timestamptz(6)
+  atualizada_em         DateTime  @default(now()) @db.Timestamptz(6)
+
+  resumo             sefaz_documentos? @relation("nota_sefaz_resumo", fields: [resumo_id], references: [id], onDelete: Restrict)
+  documento_completo sefaz_documentos? @relation("nota_sefaz_completo", fields: [documento_completo_id], references: [id], onDelete: Restrict)
+
+  @@unique([ambiente, chave])
+  @@index([ambiente, emitida_em(sort: Desc)])
+  @@index([emitente_cnpj, numero])
+}
+
 model configuracoes {
   id                    Int     @id @default(1)
   nome_unidade          String  @default("Chopp & Espeto Valinhos")
@@ -338,8 +483,8 @@ model notas_entrada {
   repetida_de     String?  @db.Uuid
   created_at      DateTime @default(now()) @db.Timestamptz(6)
 
-  nota_original       notas_entrada?  @relation("nota_repetida", fields: [repetida_de], references: [id], onDelete: SetNull)
-  repeticoes          notas_entrada[] @relation("nota_repetida")
+  nota_original       notas_entrada?        @relation("nota_repetida", fields: [repetida_de], references: [id], onDelete: SetNull)
+  repeticoes          notas_entrada[]       @relation("nota_repetida")
   notas_entrada_itens notas_entrada_itens[]
   contas_pagar        contas_pagar[]
 

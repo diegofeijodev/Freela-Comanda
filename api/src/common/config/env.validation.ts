@@ -23,6 +23,12 @@ const envSchema = z.object({
   /** Cifra do certificado digital A1 (HKDF próprio, sem cair no JWT_SECRET). Vazia = recurso desligado. `openssl rand -hex 32` NO servidor. */
   CERTIFICADO_SECRET: z.preprocess(vazioComoAusente, z.string().min(32).optional()),
 
+  /**
+   * Busca de notas na SEFAZ (distribuição de DF-e, só leitura). Ausente ou vazia = `desligado`: nenhum timer e nenhuma conexão.
+   * `producao` só com o "eu autorizo" do dono.
+   */
+  SEFAZ_DFE_AMBIENTE: z.preprocess(vazioComoAusente, z.enum(['desligado', 'homologacao', 'producao']).default('desligado')),
+
   SWAGGER_ENABLED: z.string().optional(),
 
   /**
@@ -36,6 +42,7 @@ const envSchema = z.object({
 });
 
 export type Env = z.infer<typeof envSchema>;
+export type AmbienteServidor = Env['SEFAZ_DFE_AMBIENTE'];
 
 export function validateEnv(config: Record<string, unknown>): Env {
   const parsed = envSchema.safeParse(config);

@@ -16,3 +16,19 @@ describe('validateEnv: CERTIFICADO_SECRET', () => {
     expect(validateEnv({ ...base, CERTIFICADO_SECRET: 'a'.repeat(64) }).CERTIFICADO_SECRET).toBe('a'.repeat(64));
   });
 });
+
+describe('validateEnv: SEFAZ_DFE_AMBIENTE', () => {
+  it('ausente ou vazia = desligado', () => {
+    expect(validateEnv({ ...base }).SEFAZ_DFE_AMBIENTE).toBe('desligado');
+    expect(validateEnv({ ...base, SEFAZ_DFE_AMBIENTE: '' }).SEFAZ_DFE_AMBIENTE).toBe('desligado');
+  });
+
+  it('producao e homologacao ficam como vieram', () => {
+    expect(validateEnv({ ...base, SEFAZ_DFE_AMBIENTE: 'producao' }).SEFAZ_DFE_AMBIENTE).toBe('producao');
+    expect(validateEnv({ ...base, SEFAZ_DFE_AMBIENTE: 'homologacao' }).SEFAZ_DFE_AMBIENTE).toBe('homologacao');
+  });
+
+  it("'prod' é recusado", () => {
+    expect(() => validateEnv({ ...base, SEFAZ_DFE_AMBIENTE: 'prod' })).toThrow(/Configuração de ambiente inválida/);
+  });
+});
