@@ -40,6 +40,7 @@ import {
   type EstadoLinha,
   type ResultadoConsulta,
 } from './agenda';
+import { FRASE } from './frases';
 import {
   aplicarNaCaixa,
   chaveDoDocumento,
@@ -73,6 +74,8 @@ const CLASSIFICAR_POR_VEZ = 200;
 /** Documento que falha na classificação esta quantidade de vezes sai da fila como descartado (senão 200 presos param a fila de vez). */
 export const TENTATIVAS_CLASSIFICACAO = 3;
 const TENTATIVA = /Tentativa (\d+) de \d+\.$/;
+/** Falhas SEGUIDAS ao gravar a resposta da mesma página (mesmo NSU enviado) que param a busca; antes disso vale a reserva de 65 min. */
+export const FALHAS_GRAVACAO_PARA = 3;
 /** Decisão 5: `anteriorEnviada` é a mais recente em que a pergunta pode ter chegado à SEFAZ (sem `falha_antes_de_enviar`). */
 const ENVIADAS: ResultadoConsulta[] = ['respondida', 'sem_resposta', 'interrompida'];
 const TX1 = { maxWait: 5_000, timeout: 10_000 };
@@ -362,7 +365,7 @@ export class CicloSefazService {
     const agora = relogio();
     const acao = decidir({ ...r.contexto, agora, chamada });
 
-    await this.prisma.$transaction(async (tx) => {
+    const t2 = this.prisma.$transaction(async (tx) => {
       await esperarTrava(tx);
       const onde = { ambiente: p.ambiente, cnpj: p.cnpj };
       if (resp && resp.documentos.length > 0) {
@@ -438,6 +441,10 @@ export class CicloSefazService {
         }
       }
     }, TX2);
+    await t2.catch(async (e: unknown) => {
+      await this.gravacaoFalhou(p, r, resp?.cStat ?? null, agora);
+      throw e; // como antes: quem chamou registra e a página seguinte não sai
+    });
 
     this.logger.log(
       JSON.stringify({
@@ -461,6 +468,58 @@ export class CicloSefazService {
       }),
     );
     return acao;
+  }
+
+  /**
+   * A T2 caiu e foi desfeita (nada da resposta ficou gravado). Nas 2 primeiras vezes nada muda: vale a reserva de 65 min da T1 e a
+   * próxima T1 fecha a consulta como `interrompida`. Na 3ª seguida com o mesmo NSU (as 2 consultas imediatamente anteriores
+   * `interrompida` com o mesmo `ult_nsu_enviado`), a mesma página falharia para sempre: a busca para (desligada, `parada_configuracao`,
+   * histórico) e o admin religa. Uma `interrompida` por queda da API no meio da consulta também conta (as duas querem dizer "enviada,
+   * sem resposta gravada"). Não mexe em NSU, próxima consulta nem bloqueio. Nunca lança.
+   */
+  private async gravacaoFalhou(p: Preparo, r: Reserva, cStat: number | null, agora: Date): Promise<void> {
+    try {
+      const parou = await this.prisma.$transaction(async (tx) => {
+        await esperarTrava(tx);
+        const onde = { ambiente: p.ambiente, cnpj: p.cnpj };
+        const recentes = await tx.sefaz_consultas.findMany({ where: onde, orderBy: { iniciada_em: 'desc' }, take: 10 });
+        let seguidas = 1; // esta
+        for (const c of recentes) {
+          if (c.id === r.consultaId) continue;
+          if (c.resultado !== 'interrompida' || c.ult_nsu_enviado !== r.contexto.ultNsuNosso) break;
+          if (++seguidas >= FALHAS_GRAVACAO_PARA) break;
+        }
+        if (seguidas < FALHAS_GRAVACAO_PARA) return false;
+        await tx.sefaz_consultas.update({ where: { id: r.consultaId }, data: { resultado: 'interrompida', terminada_em: agora } });
+        await tx.sefaz_distribuicao.update({
+          where: { ambiente_cnpj: onde },
+          data: { busca_ligada: false, situacao: 'parada_configuracao', mensagem: FRASE.gravacaoFalhou, em_andamento_desde: null },
+        });
+        await tx.sefaz_distribuicao_historico.create({
+          data: {
+            ...onde,
+            evento: 'parada_automatica',
+            situacao: 'parada_configuracao',
+            c_stat: cStat,
+            mensagem: FRASE.gravacaoFalhou,
+            feito_em: agora,
+          },
+        });
+        return true;
+      }, TX1);
+      if (parou) {
+        this.logger.warn(
+          JSON.stringify({
+            evento: 'sefaz.distribuicao',
+            consulta_id: r.consultaId,
+            situacao: 'parada_configuracao',
+            alerta: 'gravacao_falhou_3x',
+          }),
+        );
+      }
+    } catch (e) {
+      this.logger.error(`sefaz.distribuicao: não consegui conferir as falhas de gravação (${descreverErro(e)})`);
+    }
   }
 
   /**

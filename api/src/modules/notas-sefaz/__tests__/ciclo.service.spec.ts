@@ -253,6 +253,101 @@ describe('CicloSefazService', () => {
     expect(linhaDe(t).ult_nsu).toBe(150n);
   });
 
+  describe('falha ao gravar a resposta (T2) repetida', () => {
+    const recusada = () => new Prisma.PrismaClientKnownRequestError('valor recusado pelo banco', { code: 'P2000', clientVersion: 'falso' });
+    const pagina = () =>
+      resposta(138, {
+        ultNsu: 150n,
+        maxNsu: 150n,
+        documentos: [doc(149n, RES_NFE, fx('res-nfe.xml')), doc(150n, RES_EVENTO, fx('res-evento-110111.xml'))],
+      });
+
+    it('3 vezes seguidas com o mesmo NSU: as 2 primeiras respeitam os 65 min, a 3ª desliga a busca com a frase', async () => {
+      const { svc, t, sefaz, prisma } = montar();
+      jest.spyOn(prisma.sefaz_documentos, 'createMany').mockRejectedValue(recusada()); // a gravação sempre falha
+      sefaz.responder(pagina(), pagina(), pagina(), pagina());
+
+      // 1ª: a T2 é desfeita, a reserva de 65 min da T1 segura; nada para
+      await expect(svc.ciclo('agendada', null, em(AGORA))).rejects.toThrow('valor recusado pelo banco');
+      expect(linhaDe(t)).toMatchObject({ busca_ligada: true, situacao: 'ok', mensagem: null, ult_nsu: 100n, proxima_consulta_em: MAIS65 });
+      expect((await svc.ciclo('agendada', null, em(min(64)))).fim).toBe('aguarde');
+
+      // 2ª, só depois dos 65 min
+      await expect(svc.ciclo('agendada', null, em(min(65)))).rejects.toThrow('valor recusado pelo banco');
+      expect(linhaDe(t)).toMatchObject({ busca_ligada: true, situacao: 'ok', mensagem: null, proxima_consulta_em: min(130) });
+      expect((await svc.ciclo('agendada', null, em(min(129)))).fim).toBe('aguarde');
+      expect(sefaz.chamadas).toHaveLength(2);
+      expect(t.sefaz_distribuicao_historico).toHaveLength(0);
+
+      // 3ª: a busca para (situação de parada, desligada, histórico), sem mexer no NSU nem na próxima consulta
+      await expect(svc.ciclo('agendada', null, em(min(130)))).rejects.toThrow('valor recusado pelo banco');
+      expect(sefaz.chamadas.map((c) => c.ultNsu)).toEqual([100n, 100n, 100n]);
+      expect(linhaDe(t)).toMatchObject({
+        busca_ligada: false,
+        situacao: 'parada_configuracao',
+        mensagem: 'A busca parou: não consegui guardar as notas que a SEFAZ mandou. Avise o suporte antes de ligar de novo.',
+        ult_nsu: 100n,
+        proxima_consulta_em: min(195),
+        bloqueado_ate: null,
+        em_andamento_desde: null,
+      });
+      expect(t.sefaz_consultas.map((c) => [c.resultado, c.ult_nsu_enviado])).toEqual([
+        ['interrompida', 100n],
+        ['interrompida', 100n],
+        ['interrompida', 100n],
+      ]);
+      expect(t.sefaz_consultas[2].terminada_em).toEqual(min(130));
+      expect(t.sefaz_distribuicao_historico).toHaveLength(1);
+      expect(t.sefaz_distribuicao_historico[0]).toMatchObject({
+        evento: 'parada_automatica',
+        situacao: 'parada_configuracao',
+        c_stat: 138,
+        mensagem: FRASE.gravacaoFalhou,
+        feito_por: null,
+      });
+      expect(t.sefaz_documentos).toHaveLength(0);
+
+      // parada: nenhuma consulta nova até o admin ligar de novo
+      expect((await svc.ciclo('agendada', null, em(min(300)))).fim).toBe('nao_ligada');
+      expect(sefaz.chamadas).toHaveLength(3);
+    });
+
+    it('só conta as interrompidas IMEDIATAMENTE antes e com o MESMO NSU', async () => {
+      const casos: { anteriores: ReturnType<typeof consultaAnterior>[]; para: boolean }[] = [
+        { anteriores: [consultaAnterior('interrompida', { iniciada_em: min(-140) }), consultaAnterior('interrompida')], para: true },
+        {
+          anteriores: [
+            consultaAnterior('interrompida', { iniciada_em: min(-140), ult_nsu_enviado: 90n }),
+            consultaAnterior('interrompida'),
+          ],
+          para: false,
+        },
+        {
+          anteriores: [
+            consultaAnterior('interrompida', { iniciada_em: min(-210) }),
+            consultaAnterior('respondida', { iniciada_em: min(-140), c_stat: 137 }),
+            consultaAnterior('interrompida'),
+          ],
+          para: false,
+        },
+        { anteriores: [consultaAnterior('sem_resposta', { iniciada_em: min(-140) }), consultaAnterior('interrompida')], para: false },
+      ];
+      for (const { anteriores, para } of casos) {
+        const { svc, t, sefaz, prisma } = montar();
+        t.sefaz_consultas.push(...anteriores);
+        jest.spyOn(prisma.sefaz_documentos, 'createMany').mockRejectedValue(recusada());
+        sefaz.responder(pagina());
+        await expect(svc.ciclo('agendada', null, em(AGORA))).rejects.toThrow('valor recusado pelo banco');
+        expect(linhaDe(t)).toMatchObject(
+          para
+            ? { busca_ligada: false, situacao: 'parada_configuracao' }
+            : { busca_ligada: true, situacao: 'ok', proxima_consulta_em: MAIS65 },
+        );
+        expect(t.sefaz_distribuicao_historico).toHaveLength(para ? 1 : 0);
+      }
+    });
+  });
+
   it('queda entre as transações: ocupada, depois aguarde, e com 65 min a consulta aberta vira interrompida', async () => {
     const { svc, t, sefaz } = montar({ linha: { em_andamento_desde: min(-1), proxima_consulta_em: min(64) } });
     const aberta = linhaCom('sefaz_consultas', {

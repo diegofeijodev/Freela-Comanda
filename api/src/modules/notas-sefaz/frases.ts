@@ -13,6 +13,7 @@ export const FRASE = {
     'A SEFAZ diz que o CNPJ consultado não é da mesma empresa do certificado (código 593). Confira o CNPJ no quadro Empresa.',
   tresIlegiveis:
     'A busca parou: a SEFAZ respondeu 3 vezes de um jeito que o sistema não entende. Fale com o suporte do Freela Comanda.',
+  gravacaoFalhou: 'A busca parou: não consegui guardar as notas que a SEFAZ mandou. Avise o suporte antes de ligar de novo.',
   outroCodigo: (n: number) =>
     `A busca parou por um problema que o sistema não resolve sozinho (código ${n}). Fale com o suporte do Freela Comanda e informe este código.`,
   indicioD1:
