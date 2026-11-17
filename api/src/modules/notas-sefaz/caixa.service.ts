@@ -657,9 +657,10 @@ export class CaixaSefazService {
   }
 
   /**
-   * Volta a nota para a lista e, sob a trava das respostas, cancela o evento pedido pelo admin que ainda está na fila sem nenhuma tentativa
-   * gasta (o "Desfazer" sempre o encontra assim: ele espera 60 s; e também o que voltou de um lote recusado inteiro, numa parada ou espera).
-   * O que pode ter chegado à SEFAZ (enviando, registrado, ou de volta à fila com tentativa gasta) fica: depois de sair, não há volta aqui.
+   * Volta a nota para a lista e, sob a trava das respostas, cancela o evento pedido pelo admin que ainda está na fila e NUNCA saiu, pela
+   * regra `jaEnviada` da fila (o "Desfazer" sempre o encontra assim: ele espera 60 s). O que pode ter chegado à SEFAZ (enviando,
+   * registrado, de volta à fila com tentativa gasta ou com lote que saiu, inclusive depois de um "Tentar de novo") fica: depois de sair,
+   * não há volta aqui.
    */
   async reabrir(id: string, quem: Quem, agora: Date = new Date()): Promise<NotaSefazLinha> {
     const { ambiente, cnpj } = await this.contexto();
@@ -677,10 +678,14 @@ export class CaixaSefazService {
           atualizada_em: agora,
         },
       });
-      // `tentativas = 0`: nunca gastou tentativa, então não pode estar registrado (lote recusado inteiro, 108/656/280, relógio ou falha
-      // antes de enviar devolvem sem gastar). Com tentativa gasta (queda, sem resposta, 999), pode estar na SEFAZ: fica.
+      // A mesma regra da fila (`jaEnviada`): gastou tentativa OU o lote dele pode ter chegado à SEFAZ. O "Tentar de novo" zera as
+      // tentativas mas mantém o `lote_id`, então a resposta que falhou depois de sair continua reconhecida como "já saiu".
+      const naFila = await tx.sefaz_manifestacoes.findMany({ where: { nota_sefaz_id: nota.id, origem: 'admin', situacao: 'na_fila' } });
+      const resultadoDoLote = await resultadosDosLotes(tx, naFila);
+      const ids = naFila.filter((e) => !jaEnviada(e, resultadoDoLote)).map((e) => e.id);
+      if (ids.length === 0) return 0;
       const r = await tx.sefaz_manifestacoes.updateMany({
-        where: { nota_sefaz_id: nota.id, origem: 'admin', situacao: 'na_fila', tentativas: 0 },
+        where: { id: { in: ids }, origem: 'admin', situacao: 'na_fila' },
         data: { situacao: 'cancelada', atualizada_em: agora },
       });
       return r.count;
@@ -698,7 +703,10 @@ export class CaixaSefazService {
     return this.linhaDe(id, { ambiente, cnpj }, agora);
   }
 
-  /** "Tentar de novo": o evento `falhou` mais recente da nota volta à fila com as tentativas zeradas e sai no próximo tique. */
+  /**
+   * "Tentar de novo": o evento `falhou` mais recente da nota volta à fila com as tentativas zeradas e sai no próximo tique. O `lote_id`
+   * fica: é a prova de que ele já saiu (o `reabrir` não o cancela).
+   */
   async responderDeNovo(id: string, quem: Quem, agora: Date = new Date()): Promise<NotaSefazLinha> {
     const { ambiente, cnpj } = await this.contexto();
     const nota = await this.achar(id, { ambiente, cnpj });

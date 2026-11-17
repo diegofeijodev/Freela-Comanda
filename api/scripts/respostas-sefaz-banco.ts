@@ -3,8 +3,9 @@
 // eventos e o certificado FALSOS (o certificado fictício dos testes, `fixtures/tls`). Nenhuma rede: a porta é uma classe daqui que confere a
 // T1 no banco e devolve um retorno montado à mão. Confere a T1 (gravado `enviando` com o XML assinado antes de a porta responder) e a T2,
 // uma parada com o histórico `respostas_paradas`, os CHECKs, as FKs e os dois índices parciais (`sefaz_manifestacoes_evento_ativo` e
-// `sefaz_manifestacoes_uma_final`, inclusive a 2ª resposta final ativa recusada pelo banco). Roda antes de a API do smoke subir e apaga
-// tudo o que criou. Uso (o smoke-capped.sh já chama):
+// `sefaz_manifestacoes_uma_final`, inclusive a 2ª resposta final ativa recusada pelo banco, e a rota que esbarra no índice devolve 409),
+// e que o `reabrir` não cancela o que já saiu (nem depois de um "Tentar de novo"). Roda antes de a API do smoke subir e apaga tudo o que
+// criou. Uso (o smoke-capped.sh já chama):
 //   DATABASE_URL=... npx ts-node --transpile-only scripts/respostas-sefaz-banco.ts
 // Só roda no banco descartável do smoke: em qualquer outro, sai com erro ANTES de conectar (nada é apagado).
 import { HttpException, Logger } from '@nestjs/common';
@@ -32,6 +33,7 @@ const DIA = 86_400_000;
 const CH_A = '35261111222333000181550010000009011000000901'; // ciência automática
 const CH_B = '35261111222333000181550010000009021000000902'; // "A compra não aconteceu"
 const CH_C = '35261111222333000181550010000009031000000903'; // "Não reconheço": parada, falhou, "Tentar de novo"
+const CH_D = '35261111222333000181550010000009041000000904'; // a 2ª final que escapa da conferência e esbarra no índice
 const NPROT15 = '135260000000901';
 const NPROT17 = '13526000000090201';
 
@@ -267,25 +269,38 @@ async function main(): Promise<void> {
     const religada = await db.sefaz_manifestacao.findUniqueOrThrow({ where: onde });
     conferir(religada.situacao === 'ok' && religada.mensagem === null && religada.falhas_seguidas === 0, 'religada: ok');
     conferir(religada.ligada_em?.getTime() === ligada.ligada_em?.getTime(), 'religar depois da parada não reescreve ligada_em');
-    // "Voltar para a lista" depois da parada: o evento voltou do 280 sem gastar tentativa (lote `respondida`), então é cancelado
+    // "Voltar para a lista" depois da parada: o lote do 280 chegou à SEFAZ (`respondida`), então pela regra da fila (`jaEnviada`) o
+    // evento já saiu e fica na fila (decisão do controlador na rodada de correção 1)
     await caixa.reabrir(c.id, QUEM);
     conferir(
-      (await db.sefaz_manifestacoes.findUniqueOrThrow({ where: { id: evC.id } })).situacao === 'cancelada',
-      'reabrir depois do 280 cancela',
+      (await db.sefaz_manifestacoes.findUniqueOrThrow({ where: { id: evC.id } })).situacao === 'na_fila',
+      'reabrir depois do 280: o que saiu fica na fila',
     );
-    await caixa.ignorar(c.id, 'nao_reconheco', null, QUEM, new Date(), true);
-    const evC2 = await db.sefaz_manifestacoes.findFirstOrThrow({ where: { nota_sefaz_id: c.id, situacao: 'na_fila' } });
-    conferir(evC2.id !== evC.id && evC2.tp_evento === '210220', 'o cancelado não ocupa a vaga: novo 210220');
 
-    // 6. a 3ª tentativa com 999 → falhou; "Tentar de novo" zera as tentativas (CHECK 0–3 de verdade)
-    await db.sefaz_manifestacoes.update({ where: { id: evC2.id }, data: { tentativas: 2, enviar_apos: new Date(Date.now() - 1000) } });
+    // 6. a 3ª tentativa com 999 → falhou; "Tentar de novo" zera as tentativas (CHECK 0–3 de verdade) e mantém o lote
+    await db.sefaz_manifestacoes.update({ where: { id: evC.id }, data: { tentativas: 2, enviar_apos: new Date(Date.now() - 1000) } });
     porta.proximas.push(retornoLote(128, [{ chave: CH_C, tpEvento: '210220', cStat: 999 }]));
     conferir((await respostas.processar()).fim === 'feito', 'tique 3 saiu');
-    conferir((await db.sefaz_manifestacoes.findUniqueOrThrow({ where: { id: evC2.id } })).situacao === 'falhou', '999 na 3ª = falhou');
+    conferir((await db.sefaz_manifestacoes.findUniqueOrThrow({ where: { id: evC.id } })).situacao === 'falhou', '999 na 3ª = falhou');
     await caixa.responderDeNovo(c.id, QUEM);
-    const deNovo = await db.sefaz_manifestacoes.findUniqueOrThrow({ where: { id: evC2.id } });
-    conferir(deNovo.situacao === 'na_fila' && deNovo.tentativas === 0, 'Tentar de novo: na fila, 0 tentativas');
+    const deNovo = await db.sefaz_manifestacoes.findUniqueOrThrow({ where: { id: evC.id } });
+    conferir(
+      deNovo.situacao === 'na_fila' && deNovo.tentativas === 0 && deNovo.lote_id !== null,
+      'Tentar de novo: na fila, 0 tentativas, lote',
+    );
     await recusaHttp(caixa.responderDeNovo(a.id, QUEM), 409, 'SEFAZ_NADA_A_REENVIAR', 'nada a reenviar');
+    // I1: "Voltar para a lista" depois do "Tentar de novo": a resposta que falhou depois de sair continua na fila e ocupa a vaga
+    await caixa.reabrir(c.id, QUEM);
+    conferir(
+      (await db.sefaz_manifestacoes.findUniqueOrThrow({ where: { id: evC.id } })).situacao === 'na_fila',
+      'reabrir depois de Tentar de novo não cancela',
+    );
+    await recusaHttp(
+      caixa.ignorar(c.id, 'lancada_de_outro_jeito', null, QUEM, new Date(), true),
+      409,
+      'SEFAZ_JA_RESPONDIDA',
+      'vaga ocupada',
+    );
 
     // 7. trava presa noutra conexão = ocupada, sem chamada à porta
     await db.sefaz_manifestacao.update({ where: onde, data: { pausa_ate: null } });
@@ -296,6 +311,37 @@ async function main(): Promise<void> {
     } finally {
       await outra.$executeRaw`SELECT pg_advisory_unlock(${CHAVE_TRAVA_SEFAZ_EVENTOS}::bigint)`;
     }
+
+    // 7b. a 2ª resposta final que escapa da conferência (outra conexão, sem a trava, grava entre a leitura e o INSERT) é recusada pelo
+    //     índice `sefaz_manifestacoes_uma_final` do banco de verdade: a rota devolve 409, não 500, e a transação desfaz a nota ignorada
+    const d = await nota(CH_D, 20);
+    let corrida = true;
+    const dbCorrida = db.$extends({
+      query: {
+        sefaz_manifestacoes: {
+          async findMany({ args, query }) {
+            const r = await query(args);
+            if (corrida && args.where?.nota_sefaz_id === d.id) {
+              corrida = false;
+              await outra.$executeRawUnsafe(sqlEvento(CH_D, d.id, { tp_evento: `'210200'` }));
+            }
+            return r;
+          },
+        },
+      },
+    });
+    const caixaCorrida = new CaixaSefazService(dbCorrida as unknown as PrismaService, ciclo, notas, certificados, respostas);
+    await recusaHttp(
+      caixaCorrida.ignorar(d.id, 'nao_reconheco', null, QUEM, new Date(), true),
+      409,
+      'SEFAZ_JA_RESPONDIDA',
+      'índice uma_final no banco de verdade: 409, não 500',
+    );
+    conferir(!corrida, 'a outra conexão gravou entre a leitura e o INSERT');
+    const notaD = await db.notas_sefaz.findUniqueOrThrow({ where: { id: d.id } });
+    conferir(notaD.ignorada_em === null && notaD.motivo_ignorar === null, 'índice recusou: a nota não ficou ignorada');
+    const evD = await db.sefaz_manifestacoes.findMany({ where: { nota_sefaz_id: d.id } });
+    conferir(evD.length === 1 && evD[0]!.tp_evento === '210200', 'só o evento da outra conexão');
 
     // 8. CHECKs, FKs e os dois índices parciais
     const lixo = '00000000-0000-4000-8000-00000000dead';

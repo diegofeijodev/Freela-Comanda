@@ -1030,15 +1030,40 @@ describe('CaixaSefazService', () => {
         }
       });
 
-      it('cancela também o evento do admin que voltou de um lote recusado inteiro (108, 656, 280): sem tentativa gasta, não foi registrado', async () => {
-        for (const resultado of ['respondida', 'falha_antes_de_enviar']) {
+      it('a regra de "já saiu" é a da fila: sem tentativa gasta, cancela só sem lote ou com falha antes de enviar; lote que chegou à SEFAZ fica', async () => {
+        const casos: [string | null, string][] = [
+          [null, 'cancelada'],
+          ['falha_antes_de_enviar', 'cancelada'],
+          ['respondida', 'na_fila'],
+          ['sem_resposta', 'na_fila'],
+          ['interrompida', 'na_fila'],
+        ];
+        for (const [resultado, fica] of casos) {
           const { svc, t } = montarR();
-          const l = lote(resultado);
-          t.sefaz_eventos_lotes.push(l);
-          t.sefaz_manifestacoes.push(evento('ok', '210220', { situacao: 'na_fila', tentativas: 0, lote_id: l.id }));
+          const l = resultado ? lote(resultado) : null;
+          if (l) t.sefaz_eventos_lotes.push(l);
+          t.sefaz_manifestacoes.push(evento('ok', '210220', { situacao: 'na_fila', tentativas: 0, lote_id: l?.id ?? null }));
           await svc.reabrir(N.ok, QUEM, AGORA);
-          expect(t.sefaz_manifestacoes[0]!.situacao).toBe('cancelada');
+          expect([resultado, t.sefaz_manifestacoes[0]!.situacao]).toEqual([resultado, fica]);
         }
+      });
+
+      it('I1: "Tentar de novo" e depois "Voltar para a lista": a resposta que falhou depois de sair continua na fila e ocupa a vaga', async () => {
+        const { svc, t } = montarR();
+        const l = lote('sem_resposta');
+        t.sefaz_eventos_lotes.push(l);
+        t.sefaz_manifestacoes.push(
+          evento('ok', '210220', { situacao: 'falhou', tentativas: 3, lote_id: l.id, c_stat: 999, atualizada_em: diasAtras(1) }),
+        );
+        notaDe(t, 'ok').ignorada_em = diasAtras(2);
+        notaDe(t, 'ok').motivo_ignorar = 'nao_reconheco';
+        await svc.responderDeNovo(N.ok, QUEM, AGORA);
+        expect(t.sefaz_manifestacoes[0]).toMatchObject({ situacao: 'na_fila', tentativas: 0, lote_id: l.id });
+        const r = await svc.reabrir(N.ok, QUEM, AGORA);
+        expect(t.sefaz_manifestacoes[0]).toMatchObject({ situacao: 'na_fila', tentativas: 0, lote_id: l.id });
+        expect(r).toMatchObject({ situacao: 'falta_lancar', ignorada: null });
+        expect(r.resposta).toMatchObject({ final: { tipo: 'nao_reconheco', estado: 'na_fila' }, pode_responder: false });
+        expect(await recusa(ign(svc, 'ok', 'lancada_de_outro_jeito'))).toMatchObject({ status: 409, code: 'SEFAZ_JA_RESPONDIDA' });
       });
 
       it('ignorar avisando, reabrir (Desfazer) e ignorar de novo: o evento cancelado não ocupa a vaga', async () => {
