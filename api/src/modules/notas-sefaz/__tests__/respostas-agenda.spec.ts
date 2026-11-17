@@ -66,8 +66,8 @@ const estados = (d: DecisaoLote) => d.eventos.map((x) => [x.estado, x.gastou]);
 const k880Registrada = (d: DecisaoLote) =>
   expect(k880(d)).toEqual({ id: 'ev-k880', estado: 'registrada', gastou: true, cStat: 135, protocolo: PROT15, mensagem: null });
 /** Campos do lote num 128 sem relógio: respondida, sem pausa, falhas zeradas, sem a marca do relógio. */
-const lote128 = (d: DecisaoLote, situacao: DecisaoLote['situacao'] = 'ok', mensagem: string | null = null) =>
-  expect(d).toMatchObject({ resultado: 'respondida', situacao, mensagem, pausaAte: null, falhasSeguidas: 0, relogio: false });
+const lote128 = (d: DecisaoLote, situacao: DecisaoLote['situacao'] = 'ok', mensagem: string | null = null, cStatParada: number | null = null) =>
+  expect(d).toMatchObject({ resultado: 'respondida', situacao, mensagem, pausaAte: null, falhasSeguidas: 0, relogio: false, cStatParada });
 
 // Frases literais da UX §8 ("Paradas e esperas" e a linha da resposta), com as horas dos vetores: +15 = 14h20, +60 = 15h05, +65 = 15h10.
 const F = {
@@ -368,19 +368,19 @@ describe('decidirLote: tabela "Evento" do desenho (VETOR 210210 no código da li
     const d = decidirLote(entrada(com128(250)));
     expect(vetor(d)).toEqual({ id: 'ev-vetor', estado: 'na_fila', gastou: false, cStat: 250, protocolo: null, mensagem: null });
     k880Registrada(d);
-    lote128(d, 'parada_configuracao', F.outroCodigo(250));
+    lote128(d, 'parada_configuracao', F.outroCodigo(250), 250);
   });
   it.each([213, 290, 293, 296])('%i: certificado da assinatura; volta sem gastar; param', (c) => {
     const d = decidirLote(entrada(com128(c)));
     expect(vetor(d)).toMatchObject({ estado: 'na_fila', gastou: false, cStat: c, mensagem: null });
     k880Registrada(d);
-    lote128(d, 'parada_certificado', F.certificado(c));
+    lote128(d, 'parada_certificado', F.certificado(c), c);
   });
   it.each([252, 489, 490, 491, 492, 493, 572, 594, 595, 297, 298])('%i: defeito nosso; volta sem gastar; param', (c) => {
     const d = decidirLote(entrada(com128(c)));
     expect(vetor(d)).toMatchObject({ estado: 'na_fila', gastou: false, cStat: c, mensagem: null });
     k880Registrada(d);
-    lote128(d, 'parada_configuracao', F.outroCodigo(c));
+    lote128(d, 'parada_configuracao', F.outroCodigo(c), c);
   });
   it('999: volta gastando (sem pausa do lote: a tabela do evento não põe uma; o teto de tentativas limita)', () => {
     const d = decidirLote(entrada(com128(999)));
@@ -620,6 +620,11 @@ describe('decidirLote: invariantes (nunca em laço, um resultado por evento)', (
     ['HTTP 500 Sender', erro('SEFAZ_HTTP', true, 500, 'Sender'), {}],
     ['HTTP 403', erro('SEFAZ_HTTP', true, 403), {}],
     ['HTTP 400', erro('SEFAZ_HTTP', true, 400), {}],
+    ['HTTP 500 3º', erro('SEFAZ_HTTP', true, 500), { semRespostaSeguidas: 2 }],
+    ...[656, 108, 109].map((c): [string, ChamadaLote, Partial<EntradaLote>] => [`evento ${c}`, com128(c), {}]),
+    ['evento 656 duas vezes', com128(656), { vezes656Em24h: 1 }],
+    ['128 todos 999', lote(128, [ret(VETOR, '210210', 999), ret(K880, '210200', 999)]), {}],
+    ['relógio e parada', lote(128, [ret(VETOR, '210210', 577), ret(K880, '210200', 250)]), { relogioNoLoteAnterior: true }],
   ];
   it.each(chamadas)('%s: cada evento aparece uma vez, na ordem, nunca "enviando" nem "cancelada"', (_n, chamada, extra) => {
     const d = decidirLote(entrada(chamada, extra));
@@ -632,6 +637,12 @@ describe('decidirLote: invariantes (nunca em laço, um resultado por evento)', (
       expect(x.gastou || (d.pausaAte !== null && d.pausaAte > AGORA) || d.situacao !== 'ok').toBe(true);
     }
   });
+  it.each(chamadas)('%s: cStatParada nulo sem parada, e igual ao "(código N)" da frase quando houver', (_n, chamada, extra) => {
+    const d = decidirLote(entrada(chamada, extra));
+    if (d.situacao === 'ok') expect(d.cStatParada).toBeNull();
+    const n = /\(código (\d+)\)/.exec(d.mensagem ?? '')?.[1];
+    if (n !== undefined) expect(d.cStatParada).toBe(Number(n));
+  });
   it.each(chamadas)('%s: falhou só gastando e na 3ª tentativa; registrada/recusada sempre com o código do evento', (_n, chamada, extra) => {
     const eventos = [
       { ...EV_VETOR, tentativas: 3 },
@@ -643,6 +654,122 @@ describe('decidirLote: invariantes (nunca em laço, um resultado por evento)', (
       if (x.estado === 'registrada' || x.estado === 'recusada') expect(x.cStat).not.toBeNull();
       if (x.estado !== 'recusada') expect(x.mensagem).toBeNull();
     }
+  });
+});
+
+describe('decidirLote: ajustes do controlador depois da revisão', () => {
+  it('evento 656 conta como o 656 do lote: volta sem gastar; +65 min; "pediu para esperar"', () => {
+    const d = decidirLote(entrada(com128(656)));
+    expect(vetor(d)).toEqual({ id: 'ev-vetor', estado: 'na_fila', gastou: false, cStat: 656, protocolo: null, mensagem: null });
+    k880Registrada(d);
+    expect(d).toMatchObject({
+      resultado: 'respondida', situacao: 'ok', mensagem: F.esperar15h10, pausaAte: min(65), falhasSeguidas: 0, relogio: false, cStatParada: null,
+    });
+  });
+  it('evento 656 com vezes656Em24h = 1: parada_656, e a pausa de +65 continua', () => {
+    const d = decidirLote(entrada(com128(656), { vezes656Em24h: 1 }));
+    expect(vetor(d)).toMatchObject({ estado: 'na_fila', gastou: false, cStat: 656 });
+    k880Registrada(d);
+    expect(d).toMatchObject({ situacao: 'parada_656', mensagem: F.bloqueouDuasVezes, pausaAte: min(65), cStatParada: 656 });
+  });
+  it('evento 656 numa resposta final também conta (não vira recusa definitiva)', () => {
+    const d = decidirLote(entrada(lote(128, [ret(VETOR, '210210', 135, PROT15), ret(K880, '210200', 656)])));
+    expect(k880(d)).toEqual({ id: 'ev-k880', estado: 'na_fila', gastou: false, cStat: 656, protocolo: null, mensagem: null });
+    expect(d).toMatchObject({ situacao: 'ok', mensagem: F.esperar15h10, pausaAte: min(65) });
+  });
+  it.each([108, 109])('evento %i = serviço parado: volta sem gastar; +60 min; "fora do ar"', (c) => {
+    const d = decidirLote(entrada(com128(c)));
+    expect(vetor(d)).toEqual({ id: 'ev-vetor', estado: 'na_fila', gastou: false, cStat: c, protocolo: null, mensagem: null });
+    k880Registrada(d);
+    expect(d).toMatchObject({
+      resultado: 'respondida', situacao: 'ok', mensagem: F.foraDoAr15h05, pausaAte: min(60), falhasSeguidas: 0, relogio: false, cStatParada: null,
+    });
+  });
+  it('evento 656 na 3ª tentativa não vira falhou (não gasta)', () => {
+    const d = decidirLote(entrada(com128(656), { eventos: [{ ...EV_VETOR, tentativas: 3 }, EV_K880] }));
+    expect(vetor(d)).toMatchObject({ estado: 'na_fila', gastou: false });
+  });
+  it('pausas juntas no mesmo 128: vale a mais longa, com a frase dela (656 +65 vence o relógio +60)', () => {
+    const d = decidirLote(entrada(lote(128, [ret(VETOR, '210210', 577), ret(K880, '210200', 656)])));
+    expect(estados(d)).toEqual([['na_fila', false], ['na_fila', false]]);
+    expect(d).toMatchObject({ situacao: 'ok', mensagem: F.esperar15h10, pausaAte: min(65), relogio: true, cStatParada: null });
+  });
+  it('pausas iguais (+60): vale a do 1º evento da entrada', () => {
+    const d = decidirLote(entrada(lote(128, [ret(VETOR, '210210', 108), ret(K880, '210200', 577)])));
+    expect(d).toMatchObject({ mensagem: F.foraDoAr15h05, pausaAte: min(60), relogio: true });
+    const inv = decidirLote(entrada(lote(128, [ret(VETOR, '210210', 108), ret(K880, '210200', 577)]), { eventos: [EV_K880, EV_VETOR] }));
+    expect(inv).toMatchObject({ mensagem: F.relogio15h05, pausaAte: min(60), relogio: true });
+  });
+  it('128 com TODOS os eventos 999: gastam e o lote pausa +15 com "fora do ar"', () => {
+    const d = decidirLote(entrada(lote(128, [ret(VETOR, '210210', 999), ret(K880, '210200', 999)])));
+    expect(d.eventos).toEqual([
+      { id: 'ev-vetor', estado: 'na_fila', gastou: true, cStat: 999, protocolo: null, mensagem: null },
+      { id: 'ev-k880', estado: 'na_fila', gastou: true, cStat: 999, protocolo: null, mensagem: null },
+    ]);
+    expect(d).toMatchObject({
+      resultado: 'respondida', situacao: 'ok', mensagem: F.foraDoAr14h20, pausaAte: min(15), falhasSeguidas: 0, relogio: false, cStatParada: null,
+    });
+  });
+  it('128 com todos 999 na 3ª tentativa: falham, e a pausa continua', () => {
+    const eventos = [{ ...EV_VETOR, tentativas: 3 }, { ...EV_K880, tentativas: 3 }];
+    const d = decidirLote(entrada(lote(128, [ret(VETOR, '210210', 999), ret(K880, '210200', 999)]), { eventos }));
+    expect(estados(d)).toEqual([['falhou', true], ['falhou', true]]);
+    expect(d).toMatchObject({ mensagem: F.foraDoAr14h20, pausaAte: min(15) });
+  });
+  it('999 com outro evento sem retEvento não é "todos 999": sem pausa', () => {
+    const d = decidirLote(entrada(lote(128, [ret(VETOR, '210210', 999)])));
+    expect(estados(d)).toEqual([['na_fila', true], ['na_fila', true]]);
+    expect(d).toMatchObject({ situacao: 'ok', mensagem: null, pausaAte: null });
+  });
+
+  it.each([
+    ['lote 283', lote(283), {}, 283],
+    ['lote 214', lote(214), {}, 214],
+    ['lote 1234', lote(1234), {}, 1234],
+    ['lote 656 duas vezes', lote(656), { vezes656Em24h: 1 }, 656],
+    ['HTTP 403', erro('SEFAZ_HTTP', true, 403), {}, 403],
+    ['HTTP 500 com Fault Sender', erro('SEFAZ_HTTP', true, 500, 'Sender'), {}, 500],
+    ['HTTP 400', erro('SEFAZ_HTTP', true, 400), {}, 400],
+    ['HTTP 500 pela 3ª vez', erro('SEFAZ_HTTP', true, 500), { semRespostaSeguidas: 2 }, 500],
+    ['evento 250', com128(250), {}, 250],
+    ['evento 213', com128(213), {}, 213],
+    ['evento 577 seguido', com128(577), { relogioNoLoteAnterior: true }, 577],
+    ['evento 656 duas vezes', com128(656), { vezes656Em24h: 1 }, 656],
+  ] as [string, ChamadaLote, Partial<EntradaLote>, number][])('cStatParada: %s', (_n, chamada, extra, codigo) => {
+    const d = decidirLote(entrada(chamada, extra));
+    expect(d.situacao).not.toBe('ok');
+    expect(d.cStatParada).toBe(codigo);
+  });
+  it('cStatParada: a 3ª remessa sem resposta por tempo para sem código (null)', () => {
+    expect(decidirLote(entrada(erro('SEFAZ_TEMPO', true), { semRespostaSeguidas: 2 }))).toMatchObject({
+      situacao: 'parada_configuracao', cStatParada: null,
+    });
+  });
+  it.each([
+    ['128 ok', com128(135), {}],
+    ['lote 108', lote(108), {}],
+    ['lote 656', lote(656), {}],
+    ['lote 999', lote(999), {}],
+    ['relógio sem o anterior', com128(577), {}],
+    ['falha antes', erro('SEFAZ_REDE', false), {}],
+    ['TEMPO', erro('SEFAZ_TEMPO', true), {}],
+    ['HTTP 500', erro('SEFAZ_HTTP', true, 500), {}],
+  ] as [string, ChamadaLote, Partial<EntradaLote>][])('cStatParada: sem parada (%s) = null', (_n, chamada, extra) => {
+    const d = decidirLote(entrada(chamada, extra));
+    expect(d.situacao).toBe('ok');
+    expect(d.cStatParada).toBeNull();
+  });
+  it('cStatParada com relógio e outra parada no mesmo lote: o da parada que venceu', () => {
+    const rets = [ret(VETOR, '210210', 577), ret(K880, '210200', 250)];
+    // sem o relógio no lote anterior, o 577 só pausa: a parada é a do 250
+    expect(decidirLote(entrada(lote(128, rets)))).toMatchObject({ situacao: 'parada_configuracao', cStatParada: 250, relogio: true });
+    // com ele, as duas param e vale a do 1º evento da entrada
+    expect(decidirLote(entrada(lote(128, rets), { relogioNoLoteAnterior: true }))).toMatchObject({
+      situacao: 'parada_relogio', mensagem: F.relogioParou, cStatParada: 577,
+    });
+    expect(decidirLote(entrada(lote(128, rets), { relogioNoLoteAnterior: true, eventos: [EV_K880, EV_VETOR] }))).toMatchObject({
+      situacao: 'parada_configuracao', mensagem: F.outroCodigo(250), cStatParada: 250,
+    });
   });
 });
 

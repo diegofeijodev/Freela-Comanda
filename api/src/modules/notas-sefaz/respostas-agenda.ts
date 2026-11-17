@@ -59,13 +59,26 @@ export interface DecisaoLote {
   falhasSeguidas: number;
   /** O lote mostrou relógio (577–579): o serviço marca o lote, e o 2º seguido para. */
   relogio: boolean;
+  /**
+   * O código que parou as respostas, para o histórico: o `cStat` do lote ou do evento, ou o status HTTP (é o "(código N)" da frase). Com relógio e
+   * outra parada no mesmo lote, o da parada que venceu. null sem parada, ou na parada que não tem código (3 remessas sem resposta por tempo, queda
+   * ou ilegível).
+   */
+  cStatParada: number | null;
 }
 
 type Evento = EntradaLote['eventos'][number];
 type Retorno = Extract<ChamadaLote, { tipo: 'retorno' }>['retornos'][number];
-type Parada = { situacao: Exclude<SituacaoRespostas, 'ok'>; mensagem: string };
+type Parada = { situacao: Exclude<SituacaoRespostas, 'ok'>; mensagem: string; cStat: number };
+type Pausa = { ate: Date; mensagem: string };
 
 const maisMs = (d: Date, ms: number) => new Date(d.getTime() + ms);
+
+/** A pausa mais longa entre a atual e a nova (agora + ms), com a frase dela; no empate fica a atual (a do evento que veio antes). */
+function maisLonga(atual: Pausa | null, agora: Date, ms: number, frase: (h: string) => string): Pausa {
+  const ate = maisMs(agora, ms);
+  return atual && atual.ate >= ate ? atual : { ate, mensagem: frase(horaSp(ate)) };
+}
 
 // Tabela "Evento": volta à fila sem gastar e as respostas param.
 const EVENTO_DEFEITO_NOSSO = new Set([250, 252, 489, 490, 491, 492, 493, 572, 594, 595, 297, 298]);
@@ -98,7 +111,7 @@ export function decidirLote(e: EntradaLote): DecisaoLote {
 
 function decidirCodigoDoLote(e: EntradaLote, cStat: number): DecisaoLote {
   const todos = (gastou: boolean) => e.eventos.map((ev) => deVolta(ev, gastou));
-  const base = { resultado: 'respondida' as const, falhasSeguidas: 0, relogio: false };
+  const base = { resultado: 'respondida' as const, falhasSeguidas: 0, relogio: false, cStatParada: null };
 
   if (cStat === 108 || cStat === 109) {
     const pausaAte = maisMs(e.agora, PAUSA_FORA_DO_AR_MS);
@@ -108,7 +121,14 @@ function decidirCodigoDoLote(e: EntradaLote, cStat: number): DecisaoLote {
     // O 2º em 24 h para; a pausa vale nos dois casos (a SEFAZ bloqueia por 1 h de qualquer jeito).
     const pausaAte = maisMs(e.agora, PAUSA_656_MS);
     if (e.vezes656Em24h >= 1) {
-      return { ...base, eventos: todos(false), situacao: 'parada_656', mensagem: FRASE_RESPOSTA.bloqueouDuasVezes, pausaAte };
+      return {
+        ...base,
+        eventos: todos(false),
+        situacao: 'parada_656',
+        mensagem: FRASE_RESPOSTA.bloqueouDuasVezes,
+        pausaAte,
+        cStatParada: 656,
+      };
     }
     return { ...base, eventos: todos(false), situacao: 'ok', mensagem: FRASE_RESPOSTA.esperar(horaSp(pausaAte)), pausaAte };
   }
@@ -124,14 +144,23 @@ function decidirCodigoDoLote(e: EntradaLote, cStat: number): DecisaoLote {
       situacao: 'parada_certificado',
       mensagem: FRASE_RESPOSTA.certificadoRecusado(cStat),
       pausaAte: null,
+      cStatParada: cStat,
     };
   }
   // 214, 225, 252, 402, 404, 516, 517, 587, 588 (defeito nosso) e qualquer outro código: param, com o código na frase.
-  return { ...base, eventos: todos(false), situacao: 'parada_configuracao', mensagem: FRASE_RESPOSTA.outroCodigo(cStat), pausaAte: null };
+  return {
+    ...base,
+    eventos: todos(false),
+    situacao: 'parada_configuracao',
+    mensagem: FRASE_RESPOSTA.outroCodigo(cStat),
+    pausaAte: null,
+    cStatParada: cStat,
+  };
 }
 
 function decidir128(e: EntradaLote, retornos: Retorno[]): DecisaoLote {
   let parada: Parada | null = null; // vale a do 1º evento da entrada que parar
+  let pausa: Pausa | null = null; // vale a mais longa; no empate, a do 1º evento
   let relogio = false;
   const eventos: DecisaoEvento[] = [];
   for (const ev of e.eventos) {
@@ -144,15 +173,26 @@ function decidir128(e: EntradaLote, retornos: Retorno[]): DecisaoLote {
     const s = r.cStat;
     if (s === 135 || s === 136 || s === 573) {
       eventos.push({ id: ev.id, estado: 'registrada', gastou: true, cStat: s, protocolo: r.nProt, mensagem: null });
+    } else if (s === 108 || s === 109) {
+      // Serviço parado dentro do evento: como o 108/109 do lote (decisão do controlador; a tabela do evento não os lista).
+      pausa = maisLonga(pausa, e.agora, PAUSA_FORA_DO_AR_MS, FRASE_RESPOSTA.foraDoAr);
+      eventos.push(deVolta(ev, false, s));
+    } else if (s === 656) {
+      // 656 dentro do evento conta como o do lote: +65, e o 2º em 24 h para (decisão do controlador).
+      pausa = maisLonga(pausa, e.agora, PAUSA_656_MS, FRASE_RESPOSTA.esperar);
+      if (e.vezes656Em24h >= 1) parada ??= { situacao: 'parada_656', mensagem: FRASE_RESPOSTA.bloqueouDuasVezes, cStat: s };
+      eventos.push(deVolta(ev, false, s));
     } else if (eventoRelogio(s)) {
+      // +60 mesmo quando outro evento parou as respostas (ao religar, a SEFAZ ainda recusaria a hora).
       relogio = true;
-      if (e.relogioNoLoteAnterior) parada ??= { situacao: 'parada_relogio', mensagem: FRASE_RESPOSTA.relogioParou };
+      pausa = maisLonga(pausa, e.agora, PAUSA_RELOGIO_MS, FRASE_RESPOSTA.relogio);
+      if (e.relogioNoLoteAnterior) parada ??= { situacao: 'parada_relogio', mensagem: FRASE_RESPOSTA.relogioParou, cStat: s };
       eventos.push(deVolta(ev, false, s));
     } else if (eventoCertificado(s)) {
-      parada ??= { situacao: 'parada_certificado', mensagem: FRASE_RESPOSTA.certificadoRecusado(s) };
+      parada ??= { situacao: 'parada_certificado', mensagem: FRASE_RESPOSTA.certificadoRecusado(s), cStat: s };
       eventos.push(deVolta(ev, false, s));
     } else if (EVENTO_DEFEITO_NOSSO.has(s)) {
-      parada ??= { situacao: 'parada_configuracao', mensagem: FRASE_RESPOSTA.outroCodigo(s) };
+      parada ??= { situacao: 'parada_configuracao', mensagem: FRASE_RESPOSTA.outroCodigo(s), cStat: s };
       eventos.push(deVolta(ev, false, s));
     } else if (s === 999) {
       eventos.push(deVolta(ev, true, s));
@@ -160,33 +200,48 @@ function decidir128(e: EntradaLote, retornos: Retorno[]): DecisaoLote {
       eventos.push({ id: ev.id, estado: 'recusada', gastou: true, cStat: s, protocolo: null, mensagem: fraseRecusa(s, ev.tpEvento) });
     }
   }
+  // Todos os eventos com 999: a SEFAZ está instável; além de gastar, o lote espera +15 (decisão do controlador).
+  if (eventos.length > 0 && eventos.every((x) => x.cStat === 999)) {
+    pausa = maisLonga(pausa, e.agora, PAUSA_CURTA_MS, FRASE_RESPOSTA.foraDoAr);
+  }
 
-  // Relógio: +60 mesmo quando outro evento parou as respostas (ao religar, a SEFAZ ainda recusaria a hora).
-  const pausaAte = relogio ? maisMs(e.agora, PAUSA_RELOGIO_MS) : null;
   return {
     resultado: 'respondida',
     eventos,
     situacao: parada?.situacao ?? 'ok',
-    mensagem: parada?.mensagem ?? (pausaAte ? FRASE_RESPOSTA.relogio(horaSp(pausaAte)) : null),
-    pausaAte,
+    mensagem: parada?.mensagem ?? pausa?.mensagem ?? null,
+    pausaAte: pausa?.ate ?? null,
     falhasSeguidas: 0,
     relogio,
+    cStatParada: parada?.cStat ?? null,
   };
 }
 
 function decidirErro(e: EntradaLote, c: Extract<ChamadaLote, { tipo: 'erro' }>): DecisaoLote {
   const todos = (gastou: boolean) => e.eventos.map((ev) => deVolta(ev, gastou));
-  const respondida = { resultado: 'respondida' as const, falhasSeguidas: 0, relogio: false, pausaAte: null };
+  const respondida = { resultado: 'respondida' as const, falhasSeguidas: 0, relogio: false, pausaAte: null, cStatParada: null };
 
   if (c.code === 'SEFAZ_HTTP') {
     const st = c.httpStatus;
     if (st === 403) {
-      return { ...respondida, eventos: todos(false), situacao: 'parada_certificado', mensagem: FRASE_RESPOSTA.certificadoRecusado(403) };
+      return {
+        ...respondida,
+        eventos: todos(false),
+        situacao: 'parada_certificado',
+        mensagem: FRASE_RESPOSTA.certificadoRecusado(403),
+        cStatParada: 403,
+      };
     }
     if (st === undefined || (st >= 500 && st <= 599)) {
       // Fault que não é `Receiver`: a SEFAZ recusou o nosso pedido (action ou corpo); `outro` = desconhecido, que nunca repete.
       if (st !== undefined && c.fault !== undefined && c.fault !== 'Receiver') {
-        return { ...respondida, eventos: todos(false), situacao: 'parada_configuracao', mensagem: FRASE_RESPOSTA.outroCodigo(st) };
+        return {
+          ...respondida,
+          eventos: todos(false),
+          situacao: 'parada_configuracao',
+          mensagem: FRASE_RESPOSTA.outroCodigo(st),
+          cStatParada: st,
+        };
       }
       // Sem Fault ou com `Receiver`: como 108/109, mas conta na sequência de lotes sem resposta útil (o 3º seguido para).
       const pausaAte = maisMs(e.agora, PAUSA_FORA_DO_AR_MS);
@@ -196,12 +251,19 @@ function decidirErro(e: EntradaLote, c: Extract<ChamadaLote, { tipo: 'erro' }>):
         eventos: todos(false),
         falhasSeguidas: 0,
         relogio: false,
+        cStatParada: parou ? (st ?? null) : null,
         pausaAte,
         situacao: parou ? 'parada_configuracao' : 'ok',
         mensagem: parou ? FRASE_RESPOSTA.tresIlegiveis : FRASE_RESPOSTA.foraDoAr(horaSp(pausaAte)),
       };
     }
-    return { ...respondida, eventos: todos(false), situacao: 'parada_configuracao', mensagem: FRASE_RESPOSTA.outroCodigo(st) };
+    return {
+      ...respondida,
+      eventos: todos(false),
+      situacao: 'parada_configuracao',
+      mensagem: FRASE_RESPOSTA.outroCodigo(st),
+      cStatParada: st,
+    };
   }
 
   if (!c.enviado) {
@@ -215,6 +277,7 @@ function decidirErro(e: EntradaLote, c: Extract<ChamadaLote, { tipo: 'erro' }>):
       pausaAte,
       falhasSeguidas: e.falhasSeguidas + 1,
       relogio: false,
+      cStatParada: null,
     };
   }
 
@@ -227,6 +290,7 @@ function decidirErro(e: EntradaLote, c: Extract<ChamadaLote, { tipo: 'erro' }>):
     pausaAte,
     falhasSeguidas: e.falhasSeguidas + 1,
     relogio: false,
+    cStatParada: null,
     situacao: parou ? 'parada_configuracao' : 'ok',
     mensagem: parou ? FRASE_RESPOSTA.tresIlegiveis : FRASE_RESPOSTA.semContato(horaSp(pausaAte)),
   };
