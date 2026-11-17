@@ -17,8 +17,9 @@ import { cpfValido, gtinValido } from '../../common/fiscal/documentos';
 import { cabeNoEsquema, textoDoCupom } from '../../common/fiscal/texto-fiscal';
 import { XMLDSIG } from '../sefaz/assinatura-xml';
 import { dhSefaz } from '../sefaz/eventos-xml';
+import { FRASES_VALIDACAO } from './frases';
 import { calcularTotais, decimal2, quantidadeValida, type Totais, type TPag } from './totais';
-import { CRT_COM_CSOSN, CST_PIS_COFINS_NT, CST_PIS_COFINS_OUTR_ZERADO, FRASES_VALIDACAO, type Crt } from './validacao-fiscal';
+import { CRT_COM_CSOSN, CST_PIS_COFINS_NT, CST_PIS_COFINS_OUTR_ZERADO, type Crt } from './validacao-fiscal';
 
 export const NS_NFE = 'http://www.portalfiscal.inf.br/nfe';
 export const VER_PROC = 'FreelaComanda 1.0';

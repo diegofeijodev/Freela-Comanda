@@ -2,10 +2,11 @@
 // Só as regras do desenho (§3.2, tabela da pesquisa B.8; §6 para os campos de 2027, que aqui só têm o formato conferido).
 // O que muda por empresa (os códigos de cada perfil) é do contador e fica no banco; aqui ficam só as combinações que a SEFAZ aceita.
 // Frases: as da UX §6.2 e as do NCM/CEST (§5.7) literais; as do plano (Task 5) literais; as de formato da UX §5.6/§5.7 ganham o nome
-// do campo (a resposta 422 vem sozinha); as outras no estilo da UX §6.3. A Task 9 leva estas frases para `frases.ts`.
+// do campo (a resposta 422 vem sozinha); as outras no estilo da UX §6.3. Todas moram em `frases.ts` (`FRASES_VALIDACAO`, fonte única).
 
 import { gtinValido } from '../../common/fiscal/documentos';
 import { cabeNoEsquema, textoDoCupom } from '../../common/fiscal/texto-fiscal';
+import { FRASES_VALIDACAO } from './frases';
 import { precoCentavos } from './totais';
 
 export type Crt = 1 | 2 | 3 | 4;
@@ -46,54 +47,6 @@ export const CST_PIS_COFINS_NT = ['04', '05', '06', '07', '08', '09'] as const;
 export const CST_PIS_COFINS_OUTR_ZERADO = ['49', '99'] as const;
 /** Os outros pedem alíquota (ou quantidade), que o perfil ainda não tem: ficam barrados (T6-3). */
 const CST_PIS_COFINS_ACEITOS = [...CST_PIS_COFINS_NT, ...CST_PIS_COFINS_OUTR_ZERADO] as const;
-
-/** Formata o CFOP como na tela: 5405 → 5.405. */
-const cfopTexto = (c: string) => `${c[0]}.${c.slice(1)}`;
-
-const listaCfop = (cs: readonly string[]) => {
-  const t = cs.map(cfopTexto);
-  return t.length === 1 ? t[0] : `${t.slice(0, -1).join(', ')} ou ${t[t.length - 1]}`;
-};
-
-export const FRASES_VALIDACAO = {
-  // UX §6.2 (literais)
-  csosn500: 'O CSOSN 500 só vale com o CFOP 5.405.',
-  simplesSemCsosn: 'No Simples, escolha o CSOSN.',
-  normalSemCst: 'No regime normal, escolha o CST.',
-  // plano (Task 5)
-  osDois: 'Escolha o CSOSN (Simples) ou o CST (regime normal), não os dois.',
-  csosnSemSt: (csosn: string) => `O CSOSN ${csosn} só vale com o tipo de venda (CFOP) ${listaCfop(CFOP_SEM_ST)}.`,
-  cfopFora: (cfop: string) => `O tipo de venda (CFOP) ${cfopTexto(cfop)} não entra no cupom.`,
-  // UX §5.7 (literal)
-  gtin: 'Este código de barras não confere. Confira os números (8, 12, 13 ou 14).',
-  // decisões do controlador na rodada da Tarefa 6 (literais)
-  cst20: 'O CST 20 ainda não pode ser usado no Comanda. Fale com o contador.',
-  semAliqIcms: 'Informe a alíquota do ICMS.',
-  pisCofinsBarrado: 'Este CST de PIS/COFINS ainda não pode ser usado no Comanda. Fale com o contador.',
-  // texto fora do TString do esquema (U+0020–U+00FF), no estilo "não confere" da UX §6.3
-  nomeCaractere: 'O nome no cupom não confere: a SEFAZ não aceita emoji nem símbolos.',
-  unidadeCaractere: 'A unidade no cupom não confere: a SEFAZ não aceita emoji nem símbolos.',
-  // UX §5.7 (literais)
-  ncm: 'O NCM tem 8 números.',
-  cest: 'O CEST tem 7 números.',
-  // novas, no estilo da UX §6.3 (as de formato dão nome ao campo do "Use 2 números." da UX §5.6/§5.7)
-  semCfop: 'Escolha o tipo de venda (CFOP).',
-  semCodigo: 'Escolha o CSOSN (Simples) ou o CST (regime normal).',
-  csosnFora: (csosn: string) => `O CSOSN ${csosn} não entra no cupom.`,
-  cstFora: (cst: string) => `O CST ${cst} não entra no cupom.`,
-  cst60: `O CST 60 só vale com o tipo de venda (CFOP) ${listaCfop(CFOP_CST_60)}.`,
-  aliqIcms: 'A alíquota do ICMS vai de 0 a 100, com até 2 casas.',
-  pisCst: 'O CST do PIS tem 2 números.',
-  cofinsCst: 'O CST da COFINS tem 2 números.',
-  cAtivSn: 'A atividade no Simples (cAtivSN) tem 2 números.',
-  ibsSnAliq: 'A alíquota efetiva do IBS vai de 0 a 100, com até 4 casas.',
-  cbsSnAliq: 'A alíquota efetiva da CBS vai de 0 a 100, com até 4 casas.',
-  ibscbsCst: 'O CST do IBS/CBS tem 3 números.',
-  ibscbsCclassTrib: 'A classificação do IBS/CBS (cClassTrib) tem 6 números.',
-  origem: 'A origem vai de 0 a 8.',
-  descricao: 'O nome no cupom tem até 120 letras.',
-  unidade: 'A unidade no cupom tem até 6 letras.',
-} as const;
 
 const F = FRASES_VALIDACAO;
 
@@ -142,12 +95,12 @@ export function erroDoPerfil(p: PerfilFiscal, crt: Crt | null): string | null {
     if (csosn === '500') {
       if (!contem(CFOP_CSOSN_500, cfop)) return F.csosn500;
     } else if (!contem(CFOP_SEM_ST, cfop)) {
-      return F.csosnSemSt(csosn);
+      return F.csosnSemSt(csosn, CFOP_SEM_ST);
     }
   } else if (cst !== null) {
     if (!contem(CST_ACEITOS, cst)) return F.cstFora(cst);
     if (cst === '20') return F.cst20; // o grupo ICMS20 pede a redução da base (pRedBC), que o perfil não tem (T6-2)
-    if (cst === '60' && !contem(CFOP_CST_60, cfop)) return F.cst60;
+    if (cst === '60' && !contem(CFOP_CST_60, cfop)) return F.cst60(CFOP_CST_60);
     if (cst === '00' && aliq === null) return F.semAliqIcms;
   }
 
