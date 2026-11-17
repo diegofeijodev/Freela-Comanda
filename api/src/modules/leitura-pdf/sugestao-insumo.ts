@@ -61,3 +61,30 @@ export function limparItens(itens: ItemIa[], insumos: { id: string; nome: string
     };
   });
 }
+
+/** O que a IA devolve por linha na sugestão de insumo dos itens do XML. */
+export type SugestaoIa = {
+  indice: number;
+  insumo: string | null;
+  novo_nome: string | null;
+  novo_unidade: string | null;
+  novo_subgrupo: string | null;
+  fator: number;
+};
+
+/** As linhas da nota que vão no pedido: "1. DESCRIÇÃO (UN)", uma por linha, o número começa em 1. Só descrição e unidade saem. */
+export function linhasNumeradas(itens: { descricao: string; unidade?: string | null }[]): string {
+  return itens.map((it, i) => `${i + 1}. ${it.descricao}${it.unidade?.trim() ? ` (${it.unidade.trim()})` : ''}`).join('\n');
+}
+
+/** Junta a resposta da IA às `n` linhas pelo `indice` (inteiro de 1 a n). Repetido: o primeiro vence; fora disso: ignorado; faltando: null. */
+export function casarPorIndice(resposta: unknown[], n: number): (Omit<SugestaoIa, 'indice'> | null)[] {
+  const out: (Omit<SugestaoIa, 'indice'> | null)[] = Array.from({ length: n }, () => null);
+  for (const r of resposta) {
+    if (!r || typeof r !== 'object') continue;
+    const { indice, ...resto } = r as SugestaoIa;
+    if (!Number.isInteger(indice) || indice < 1 || indice > n || out[indice - 1]) continue;
+    out[indice - 1] = resto;
+  }
+  return out;
+}

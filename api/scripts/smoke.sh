@@ -348,6 +348,12 @@ check "arquivo que não é imagem" "O arquivo não é uma imagem (JPG, PNG ou We
 CODE=$(curl -s -o "$OUT" -w '%{http_code}' -H "authorization: Bearer $ADM" -F "a=@$JPG" -F "b=@$JPG" -F "c=@$JPG" -F "d=@$JPG" -F "e=@$JPG" "$BASE/v1/notas/ler-foto"); BODY=$(cat "$OUT")
 check "cinco fotos" "Envie até 4 fotos da mesma nota." "$(j .error.message)"; check "cinco fotos: 400" 400 "$CODE"
 CODE=$(curl -s -o "$OUT" -w '%{http_code}' -H "authorization: Bearer $LOJA" -F "arquivo=@$JPG" "$BASE/v1/notas/ler-foto"); check "loja não lê foto" 403 "$CODE"
+# sugestão de insumo por IA para os itens do XML (só texto)
+req POST /v1/notas/sugerir-insumos "$ADM" '{"itens":[{"descricao":"TOMATE ITALIANO","unidade":"KG"}]}'; check "sugerir insumos sem chave" PDF_NAO_CONFIGURADO "$(j .error.code)"; check "sugerir insumos sem chave: 503" 503 "$CODE"
+req POST /v1/notas/sugerir-insumos "$LOJA" '{"itens":[{"descricao":"TOMATE"}]}'; check "loja não pede sugestão de insumo" 403 "$CODE"
+req POST /v1/notas/sugerir-insumos "$ADM" '{"itens":[]}'; check "sugerir insumos sem linhas: 400" 400 "$CODE"
+req POST /v1/notas/sugerir-insumos "$ADM" "$(jq -nc '{itens: [range(201) | {descricao: "X"}]}')"; check "sugerir insumos com 201 linhas: 400" 400 "$CODE"
+req POST /v1/notas/sugerir-insumos "$ADM" '{"itens":[{"descricao":"X","valor_total":10}]}'; check "sugerir insumos com campo a mais: 400" 400 "$CODE"
 # ---------- certificado digital (A1): só admin; .pfx de TESTE do repositório (senha senha-de-teste); nada sensível volta nem é gravado em claro
 FIX=src/modules/certificado-digital/__tests__/fixtures
 cert() { # cert ARQUIVO SENHA → corpo JSON do PUT

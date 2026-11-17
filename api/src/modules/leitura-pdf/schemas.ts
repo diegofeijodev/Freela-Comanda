@@ -80,6 +80,40 @@ export const INSTRUCOES_NOTA_SUGESTAO =
   '"novo_unidade" (KG, L, UN...) e "novo_subgrupo" (um da lista de subgrupos). "fator" = quantas unidades do estoque há em uma unidade da nota ' +
   '(ex.: "CX C/12" = 12); use 1 quando não der para saber.';
 
+const campoInsumo = SCHEMA_NOTA_SUGESTAO.properties.itens.items.properties;
+
+/** Sugestão de insumo para linhas de uma nota XML (só texto): uma resposta por linha, casada pelo número da linha. */
+export const SCHEMA_SUGESTAO_ITENS = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['itens'],
+  properties: {
+    itens: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['indice', 'insumo', 'novo_nome', 'novo_unidade', 'novo_subgrupo', 'fator'],
+        properties: {
+          indice: { type: 'integer', description: 'Número da linha da nota, como foi enviado (começa em 1)' },
+          insumo: campoInsumo.insumo,
+          novo_nome: campoInsumo.novo_nome,
+          novo_unidade: campoInsumo.novo_unidade,
+          novo_subgrupo: campoInsumo.novo_subgrupo,
+          fator: campoInsumo.fator,
+        },
+      },
+    },
+  },
+};
+
+export const INSTRUCOES_SUGESTAO_ITENS =
+  'Você ajuda a cadastrar notas fiscais brasileiras num estoque de restaurante. Você recebe a lista de insumos do estoque, os subgrupos existentes e as linhas de uma nota, numeradas. ' +
+  'Em cada linha, devolva em "insumo" o nome EXATO de um item da lista, só o nome, sem a unidade entre parênteses, quando o produto da linha for esse insumo, e null quando não houver. ' +
+  'Quando for null, preencha "novo_nome" (nome limpo e curto, sem marca nem embalagem quando fizer sentido), "novo_unidade" (KG, L, UN...) e "novo_subgrupo" (um da lista de subgrupos). ' +
+  '"fator" = quantas unidades do estoque há em uma unidade da nota (ex.: "CX C/12" = 12); use 1 quando não der para saber. ' +
+  'Devolva um item por linha, com "indice" = o número da linha.';
+
 export const SCHEMA_DDA = {
   type: 'object',
   additionalProperties: false,

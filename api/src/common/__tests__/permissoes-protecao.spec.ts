@@ -86,6 +86,10 @@ describe('proteção das rotas (substitui as políticas RLS do Supabase)', () =>
     ]);
   });
 
+  it('a sugestão de insumo por IA dos itens do XML é só do admin', () => {
+    expect(todas.filter((r) => r.rota.includes('/sugerir-insumos'))).toEqual([{ rota: 'POST /v1/notas/sugerir-insumos', marca: 'admin' }]);
+  });
+
   it('a leitura de nota e de DDA por IA é só do admin', () => {
     expect(todas.filter((r) => r.rota.includes('/ler-'))).toEqual([
       { rota: 'POST /v1/notas/ler-pdf', marca: 'admin' },

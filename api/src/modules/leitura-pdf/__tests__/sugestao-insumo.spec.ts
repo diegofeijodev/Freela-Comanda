@@ -1,5 +1,5 @@
 import { normalizaNome } from '../../../common/parse/normaliza';
-import { limparItens, textoCatalogo, type ItemIa } from '../sugestao-insumo';
+import { casarPorIndice, limparItens, linhasNumeradas, textoCatalogo, type ItemIa } from '../sugestao-insumo';
 
 const base: ItemIa = {
   codigo: null,
@@ -75,5 +75,26 @@ describe('textoCatalogo / normalizaNome', () => {
   });
   it('normalizaNome', () => {
     expect(normalizaNome('  Requeijão   CREMOSO ')).toBe('requeijao cremoso');
+  });
+});
+
+describe('linhasNumeradas', () => {
+  it('numera a partir de 1, com a unidade entre parênteses quando houver', () => {
+    expect(linhasNumeradas([{ descricao: 'PICANHA BOVINA KG', unidade: 'KG' }, { descricao: 'SACOLA' }])).toBe('1. PICANHA BOVINA KG (KG)\n2. SACOLA');
+  });
+});
+
+describe('casarPorIndice', () => {
+  const s = (indice: unknown, insumo: string | null = null) => ({ indice, insumo, novo_nome: null, novo_unidade: null, novo_subgrupo: null, fator: 1 });
+  const sem = (insumo: string | null) => ({ insumo, novo_nome: null, novo_unidade: null, novo_subgrupo: null, fator: 1 });
+
+  it('casa por índice, em qualquer ordem; faltando vira null', () => {
+    expect(casarPorIndice([s(3, 'c'), s(1, 'a')], 3)).toEqual([sem('a'), null, sem('c')]);
+  });
+  it('índice repetido: o primeiro vence', () => {
+    expect(casarPorIndice([s(1, 'primeiro'), s(1, 'segundo')], 3)).toEqual([sem('primeiro'), null, null]);
+  });
+  it('índices 0, 4 e 1.5 são ignorados', () => {
+    expect(casarPorIndice([s(0, 'x'), s(4, 'x'), s(1.5, 'x'), null, 'lixo'], 3)).toEqual([null, null, null]);
   });
 });

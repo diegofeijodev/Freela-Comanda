@@ -1,9 +1,10 @@
-import { BadRequestException, Controller, HttpCode, HttpException, Post, Req } from '@nestjs/common';
+import { BadRequestException, Body, Controller, HttpCode, HttpException, Post, Req } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { FastifyRequest } from 'fastify';
 import { AdminOnly } from '../../common/decorators/permissao.decorator';
 import { LeituraPdfErro, type ArquivoLeitura, type MimeArquivo } from './leitor-pdf.port';
 import { LeituraPdfService } from './leitura-pdf.service';
+import { SugerirInsumosDto } from './sugerir-insumos.dto';
 
 type Parte = { filename: string; toBuffer: () => Promise<Buffer>; file: { truncated: boolean } };
 type Multipart = { files: () => AsyncIterableIterator<Parte>; file: () => Promise<{ filename: string; toBuffer: () => Promise<Buffer>; file: { truncated: boolean } } | undefined> };
@@ -100,6 +101,13 @@ export class LeituraPdfController {
       }
       return comoHttp(e);
     });
+  }
+
+  /** Sugestão de insumo por IA para as linhas sem vínculo de uma nota XML (só descrição e unidade). Sem chave de IA: 503 PDF_NAO_CONFIGURADO. */
+  @HttpCode(200)
+  @Post('notas/sugerir-insumos')
+  sugerirInsumos(@Body() dto: SugerirInsumosDto) {
+    return this.svc.sugerirInsumos(dto.itens).catch(comoHttp);
   }
 
   @HttpCode(200)

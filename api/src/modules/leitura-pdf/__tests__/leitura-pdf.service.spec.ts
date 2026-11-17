@@ -1,7 +1,7 @@
 import { ClaudeLeitorPdf } from '../claude-leitor-pdf';
 import { LeituraPdfErro, MSG, type LeitorPdf, type PedidoLeitura } from '../leitor-pdf.port';
 import { iso, LeituraPdfService } from '../leitura-pdf.service';
-import { SCHEMA_DDA, SCHEMA_NOTA_SUGESTAO } from '../schemas';
+import { INSTRUCOES_SUGESTAO_ITENS, SCHEMA_DDA, SCHEMA_NOTA_SUGESTAO, SCHEMA_SUGESTAO_ITENS } from '../schemas';
 import type { PrismaService } from '../../../common/database/prisma.service';
 
 /** Leitor falso: nenhum teste faz rede. Guarda o pedido para conferir esquema/instruções. */
@@ -119,5 +119,56 @@ describe('leitura de PDF', () => {
     expect(iso('05/03/2026')).toBe('2026-03-05');
     expect(iso('2026-03-05T10:00:00')).toBe('2026-03-05');
     expect(iso(null)).toBe('');
+  });
+});
+
+describe('sugerirInsumos', () => {
+  const linhas = [{ descricao: 'TOMATE ITALIANO', unidade: 'KG' }, { descricao: 'SACOLA PLASTICA', unidade: 'un' }, { descricao: 'FRETE' }];
+  const resposta = {
+    itens: [
+      { indice: 2, insumo: null, novo_nome: 'Sacola plástica', novo_unidade: 'un', novo_subgrupo: 'hortifruti', fator: 0 },
+      { indice: 1, insumo: 'tomate', novo_nome: null, novo_unidade: null, novo_subgrupo: null, fator: 1 },
+    ],
+  };
+
+  it('pedido só de texto, com catálogo e linhas numeradas; resposta casada por índice e limpa', async () => {
+    const leitor = new LeitorFalso(resposta);
+    const r = await servico(leitor).sugerirInsumos(linhas);
+    const p = leitor.pedidos[0]!;
+    expect(p.arquivos).toEqual([]);
+    expect(p.schema).toBe(SCHEMA_SUGESTAO_ITENS);
+    expect(p.instrucoes).toBe(INSTRUCOES_SUGESTAO_ITENS);
+    expect(p.pedido).toContain('- Tomate (KG)');
+    expect(p.pedido).toContain('1. TOMATE ITALIANO (KG)');
+    expect(r).toEqual({
+      itens: [
+        { item_estoque_id: 'i1', novo: null, fator: 1 },
+        { item_estoque_id: null, novo: { nome: 'Sacola plástica', unidade: 'UN', subgrupo: 'Hortifruti' }, fator: 1 },
+        { item_estoque_id: null, novo: { nome: 'FRETE', unidade: 'UN', subgrupo: null }, fator: 1 },
+      ],
+    });
+  });
+
+  it('nada além de descrição e unidade vai para a IA', async () => {
+    const leitor = new LeitorFalso(resposta);
+    await servico(leitor).sugerirInsumos([{ descricao: 'TOMATE', unidade: 'KG', valor_total: 99, fornecedor_cnpj: '12345678000195' } as never]);
+    expect(leitor.pedidos[0]!.pedido).not.toMatch(/99|12345678000195/);
+  });
+
+  it('resposta sem itens em array: 422 SUGESTAO_ILEGIVEL', async () => {
+    await expect(servico(new LeitorFalso({ foo: 1 })).sugerirInsumos(linhas)).rejects.toMatchObject({
+      message: 'Não consegui sugerir os insumos desta nota.',
+      status: 422,
+      code: 'SUGESTAO_ILEGIVEL',
+    });
+  });
+
+  it('erro do leitor (503 sem chave) passa como está', async () => {
+    const leitor: LeitorPdf = {
+      ler: async () => {
+        throw new LeituraPdfErro(MSG.naoConfigurada, 503, 'PDF_NAO_CONFIGURADO');
+      },
+    };
+    await expect(servico(leitor).sugerirInsumos(linhas)).rejects.toMatchObject({ status: 503, code: 'PDF_NAO_CONFIGURADO' });
   });
 });

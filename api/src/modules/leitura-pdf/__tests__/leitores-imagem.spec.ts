@@ -30,6 +30,10 @@ describe('blocosClaude', () => {
     ]);
   });
 
+  it('sem arquivo (pedido só de texto) não gera bloco', () => {
+    expect(blocosClaude([])).toEqual([]);
+  });
+
   it('várias imagens mantêm a ordem da lista', () => {
     expect(blocosClaude([jpeg, png, webp]).map((b: any) => b.source.media_type)).toEqual(['image/jpeg', 'image/png', 'image/webp']);
   });
@@ -48,6 +52,12 @@ describe('OpenAI com imagens', () => {
     ]);
   });
 
+  it('sem arquivo, só a parte de texto', async () => {
+    const { http, pedidos } = httpFalso(ok);
+    await new OpenAiLeitorPdf('sk-x', 'gpt-4o', http).ler(pedido([]));
+    expect(pedidos[0]!.messages[1].content).toEqual([{ type: 'text', text: 'extraia' }]);
+  });
+
   it('PDF continua parte file', async () => {
     const { http, pedidos } = httpFalso(ok);
     await new OpenAiLeitorPdf('sk-x', 'gpt-4o', http).ler(pedido([pdf]));
@@ -61,5 +71,11 @@ describe('Gemini com imagens', () => {
     await new GeminiLeitorPdf('chave', 'gemini-2.5-flash', http).ler(pedido([webp]));
     expect(pedidos[0]!.contents[0].parts[0].inlineData.mimeType).toBe('image/webp');
     expect(pedidos[0]!.contents[0].parts).toEqual([{ inlineData: { mimeType: 'image/webp', data: 'CCCC' } }, { text: 'extraia' }]);
+  });
+
+  it('sem arquivo, só a parte de texto', async () => {
+    const { http, pedidos } = httpFalso({ candidates: [{ finishReason: 'STOP', content: { parts: [{ text: '{"a":1}' }] } }] });
+    await new GeminiLeitorPdf('chave', 'gemini-2.5-flash', http).ler(pedido([]));
+    expect(pedidos[0]!.contents[0].parts).toEqual([{ text: 'extraia' }]);
   });
 });

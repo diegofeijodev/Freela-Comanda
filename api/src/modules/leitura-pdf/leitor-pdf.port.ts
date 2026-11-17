@@ -13,7 +13,7 @@ export interface ArquivoLeitura {
 }
 
 export interface PedidoLeitura {
-  /** Um PDF ou 1 a 4 imagens, na ordem em que a IA deve ler. */
+  /** Um PDF ou 1 a 4 imagens, na ordem em que a IA deve ler; ou nenhum: pedido só de texto. */
   arquivos: ArquivoLeitura[];
   /** Instruções do protótipo (o "instructions" do gateway da Lovable), em pt-BR. */
   instrucoes: string;

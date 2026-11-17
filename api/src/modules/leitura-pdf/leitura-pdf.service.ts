@@ -4,8 +4,8 @@ import { normalizarCnpj } from '../../common/fiscal/cnpj';
 import { isDateString } from '../../common/time/dates';
 import { PrismaService } from '../../common/database/prisma.service';
 import { LEITOR_PDF, LeituraPdfErro, type ArquivoLeitura, type LeitorPdf } from './leitor-pdf.port';
-import { INSTRUCOES_DDA, INSTRUCOES_NOTA_SUGESTAO, SCHEMA_DDA, SCHEMA_NOTA_SUGESTAO } from './schemas';
-import { limparItens, textoCatalogo, type ItemIa } from './sugestao-insumo';
+import { INSTRUCOES_DDA, INSTRUCOES_NOTA_SUGESTAO, INSTRUCOES_SUGESTAO_ITENS, SCHEMA_DDA, SCHEMA_NOTA_SUGESTAO, SCHEMA_SUGESTAO_ITENS } from './schemas';
+import { casarPorIndice, limparItens, linhasNumeradas, textoCatalogo, type ItemIa } from './sugestao-insumo';
 
 /** dd/mm/aaaa → aaaa-mm-dd; o resto corta em 10 caracteres (o `iso` do protótipo). */
 export const iso = (d: string | null | undefined): string => {
@@ -63,6 +63,41 @@ export class LeituraPdfService {
     r.emitente_cnpj = typeof r.emitente_cnpj === 'string' ? normalizarCnpj(r.emitente_cnpj) || null : null;
     r.parcelas = (r.parcelas ?? []).map((p) => ({ ...p, vencimento: diaValido(p.vencimento) }));
     return { ...r, itens: limparItens(r.itens, insumos, subgrupos) };
+  }
+
+  /**
+   * Sugere o insumo de cada linha de uma nota XML sem vínculo salvo. Pedido só de texto: só descrição e unidade das linhas saem para a IA
+   * (nunca o XML, CNPJ, valores nem dados do fornecedor). Devolve uma sugestão por linha, na mesma ordem.
+   */
+  async sugerirInsumos(itens: { descricao: string; unidade?: string | null }[]) {
+    const [insumos, subs] = await Promise.all([
+      this.prisma.itens_estoque.findMany({ where: { ativo: true }, select: { id: true, nome: true, unidade: true }, orderBy: { nome: 'asc' } }),
+      this.prisma.subgrupos.findMany({ select: { nome: true }, orderBy: [{ ordem: 'asc' }, { nome: 'asc' }] }),
+    ]);
+    const subgrupos = subs.map((s) => s.nome);
+    const linhas = itens.map((i) => ({ descricao: i.descricao, unidade: i.unidade ?? null }));
+    const r = (await this.leitor.ler({
+      arquivos: [],
+      instrucoes: INSTRUCOES_SUGESTAO_ITENS,
+      pedido: `Indique o insumo do estoque de cada linha desta nota fiscal.\n\n${textoCatalogo(insumos, subgrupos)}\n\nLinhas da nota:\n${linhasNumeradas(linhas)}`,
+      schema: SCHEMA_SUGESTAO_ITENS,
+    })) as { itens?: unknown[] } | null;
+    if (!r || typeof r !== 'object' || !Array.isArray(r.itens)) {
+      throw new LeituraPdfErro('Não consegui sugerir os insumos desta nota.', 422, 'SUGESTAO_ILEGIVEL');
+    }
+    const casadas = casarPorIndice(r.itens, linhas.length);
+    const juntos: ItemIa[] = linhas.map((l, i) => ({
+      codigo: null,
+      descricao: l.descricao,
+      unidade: l.unidade,
+      quantidade: 0,
+      valor_unitario: 0,
+      valor_total: 0,
+      ...(casadas[i] ?? { insumo: null, novo_nome: null, novo_unidade: null, novo_subgrupo: null, fator: 1 }),
+    }));
+    return {
+      itens: limparItens(juntos, insumos, subgrupos).map(({ item_estoque_id, novo, fator }) => ({ item_estoque_id, novo, fator })),
+    };
   }
 
   async lerDDA(pdfBase64: string, nome: string) {
