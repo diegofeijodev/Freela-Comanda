@@ -649,7 +649,10 @@ const caixas = await Promise.all(['Substituir certificado', 'Remover'].map((n) =
   await cartao(990).getByRole('button', { name: 'Ignorar…' }).click();
   const dlg = page.getByRole('alertdialog');
   check('sefaz aba: diálogo "Ignorar esta nota?"', await sim(dlg.getByText('Ignorar esta nota?')));
-  await dlg.getByRole('button', { name: 'Ignorar nota' }).click();
+  // O botão fica só com aria-disabled sem motivo (o toque ainda chega e mostra o aviso); o Playwright trata aria-disabled como
+  // não clicável, por isso o force.
+  check('sefaz aba: "Ignorar nota" com aria-disabled sem motivo', (await dlg.getByRole('button', { name: 'Ignorar nota' }).getAttribute('aria-disabled')) === 'true');
+  await dlg.getByRole('button', { name: 'Ignorar nota' }).click({ force: true });
   check('sefaz aba: sem motivo mostra "Escolha o motivo."', await sim(dlg.getByText('Escolha o motivo.'), 10_000));
   await dlg.getByRole('radio', { name: 'Outro motivo' }).click();
   check('sefaz aba: "Outro motivo" abre "Escreva o motivo"', await sim(dlg.getByText('Escreva o motivo', { exact: true }), 10_000));

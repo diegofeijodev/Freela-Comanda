@@ -39,7 +39,7 @@ contrato: `docs/api-contract.md`. Protótipo de referência em `.prototype/` (gi
 
 1. **Nunca** `nest build` / `next build` numa tarefa comum.
 2. Todo comando pesado vai por `scripts/run-capped.sh <teto-MB> <cmd>` (cgroup com `MemoryMax` + lock `.cache/heavy.lock`):
-   jest/tsc/eslint 1500; smoke `api/scripts/smoke-capped.sh` 1300; browser-check `web/scripts/browser-check.sh` 2600. 137 = estourou o teto; 75 = sem memória agora.
+   jest/tsc/eslint 1500; smoke `api/scripts/smoke-capped.sh` 1300; browser-check `web/scripts/browser-check.sh` 3300 (desde 17/11 ele morre com 2600; precisa de ~3 GB livres). 137 = estourou o teto; 75 = sem memória agora.
 3. jest sempre `npx jest --runInBand <arquivos>` (o `jest.config.js` tem `maxWorkers: 1`), nunca uma pasta inteira sem `--runInBand`.
 4. Só UM de {jest, tsc, API, next dev, browser-check} por vez. Mate processos pelo PID (`ss -ltnp | grep :PORTA`), nunca `pkill -f`.
 
@@ -53,7 +53,7 @@ npm run prisma:migrate:deploy | prisma:generate
 ../scripts/run-capped.sh 1300 bash scripts/smoke-capped.sh        # smoke em banco descartável
 # web/
 yarn dev | typecheck | lint | test
-../scripts/run-capped.sh 2600 bash scripts/browser-check.sh       # navegador headless, capturas em .cache/telas
+../scripts/run-capped.sh 3300 bash scripts/browser-check.sh       # navegador headless, capturas em .cache/telas
 ```
 
 Seed de dev: `admin@erpfreela.local` / `erpfreela123` (admin) e `loja@erpfreela.local` / `erpfreela123` (loja).
