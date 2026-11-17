@@ -304,6 +304,13 @@ describe("resumoRespostas", () => {
       caixa: { tom: "neutro", texto: "As respostas à SEFAZ não estão ativadas neste servidor. Fale com o suporte do Freela Comanda se quiser usá-las." },
     });
   });
+  it("servidor sem a variável, com notas no aviso do prazo (I3): a frase e a linha do prazo, ainda sem tag nem botão", () => {
+    const x = r({ disponivel: false, prazos_perto: [{ id: "a", numero: "1", serie: "1", emitente_nome: "A", prazo_final: "2027-02-16T02:30:00Z" }] });
+    expect(x.tag).toBeNull();
+    expect(x.botao).toBeNull();
+    expect(x.caixa?.texto).toBe("As respostas à SEFAZ não estão ativadas neste servidor. Fale com o suporte do Freela Comanda se quiser usá-las.");
+    expect(x.linhas).toEqual([{ texto: "1 nota precisa de resposta até 15/02/2027", ver: "Ver as notas" }]);
+  });
   it("desligadas: tag, botão e a linha fixa", () => {
     const x = r({});
     expect(x.tag).toEqual({ tom: "muted", texto: "Desligadas" });
@@ -311,6 +318,12 @@ describe("resumoRespostas", () => {
     expect(x.botaoDesabilitado).toBe(false);
     expect(x.caixa).toBeNull();
     expect(x.linhas).toEqual([{ texto: "Com as respostas desligadas, nada é enviado à SEFAZ. O que estava na fila espera até você ligar de novo." }]);
+  });
+  it("desligadas com notas no aviso do prazo: a linha fixa e a do prazo (o aviso não depende de as respostas estarem ligadas)", () => {
+    expect(r({ prazos_perto: [{ id: "a", numero: "1", serie: "1", emitente_nome: "A", prazo_final: "2027-02-16T02:30:00Z" }] }).linhas).toEqual([
+      { texto: "Com as respostas desligadas, nada é enviado à SEFAZ. O que estava na fila espera até você ligar de novo." },
+      { texto: "1 nota precisa de resposta até 15/02/2027", ver: "Ver as notas" },
+    ]);
   });
   it("desligadas sem certificado ou sem CNPJ: botão desabilitado e a frase do certificado", () => {
     const cert = { ok: false, code: "CERTIFICADO_NAO_CADASTRADO", mensagem: "Envie o certificado digital da empresa no quadro acima para ligar a busca.", avisos: [] };
@@ -357,13 +370,40 @@ describe("resumoRespostas", () => {
     expect(r({ ligadas: true, pausa_ate: "2026-11-17T17:00:00Z", mensagem: m }).tag).toEqual({ tom: "ok", texto: "Ligadas" });
     expect(r({ ligadas: true, pausa_ate: "2026-11-17T17:00:00Z", mensagem: m }).caixa).toBeNull();
   });
-  it("parada: Paradas, caixa vermelha com a mensagem do servidor e ligar de novo", () => {
+  // O estado REAL de uma parada: o servidor nunca muda `ligada` (só a `situacao`), então chega `ligadas: true` + `parada_*`.
+  const parada = (situacao: SituacaoSefazLigada["respostas"]["situacao"], mensagem: string, p: Partial<SituacaoSefazLigada["respostas"]> = {}) =>
+    r({ ligadas: true, ligadas_por_nome: "Diego", ligadas_em: "2026-11-17T13:05:00Z", situacao, mensagem, ...p });
+  it("parada (ligadas: true, como o servidor manda): Paradas, caixa vermelha com a mensagem do servidor e Ligar de novo", () => {
     const m = "A SEFAZ recusou o certificado digital (código 280). Confira o certificado digital em Configurações e ligue as respostas de novo.";
-    const x = r({ situacao: "parada_certificado", mensagem: m });
+    const x = parada("parada_certificado", m);
     expect(x.tag).toEqual({ tom: "bad", texto: "Paradas" });
     expect(x.caixa).toEqual({ tom: "bad", texto: m });
     expect(x.botao).toBe("ligar_de_novo");
-    expect(r({ situacao: "parada_656", mensagem: "x" }).botao).toBe("ligar_de_novo");
+    expect(x.botaoDesabilitado).toBe(false);
+  });
+  it.each([
+    ["parada_656", "A SEFAZ bloqueou as respostas duas vezes em 24 horas. Por segurança, elas foram desligadas. Fale com o suporte do Freela Comanda antes de ligar de novo."],
+    ["parada_relogio", "As respostas pararam: o relógio do servidor está fora da hora certa. Fale com o suporte do Freela Comanda."],
+    ["parada_configuracao", "As respostas pararam: a SEFAZ respondeu 3 vezes de um jeito que o sistema não entende. Fale com o suporte do Freela Comanda."],
+    ["parada_certificado", "As respostas pararam: não foi possível assinar as respostas com o certificado digital. Confira o certificado digital em Configurações e ligue as respostas de novo."],
+  ] as const)("%s com ligadas: true: Ligar de novo (nunca Desligar), sem \"Ligadas por…\"; fila, prazo e falhas seguem", (situacao, m) => {
+    const x = parada(situacao, m, { na_fila: 2, falharam: 1, prazos_perto: [{ id: "a", numero: "1", serie: "1", emitente_nome: "A", prazo_final: "2027-02-16T02:30:00Z" }] });
+    expect(x.tag).toEqual({ tom: "bad", texto: "Paradas" });
+    expect(x.caixa).toEqual({ tom: "bad", texto: m });
+    expect(x.botao).toBe("ligar_de_novo");
+    expect(x.linhas).toEqual([
+      { texto: "2 respostas na fila" },
+      { texto: "1 nota precisa de resposta até 15/02/2027", ver: "Ver as notas" },
+      { texto: "1 resposta não foi enviada", ver: "Ver" },
+    ]);
+  });
+  it("parada sem certificado ou sem CNPJ: Ligar de novo desabilitado (a conferência de ligar recusaria)", () => {
+    const cert = { ok: false, code: "CERTIFICADO_VENCIDO", mensagem: "O certificado digital venceu em 01/11/2026. Envie o renovado para a busca voltar.", avisos: [] };
+    const resp = { ...base.respostas, ligadas: true, situacao: "parada_certificado" as const, mensagem: "x" };
+    expect(resumoRespostas(com({ certificado: cert, respostas: resp }), AGORA)).toMatchObject({ botao: "ligar_de_novo", botaoDesabilitado: true });
+    expect(resumoRespostas(com({ cnpj: null, respostas: resp }), AGORA)).toMatchObject({ botao: "ligar_de_novo", botaoDesabilitado: true });
+    // Desligar nunca fica desabilitado
+    expect(resumoRespostas(com({ certificado: cert, respostas: { ...resp, situacao: "ok" } }), AGORA)).toMatchObject({ botao: "desligar", botaoDesabilitado: false });
   });
   it("toast de ligar", () => {
     expect(toastRespostasLigadas()).toBe("Respostas ligadas. As primeiras saem em até 5 minutos.");
@@ -381,8 +421,16 @@ describe("linhaPrazo", () => {
     ciencia: null, final: null, prazo_final: "2027-02-16T02:30:00Z", prazo_perto: false, prazo_passou: false, pode_responder: true, ...p,
   });
   const em = (iso: string) => new Date(iso);
-  it("nota respondível sem aviso de prazo: neutra, nunca âmbar (inclusive sem ciência)", () => {
-    expect(linhaPrazo(resp({}), AGORA)).toEqual({ tom: "neutro", texto: "Responder à SEFAZ até 15/02/2027" });
+  it("nota respondível sem aviso de prazo: neutra, nunca âmbar (inclusive sem ciência), só com as respostas ligadas", () => {
+    expect(linhaPrazo(resp({}), AGORA, true)).toEqual({ tom: "neutro", texto: "Responder à SEFAZ até 15/02/2027" });
+    // desligadas (ou sem dizer): a linha neutra é a ação de responder, que não existe; falha fechado
+    expect(linhaPrazo(resp({}), AGORA, false)).toBeNull();
+    expect(linhaPrazo(resp({}), AGORA)).toBeNull();
+  });
+  it("respostas desligadas: o aviso âmbar e o prazo passado continuam (a obrigação existe com ou sem as respostas)", () => {
+    const r = resp({ ciencia, prazo_perto: true });
+    expect(linhaPrazo(r, new Date("2027-02-09T15:00:00Z"), false)).toEqual({ tom: "warn", texto: "Faltam 6 dias para responder à SEFAZ (até 15/02/2027)." });
+    expect(linhaPrazo(resp({ ciencia, prazo_passou: true, pode_responder: false }), AGORA, false)?.tom).toBe("muted");
   });
   it("prazo perto: âmbar com os dias que faltam (dia de Brasília)", () => {
     const r = resp({ ciencia, prazo_perto: true });
@@ -469,12 +517,22 @@ describe("linhaResposta", () => {
 describe("faixaPrazo", () => {
   const n = (numero: string, nome: string, prazo_final: string) => ({ id: numero, numero, serie: "1", emitente_nome: nome, prazo_final });
   it("0, 1 e várias", () => {
-    expect(faixaPrazo([])).toBeNull();
-    expect(faixaPrazo([n("4411", "ATACADÃO S.A.", "2027-02-16T02:30:00Z")])).toBe(
+    expect(faixaPrazo([], true)).toBeNull();
+    expect(faixaPrazo([n("4411", "ATACADÃO S.A.", "2027-02-16T02:30:00Z")], true)).toBe(
       "A NF 4411 de ATACADÃO S.A. precisa de uma resposta à SEFAZ até 15/02/2027. Lance a nota, toque em Não reconheço ou escolha um motivo em Ignorar.",
     );
     expect(faixaPrazo([n("1", "A", "2027-02-16T02:30:00Z"), n("2", "B", "2027-02-20T12:00:00Z"), n("3", "C", "2027-03-01T12:00:00Z")])).toBe(
       "3 notas precisam de uma resposta à SEFAZ. A primeira vence em 15/02/2027.",
+    );
+  });
+  it("respostas desligadas (ou sem a variável, ou sem dizer): a frase sem a ação (nada de Não reconheço nem de Ignorar avisando)", () => {
+    const uma = [n("4411", "ATACADÃO S.A.", "2027-02-16T02:30:00Z")];
+    const sem = "A NF 4411 de ATACADÃO S.A. precisa de uma resposta à SEFAZ até 15/02/2027.";
+    expect(faixaPrazo(uma, false)).toBe(sem);
+    expect(faixaPrazo(uma)).toBe(sem);
+    expect(faixaPrazo(uma, false)).not.toContain("Não reconheço");
+    expect(faixaPrazo([n("1", "A", "2027-02-16T02:30:00Z"), n("2", "B", "2027-02-20T12:00:00Z")], false)).toBe(
+      "2 notas precisam de uma resposta à SEFAZ. A primeira vence em 15/02/2027.",
     );
   });
 });

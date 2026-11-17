@@ -73,12 +73,16 @@ const COR_PRAZO = { neutro: 'text-foreground', warn: 'text-amber-700 dark:text-a
 
 /**
  * O prazo para responder à SEFAZ e a situação da resposta (UX §8), sob a tag. As duas vêm do que o servidor manda na nota (`resposta`,
- * null sem a variável no servidor); "Tentar de novo" só no que falhou. A linha da resposta é anunciada quando muda (`aria-live`).
+ * null sem a variável no servidor E sem nenhuma resposta gravada); a linha neutra do prazo só com as respostas ligadas; "Tentar de novo"
+ * só no que falhou e só com a variável no servidor (`disponivel`; sem ela a rota dá 503). A linha da resposta é anunciada quando muda
+ * (`aria-live`).
  */
-function RespostaDaNota({ nota, agora, ocupado, onTentarDeNovo }: { nota: NotaSefaz; agora: Date; ocupado: boolean; onTentarDeNovo(n: NotaSefaz): void }) {
+function RespostaDaNota({ nota, agora, ocupado, respostasLigadas, disponivel, onTentarDeNovo }: {
+  nota: NotaSefaz; agora: Date; ocupado: boolean; respostasLigadas: boolean; disponivel: boolean; onTentarDeNovo(n: NotaSefaz): void;
+}) {
   const r = nota.resposta;
   if (!r) return null;
-  const prazo = linhaPrazo(r, agora);
+  const prazo = linhaPrazo(r, agora, respostasLigadas);
   const resp = linhaResposta(r);
   const Icone = resp ? ICONES_RESPOSTA[resp.icone] : null;
   return (
@@ -97,7 +101,7 @@ function RespostaDaNota({ nota, agora, ocupado, onTentarDeNovo }: { nota: NotaSe
           </p>
         )}
       </div>
-      {resp?.tentarDeNovo && (
+      {resp?.tentarDeNovo && disponivel && (
         <Button type="button" variant="outline" className="h-11 w-full whitespace-normal sm:w-auto" disabled={ocupado} onClick={() => onTentarDeNovo(nota)}>
           Tentar de novo
         </Button>
@@ -183,6 +187,7 @@ export function NotasSefazAba({ situacao, focarId, onConferir, onLancarPorArquiv
   const modoTeste = situacao.ambiente === 'homologacao';
   // Respostas à SEFAZ: só com a variável no servidor (`disponivel`) e o quadro ligado. `pode_responder` da nota não olha isso (UX §8).
   const respostasLigadas = situacao.respostas?.disponivel === true && situacao.respostas.ligadas === true;
+  const respostasDisponiveis = situacao.respostas?.disponivel === true;
   const estado = estadoBuscar(situacao, agora);
   const buscando = estado === 'buscando' || pendente;
   const parada = situacao.situacao.startsWith('parada_');
@@ -382,7 +387,7 @@ export function NotasSefazAba({ situacao, focarId, onConferir, onLancarPorArquiv
                 </div>
                 <p className="text-sm text-muted-foreground">NF {n.numero} · série {n.serie} · {emissaoSp(n.emitida_em)}</p>
                 <TagSituacao tag={tagDaNota(n)} abrirPorQue={abrirPorQue} />
-                <RespostaDaNota nota={n} agora={agora} ocupado={ocupado === n.id} onTentarDeNovo={tentarDeNovo} />
+                <RespostaDaNota nota={n} agora={agora} ocupado={ocupado === n.id} respostasLigadas={respostasLigadas} disponivel={respostasDisponiveis} onTentarDeNovo={tentarDeNovo} />
                 <Acoes nota={n} modoTeste={modoTeste} respostasLigadas={respostasLigadas} ocupado={ocupado === n.id} onAcao={aoAcionar} />
               </li>
             ))}
@@ -405,7 +410,7 @@ export function NotasSefazAba({ situacao, focarId, onConferir, onLancarPorArquiv
                     <td className="pr-2 text-right">{n.valor_total === null ? '—' : brl(n.valor_total)}</td>
                     <td className="max-w-[18rem] space-y-1 py-2 pl-4">
                       <TagSituacao tag={tagDaNota(n)} abrirPorQue={abrirPorQue} />
-                      <RespostaDaNota nota={n} agora={agora} ocupado={ocupado === n.id} onTentarDeNovo={tentarDeNovo} />
+                      <RespostaDaNota nota={n} agora={agora} ocupado={ocupado === n.id} respostasLigadas={respostasLigadas} disponivel={respostasDisponiveis} onTentarDeNovo={tentarDeNovo} />
                     </td>
                     <td className="py-2"><Acoes nota={n} modoTeste={modoTeste} respostasLigadas={respostasLigadas} ocupado={ocupado === n.id} onAcao={aoAcionar} compacto /></td>
                   </tr>

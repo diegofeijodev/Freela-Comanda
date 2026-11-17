@@ -133,7 +133,7 @@ export function NotasSefazRespostas({ data }: { data: SituacaoBuscaSefaz }) {
           {resumo.linhas.map((l) => (
             <li key={l.texto} className="flex min-w-0 flex-wrap items-center gap-x-3">
               <span className="min-w-0 break-words">{l.texto}</span>
-              {l.ver && r.ligadas && (
+              {l.ver && (
                 <Link href="/notas#notas-sefaz" className="inline-flex min-h-11 items-center text-primary underline underline-offset-2">{l.ver}</Link>
               )}
             </li>

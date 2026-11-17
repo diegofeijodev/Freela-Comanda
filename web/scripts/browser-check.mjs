@@ -542,16 +542,43 @@ const caixas = await Promise.all(['Substituir certificado', 'Remover'].map((n) =
   await page.reload({ waitUntil: 'networkidle', timeout: 180_000 });
   check('sefaz respostas: tag "Esperando a SEFAZ"', await simQ(quadro.getByText('Esperando a SEFAZ', { exact: true })));
   check('sefaz respostas: espera em caixa de alerta com a frase (UX §8)', (await quadro.locator('[role="alert"]').getByText(fraseEspera, { exact: true }).count()) === 1);
-  // Paradas: caixa vermelha (alerta) e "Ligar as respostas de novo".
+  // Paradas: caixa vermelha (alerta) e "Ligar as respostas de novo". O estado REAL do servidor numa parada: `ligadas` continua true (o
+  // servidor só muda a `situacao`), com quem ligou e a fila; o quadro não pode oferecer só "Desligar" (revisão final, I1).
   const fraseParada = 'A SEFAZ bloqueou as respostas duas vezes em 24 horas. Por segurança, elas foram desligadas. Fale com o suporte do Freela Comanda antes de ligar de novo.';
-  est = { ...desligadaComCert, respostas: { ...RESP_ON, situacao: 'parada_656', mensagem: fraseParada } };
+  const paradaReal = (situacao, mensagem) => ({
+    ...desligadaComCert,
+    respostas: { ...RESP_ON, ligadas: true, ligadas_por_nome: 'Diego', ligadas_em: new Date().toISOString(), na_fila: 2, situacao, mensagem },
+  });
+  est = paradaReal('parada_656', fraseParada);
   await page.reload({ waitUntil: 'networkidle', timeout: 180_000 });
   check('sefaz respostas: tag "Paradas"', await simQ(quadro.getByText('Paradas', { exact: true })));
   check('sefaz respostas: parada em alerta com a frase', (await quadro.locator('[role="alert"]').getByText(fraseParada, { exact: true }).count()) === 1);
   const deNovo = quadro.getByRole('button', { name: 'Ligar as respostas de novo' });
   check('sefaz respostas: "Ligar as respostas de novo" com 44 px', (await deNovo.count()) === 1 && ((await deNovo.boundingBox())?.height ?? 0) >= 44);
+  check('sefaz respostas (parada com ligadas: true): sem "Desligar as respostas" e sem "Ligadas por…"', (await quadro.getByRole('button', { name: 'Desligar as respostas' }).count()) === 0 && (await quadro.getByText(/^Ligadas por /).count()) === 0);
+  check('sefaz respostas (parada): a fila continua à vista', (await quadro.getByText('2 respostas na fila', { exact: true }).count()) === 1);
   await quadro.scrollIntoViewIfNeeded();
   await page.screenshot({ path: join(SHOTS, 'admin-respostas-sefaz-paradas-360.png'), fullPage: true });
+  for (const [situacao, frase] of [
+    ['parada_relogio', 'As respostas pararam: o relógio do servidor está fora da hora certa. Fale com o suporte do Freela Comanda.'],
+    ['parada_configuracao', 'As respostas pararam: a SEFAZ respondeu 3 vezes de um jeito que o sistema não entende. Fale com o suporte do Freela Comanda.'],
+  ]) {
+    est = paradaReal(situacao, frase);
+    await page.reload({ waitUntil: 'networkidle', timeout: 180_000 });
+    check(`sefaz respostas (${situacao}, ligadas: true): Paradas, a frase em alerta e "Ligar as respostas de novo"`, await simQ(quadro.getByText('Paradas', { exact: true }))
+      && (await quadro.locator('[role="alert"]').getByText(frase, { exact: true }).count()) === 1
+      && (await quadro.getByRole('button', { name: 'Ligar as respostas de novo' }).count()) === 1
+      && (await quadro.getByRole('button', { name: 'Desligar as respostas' }).count()) === 0);
+  }
+  // "Ligar as respostas de novo" passa pelo diálogo e o PUT `ligadas: true` volta a `ok` (o mock faz o que o servidor faz).
+  await quadro.getByRole('button', { name: 'Ligar as respostas de novo' }).click();
+  await dlg.getByRole('button', { name: 'Ligar as respostas', exact: true }).click();
+  check('sefaz respostas: Ligar de novo volta a "Ligadas"', await simQ(quadro.getByText('Ligadas', { exact: true })) && (await quadro.getByText('Paradas', { exact: true }).count()) === 0);
+  // Sem a variável, com notas no aviso do prazo (I3): a frase "não estão ativadas" e a linha do prazo, ainda sem botão nem tag.
+  est = { ...desligadaComCert, respostas: { ...RESP, prazos_perto: [{ id: 'a', numero: '4411', serie: '1', emitente_nome: 'ATACADÃO S.A.', prazo_final: prazoA }] } };
+  await page.reload({ waitUntil: 'networkidle', timeout: 180_000 });
+  check('sefaz respostas (sem a variável, com prazo): a frase e a linha do prazo', await simQ(quadro.getByText(FRASE_RESP_INDISPONIVEL)) && (await quadro.getByText(`1 nota precisa de resposta até ${dataSpP(prazoA)}`, { exact: true }).count()) === 1);
+  check('sefaz respostas (sem a variável, com prazo): nenhum botão de ligar e nenhuma tag', (await quadro.getByRole('button').count()) === 0 && (await quadro.getByText(/^(Ligadas|Desligadas|Paradas|Esperando a SEFAZ)$/).count()) === 0);
 
   // 6) Medidas e captura.
   const larguraSefaz = await quemPassaDaBorda(page, 360);
@@ -618,12 +645,13 @@ const caixas = await Promise.all(['Substituir certificado', 'Remover'].map((n) =
   let buscaFase = 0; // 1 = POST feito (a próxima leitura diz "em andamento"), 2 = a leitura seguinte diz "terminou, 2 novas"
   let listaModo = 'normal'; // 'normal' | 'vazia' | 'erro'
   let lancou = false;
-  // Respostas à SEFAZ (UX §8). Sem SEFAZ_MANIFESTACAO a API manda `disponivel = false` e `resposta = null` em toda nota: o mock faz igual.
+  // Respostas à SEFAZ (UX §8). Sem SEFAZ_MANIFESTACAO a API manda `disponivel = false` e `resposta = null` na nota SEM nenhuma resposta
+  // gravada; a que tem (ciência ou resposta final) segue com a resposta (revisão final, I3: a leitura não depende da variável). O mock faz igual.
   const RESP = { disponivel: false, ligadas: false, situacao: 'ok', mensagem: null, pausa_ate: null, ligadas_por_nome: null, ligadas_em: null, na_fila: 0, falharam: 0, prazos_perto: [] };
   let respostasEst = RESP;
   let jaFoi = false; // o "Desfazer" chega depois de a resposta sair: o reabrir devolve a nota ainda com a resposta final
   const CORPOS = []; // corpo de cada POST …/ignorar, na ordem
-  const comResposta = (r) => (respostasEst.disponivel ? r : { ...r, resposta: null });
+  const comResposta = (r) => (respostasEst.disponivel || r.resposta?.ciencia || r.resposta?.final ? r : { ...r, resposta: null });
   const situacaoAtual = () => {
     let emAndamento = false;
     if (buscaFase === 1) { emAndamento = true; buscaFase = 2; }
@@ -903,13 +931,34 @@ const caixas = await Promise.all(['Substituir certificado', 'Remover'].map((n) =
   const toastExato = (t) => sim(page.getByText(t, { exact: true }).first(), 20_000);
   const desfazerToast = () => page.getByRole('button', { name: 'Desfazer' }).first().click();
 
-  // 11b.1) Variável ligada, respostas DESLIGADAS: as linhas seguem o que o servidor manda; nada de "Não reconheço…" nem de aviso no Ignorar.
-  respostasEst = { ...RESP, disponivel: true };
+  // A faixa de UMA nota (a 31, no aviso do prazo): com as respostas desligadas, sem a ação (nada de "toque em Não reconheço").
+  const r31 = rows.find((x) => x.numero === '31');
+  const prazo31 = [{ id: r31.id, numero: r31.numero, serie: r31.serie, emitente_nome: r31.emitente_nome, prazo_final: r31.resposta.prazo_final }];
+  const FRASE_PRAZO_31 = `A NF 31 de ${r31.emitente_nome} precisa de uma resposta à SEFAZ até ${dataSp(meioDia(6))}.`;
+
+  // 11b.0) Servidor SEM a variável, mas com respostas gravadas (a volta do roteiro, I3): o aviso do prazo e as linhas que o servidor manda
+  // aparecem; nenhuma ação de resposta ("Não reconheço…", "Tentar de novo", a linha neutra "Responder à SEFAZ até…").
+  respostasEst = { ...RESP, prazos_perto: prazo31 };
   await page.reload({ waitUntil: 'networkidle', timeout: 180_000 });
+  check('sefaz sem a variável, com respostas gravadas: faixa do prazo sem a ação', await sim(page.locator('[data-faixa="prazo"]').getByText(FRASE_PRAZO_31, { exact: true })));
+  await abaSefaz.click();
+  check('sefaz sem a variável, com respostas gravadas: NF 31 com o aviso âmbar', await sim(cartao(31).getByText(`Faltam 6 dias para responder à SEFAZ (até ${dataSp(meioDia(6))}).`, { exact: true })));
+  check('sefaz sem a variável, com respostas gravadas: nenhum "Não reconheço…" nem linha neutra', (await page.getByRole('button', { name: 'Não reconheço…' }).count()) === 0
+    && (await lista.getByText(/^Responder à SEFAZ até /).count()) === 0);
+  await page.getByRole('button', { name: 'Todas', exact: true }).click();
+  check('sefaz sem a variável, com respostas gravadas: a que falhou aparece sem "Tentar de novo"', await sim(cartao(45).getByText('Não consegui enviar a resposta à SEFAZ depois de 3 tentativas.', { exact: true }))
+    && (await lista.getByRole('button', { name: 'Tentar de novo' }).count()) === 0);
+
+  // 11b.1) Variável ligada, respostas DESLIGADAS: as linhas seguem o que o servidor manda; nada de "Não reconheço…" nem de aviso no Ignorar.
+  respostasEst = { ...RESP, disponivel: true, prazos_perto: prazo31 };
+  await page.reload({ waitUntil: 'networkidle', timeout: 180_000 });
+  check('sefaz respostas desligadas: faixa do prazo de uma nota sem a ação (nada de "Não reconheço")', await sim(page.locator('[data-faixa="prazo"]').getByText(FRASE_PRAZO_31, { exact: true }))
+    && (await page.locator('[data-faixa="prazo"]').getByText(/Não reconheço/).count()) === 0);
   await abaSefaz.click();
   check('sefaz respostas desligadas: K990 aparece', await sim(cartao(990)));
   check('sefaz respostas desligadas: nenhum "Não reconheço…"', (await page.getByRole('button', { name: 'Não reconheço…' }).count()) === 0);
-  check('sefaz respostas desligadas: a linha do prazo segue o servidor', (await cartao(990).getByText(`Responder à SEFAZ até ${dataSp(meioDia(40))}`, { exact: true }).count()) === 1);
+  check('sefaz respostas desligadas: sem a linha neutra "Responder à SEFAZ até…" (a ação não existe); o aviso âmbar fica', (await cartao(990).getByText(/^Responder à SEFAZ até /).count()) === 0
+    && (await cartao(31).getByText(`Faltam 6 dias para responder à SEFAZ (até ${dataSp(meioDia(6))}).`, { exact: true }).count()) === 1);
   check('sefaz respostas desligadas: "Por quê?" com o texto das respostas desligadas', (await page.locator('details', { hasText: 'e as respostas à SEFAZ estão desligadas' }).count()) === 1);
   await cartao(990).getByRole('button', { name: 'Ignorar…' }).click();
   check('sefaz respostas desligadas: Ignorar com os 4 motivos e o texto de antes', await sim(dlg.getByText('Ignorar esta nota?'), 10_000)

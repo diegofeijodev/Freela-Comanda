@@ -27,10 +27,13 @@ export function FaixaCancelamentoSefaz({ canceladas, onVer }: { canceladas: Situ
 
 /**
  * Faixa âmbar do prazo (UX §8), abaixo da de cancelamento e acima das abas: notas que precisam de uma resposta final à SEFAZ (o servidor
- * manda em `respostas.prazos_perto`, a que vence primeiro na frente). Só avisa; "Ver" abre "A conferir" com o foco na primeira.
+ * manda em `respostas.prazos_perto`, a que vence primeiro na frente, mesmo sem a variável no servidor). Só avisa; "Ver" abre "A conferir"
+ * com o foco na primeira. Com as respostas desligadas, a frase não sugere a ação (o botão "Não reconheço…" não existe).
  */
-export function FaixaPrazoSefaz({ prazos, onVer }: { prazos: SituacaoSefazLigada['respostas']['prazos_perto']; onVer(): void }) {
-  const frase = faixaPrazo(prazos);
+export function FaixaPrazoSefaz({ prazos, respostasLigadas, onVer }: {
+  prazos: SituacaoSefazLigada['respostas']['prazos_perto']; respostasLigadas: boolean; onVer(): void;
+}) {
+  const frase = faixaPrazo(prazos, respostasLigadas);
   if (!frase) return null;
   return (
     <div role="status" data-faixa="prazo" className="no-print rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm sm:p-4">

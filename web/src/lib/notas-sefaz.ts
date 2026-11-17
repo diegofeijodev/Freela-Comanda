@@ -323,11 +323,19 @@ export type ResumoRespostas = {
 
 /**
  * O quadro "Respostas à SEFAZ". A `mensagem` das respostas (espera ou parada) vem pronta do servidor e é mostrada como vem. Sem certificado
- * ou sem CNPJ, "Ligar" fica desabilitado com as mesmas frases da busca.
+ * ou sem CNPJ, "Ligar" e "Ligar de novo" ficam desabilitados com as mesmas frases da busca. Numa parada o servidor NÃO muda `ligadas` (só a
+ * `situacao`): a parada decide primeiro, e o botão é "Ligar as respostas de novo" (o PUT `ligadas: true` volta a `ok`). A linha do prazo
+ * (`prazos_perto`, lida do banco) aparece em todo estado, até sem a variável no servidor: a obrigação dos 90 dias não depende dela.
  */
 export function resumoRespostas(s: SituacaoSefazLigada, agora: Date): ResumoRespostas {
   const r = s.respostas;
-  if (!r.disponivel) return { tag: null, caixa: { tom: "neutro", texto: FRASE_RESPOSTAS_INDISPONIVEIS }, botao: null, botaoDesabilitado: false, linhas: [] };
+  const p = r.prazos_perto;
+  const linhaPrazos: ResumoRespostas["linhas"][number] | null = p.length > 0
+    ? { texto: `${p.length} ${plural(p.length, "nota precisa", "notas precisam")} de resposta até ${emissaoSp(p[0]!.prazo_final)}`, ver: "Ver as notas" }
+    : null;
+  if (!r.disponivel) {
+    return { tag: null, caixa: { tom: "neutro", texto: FRASE_RESPOSTAS_INDISPONIVEIS }, botao: null, botaoDesabilitado: false, linhas: linhaPrazos ? [linhaPrazos] : [] };
+  }
 
   const parada = r.situacao.startsWith("parada_");
   const esperando = r.ligadas && r.pausa_ate !== null && new Date(r.pausa_ate).getTime() > agora.getTime();
@@ -338,8 +346,8 @@ export function resumoRespostas(s: SituacaoSefazLigada, agora: Date): ResumoResp
       : r.ligadas
         ? { tom: "ok", texto: "Ligadas" }
         : { tom: "muted", texto: "Desligadas" };
-  const botao = r.ligadas ? "desligar" : parada ? "ligar_de_novo" : "ligar";
-  const botaoDesabilitado = !r.ligadas && (!s.certificado.ok || s.cnpj === null);
+  const botao = parada ? "ligar_de_novo" : r.ligadas ? "desligar" : "ligar";
+  const botaoDesabilitado = botao !== "desligar" && (!s.certificado.ok || s.cnpj === null);
 
   let caixa: ResumoRespostas["caixa"] = null;
   if (parada && r.mensagem) caixa = { tom: "bad", texto: r.mensagem };
@@ -352,13 +360,14 @@ export function resumoRespostas(s: SituacaoSefazLigada, agora: Date): ResumoResp
 
   const linhas: ResumoRespostas["linhas"] = [];
   if (r.ligadas) {
-    if (r.ligadas_em) linhas.push({ texto: `Ligadas${r.ligadas_por_nome ? ` por ${r.ligadas_por_nome}` : ""} em ${dataHoraSp(r.ligadas_em)}` });
+    // Parada: "Ligadas por…" seria falso (nada sai até ligar de novo); a fila, o prazo e as falhas seguem.
+    if (r.ligadas_em && !parada) linhas.push({ texto: `Ligadas${r.ligadas_por_nome ? ` por ${r.ligadas_por_nome}` : ""} em ${dataHoraSp(r.ligadas_em)}` });
     if (r.na_fila > 0) linhas.push({ texto: `${r.na_fila} ${plural(r.na_fila, "resposta", "respostas")} na fila` });
-    const p = r.prazos_perto;
-    if (p.length > 0) linhas.push({ texto: `${p.length} ${plural(p.length, "nota precisa", "notas precisam")} de resposta até ${emissaoSp(p[0]!.prazo_final)}`, ver: "Ver as notas" });
+    if (linhaPrazos) linhas.push(linhaPrazos);
     if (r.falharam > 0) linhas.push({ texto: `${r.falharam} ${plural(r.falharam, "resposta não foi enviada", "respostas não foram enviadas")}`, ver: "Ver" });
   } else {
     linhas.push({ texto: FRASE_RESPOSTAS_DESLIGADAS });
+    if (linhaPrazos) linhas.push(linhaPrazos);
   }
   if (s.ambiente === "homologacao") linhas.push({ texto: "Modo de teste da SEFAZ: as respostas valem só para notas de mentira." });
   return { tag, caixa, botao, botaoDesabilitado, linhas };
@@ -383,10 +392,11 @@ function diasAte(ate: Date, de: Date): number {
 }
 
 /**
- * A linha do prazo no cartão da nota (UX §8). Âmbar na nota em `prazo_perto` (do 80º dia em diante); a respondível comum leva a linha
- * neutra; `prazo_passou` leva a linha muted.
+ * A linha do prazo no cartão da nota (UX §8). Âmbar na nota em `prazo_perto` (do 80º dia em diante); `prazo_passou` leva a linha muted
+ * (as duas com ou sem as respostas ligadas: a obrigação existe de qualquer jeito). A linha neutra "Responder à SEFAZ até …" é a ação de
+ * responder: só com as respostas ligadas (`respostasLigadas`; sem dizer, falha fechado, como `acoesDaNota`).
  */
-export function linhaPrazo(r: RespostaNota, agora: Date): { tom: "neutro" | "warn" | "muted"; texto: string } | null {
+export function linhaPrazo(r: RespostaNota, agora: Date, respostasLigadas = false): { tom: "neutro" | "warn" | "muted"; texto: string } | null {
   // `prazo_passou` e `prazo_perto` vêm do servidor, que já conta a ciência possivelmente registrada: sem regra própria aqui.
   if (r.prazo_passou) return { tom: "muted", texto: "Passou o prazo: a SEFAZ considera esta compra confirmada." };
   if (!r.pode_responder || !r.prazo_final) return null;
@@ -396,7 +406,7 @@ export function linhaPrazo(r: RespostaNota, agora: Date): { tom: "neutro" | "war
     if (dias <= 0) return { tom: "warn", texto: "Último dia para responder à SEFAZ." };
     return { tom: "warn", texto: `${plural(dias, "Falta", "Faltam")} ${dias} ${plural(dias, "dia", "dias")} para responder à SEFAZ (até ${ate}).` };
   }
-  return { tom: "neutro", texto: `Responder à SEFAZ até ${ate}` };
+  return respostasLigadas ? { tom: "neutro", texto: `Responder à SEFAZ até ${ate}` } : null;
 }
 
 const FRASE_TROCAR = "Para mudar, fale com o seu contador: a SEFAZ aceita corrigir uma vez, em até 30 dias.";
@@ -430,12 +440,17 @@ export function linhaResposta(r: RespostaNota): { icone: "Loader2" | "CheckCircl
   }
 }
 
-/** A faixa âmbar do prazo, acima das abas (UX §8). `prazos_perto` já vem com a nota que vence primeiro na frente. */
-export function faixaPrazo(p: SituacaoSefazLigada["respostas"]["prazos_perto"]): string | null {
+/**
+ * A faixa âmbar do prazo, acima das abas (UX §8). `prazos_perto` já vem com a nota que vence primeiro na frente e chega até sem a variável no
+ * servidor (a obrigação fica no banco). A frase de uma nota só sugere a ação ("toque em Não reconheço…") com as respostas ligadas
+ * (`respostasLigadas`; sem dizer, falha fechado): desligadas, o botão não existe e a frase fica sem a ação.
+ */
+export function faixaPrazo(p: SituacaoSefazLigada["respostas"]["prazos_perto"], respostasLigadas = false): string | null {
   if (p.length === 0) return null;
   const primeiro = emissaoSp(p[0]!.prazo_final);
   if (p.length === 1) {
-    return `A NF ${p[0]!.numero} de ${p[0]!.emitente_nome} precisa de uma resposta à SEFAZ até ${primeiro}. Lance a nota, toque em Não reconheço ou escolha um motivo em Ignorar.`;
+    const frase = `A NF ${p[0]!.numero} de ${p[0]!.emitente_nome} precisa de uma resposta à SEFAZ até ${primeiro}.`;
+    return respostasLigadas ? `${frase} Lance a nota, toque em Não reconheço ou escolha um motivo em Ignorar.` : frase;
   }
   return `${p.length} notas precisam de uma resposta à SEFAZ. A primeira vence em ${primeiro}.`;
 }

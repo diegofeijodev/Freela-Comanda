@@ -68,8 +68,10 @@ export default function Notas() {
   const { data: situacaoSefaz } = useSituacaoSefaz(ehAdmin);
   const [trocaXml, setTrocaXml] = useState<string | null>(null);
   const sefaz = situacaoSefaz && situacaoSefaz.ambiente !== "desligado" ? situacaoSefaz : null;
-  // Respostas à SEFAZ (UX §8): só com a variável no servidor e o quadro ligado; sem ela, `prazos_perto` vem vazio e nada disso aparece.
+  // Respostas à SEFAZ (UX §8): as ações só com a variável no servidor e o quadro ligado. O aviso do prazo (`prazos_perto`) vem do banco
+  // mesmo sem a variável (a obrigação de responder não depende dela); sem nenhuma resposta gravada, vem vazio e nada aparece.
   const respostasSefaz = sefaz?.respostas?.disponivel ? sefaz.respostas : null;
+  const prazosSefaz = sefaz?.respostas?.prazos_perto ?? [];
   const [aba, setAba] = useState<"lancar" | "sefaz">("lancar");
   const [focarId, setFocarId] = useState<string | null>(null);
   const hashLido = useRef(false);
@@ -249,7 +251,7 @@ export default function Notas() {
     requestAnimationFrame(() => arquivoRef.current?.focus());
   }
   const verCanceladas = () => { setAba("sefaz"); setFocarId(sefaz?.canceladas_depois[0]?.id ?? null); };
-  const verPrazos = () => { setAba("sefaz"); setFocarId(respostasSefaz?.prazos_perto[0]?.id ?? null); };
+  const verPrazos = () => { setAba("sefaz"); setFocarId(prazosSefaz[0]?.id ?? null); };
 
   const lancar = (
     <div className="space-y-5">
@@ -380,7 +382,7 @@ export default function Notas() {
       {sefaz ? (
         <>
           <FaixaCancelamentoSefaz canceladas={sefaz.canceladas_depois} onVer={verCanceladas} />
-          {respostasSefaz && <FaixaPrazoSefaz prazos={respostasSefaz.prazos_perto} onVer={verPrazos} />}
+          <FaixaPrazoSefaz prazos={prazosSefaz} respostasLigadas={respostasSefaz?.ligadas === true} onVer={verPrazos} />
           <Tabs value={aba} onValueChange={(v) => setAba(v === "sefaz" ? "sefaz" : "lancar")} className="space-y-5">
             <TabsList className="grid h-auto w-full grid-cols-2 sm:inline-flex sm:w-auto">
               <TabsTrigger value="lancar" className="h-11 whitespace-normal px-4">Lançar nota
