@@ -1338,7 +1338,7 @@ Nenhum agente executa este roteiro. Ele não é tarefa deste plano. Cada passo q
      - ler para o dono a frase da decisão 1: "Se o seu contador também baixa as notas pela SEFAZ, avise antes de ligar".
 2. **Homologação (1º "eu autorizo").**
    - **Ligar:**
-     - pôr `SEFAZ_DFE_AMBIENTE=homologacao` no `.env` do servidor e reiniciar só a API;
+     - pôr `SEFAZ_DFE_AMBIENTE=homologacao` no `.env` do servidor e recriar só a API: `docker compose -f docker-compose.prod.yml up -d --no-deps api` (`docker restart`/`docker compose restart` não relê o `.env`);
      - "Ligar a busca" e "Buscar agora".
    - **Esperado:** 137, porque é o 1º uso.
    - **Registrar:** a linha de `sefaz_consultas` (`c_stat`, `erro_code`) e o log `sefaz.distribuicao`.
@@ -1351,15 +1351,17 @@ Nenhum agente executa este roteiro. Ele não é tarefa deste plano. Cada passo q
    - **Esperado:** 409 `SEFAZ_AGUARDE`, sem rede (`sefaz_consultas` não cresce).
    - **Depois dos 65 min:** o tique sozinho deve dar 137 de novo, sem 656.
 4. **Produção (2º "eu autorizo").**
-   - **Trocar:** desligar a busca, pôr `producao`, reiniciar, ligar e fazer uma busca.
+   - **Trocar:** desligar a busca, pôr `producao`, recriar só a API (o mesmo comando), ligar e fazer uma busca.
    - **Esperado:** 137.
    - **Respostas que pedem atenção:**
      - 138 com documentos = D1: só aviso;
      - 656 com `ultNSU` = D2: a busca se desliga e avisa, e o dono fala com o contador.
    - **Vigiar por 24 h:** `select c_stat, count(*) from sefaz_consultas where iniciada_em > now() - interval '24 hours' group by 1` não pode ter 656.
 5. **Dias depois.** Uma nota que chegou como resumo e foi lançada por arquivo tem de virar "Já lançada".
-6. **Volta.**
-   - `SEFAZ_DFE_AMBIENTE` vazia e reiniciar: nada mais roda.
+6. **Volta, nesta ordem.**
+   - PRIMEIRO tocar em "Desligar a busca" na tela: senão a linha fica `busca_ligada=true` e a busca recomeça sozinha no dia em que alguém puser a variável de volta.
+   - Depois, `SEFAZ_DFE_AMBIENTE` vazia no `.env` e recriar só a API: `docker compose -f docker-compose.prod.yml up -d --no-deps api` (reiniciar não relê o `.env`).
+   - Conferir: o painel diz "A busca de notas na SEFAZ não está ativada neste servidor." e `docker exec erp-freela-api printenv SEFAZ_DFE_AMBIENTE` sai vazio.
    - Nunca apagar linhas `sefaz_*`: elas são a prova das esperas.
    - Desligar por mais de 60 dias deixa buraco sem volta: avisar o dono.
 
