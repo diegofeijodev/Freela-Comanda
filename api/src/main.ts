@@ -71,7 +71,9 @@ async function bootstrap() {
   if (nodeEnv !== 'production' || config.get<string>('SWAGGER_ENABLED') === 'true') {
     const swaggerConfig = new DocumentBuilder()
       .setTitle('Freela Comanda — API')
-      .setDescription('Vendas, fichas técnicas, inventário, estoque, compras, notas, contas a pagar, caixa e DRE. Contrato em docs/api-contract.md.')
+      .setDescription(
+        'Vendas, fichas técnicas, inventário, estoque, compras, notas, contas a pagar, caixa e DRE. Contrato em docs/api-contract.md.',
+      )
       .setVersion('1.0')
       .addBearerAuth({ type: 'http', scheme: 'bearer', bearerFormat: 'JWT' })
       .build();

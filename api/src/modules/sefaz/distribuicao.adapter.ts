@@ -10,12 +10,7 @@ import {
   type SefazDfePort,
 } from './distribuicao.port';
 import { sefazErro } from './sefaz-erro';
-import {
-  CHAMAR_SOAP12,
-  TEMPO_LIMITE_MS,
-  TETO_RESPOSTA_BYTES,
-  type ChamarSoap12,
-} from './transporte-soap12';
+import { CHAMAR_SOAP12, TEMPO_LIMITE_MS, TETO_RESPOSTA_BYTES, type ChamarSoap12 } from './transporte-soap12';
 import { descompactarDocZip, elementos, lerXml, primeiro, texto, XmlInvalido, type NoXml } from './xml-leitura';
 
 export { SEFAZ_DFE };
@@ -114,12 +109,7 @@ export class SefazDfeAdapter implements SefazDfePort {
     @Inject(CHAMAR_SOAP12) private readonly chamar: ChamarSoap12,
   ) {}
 
-  async distribuirPorNsu(
-    cert: CertificadoEmUso,
-    ambiente: AmbienteSefaz,
-    cnpj: string,
-    ultNsu: bigint,
-  ): Promise<RespostaDistribuicao> {
+  async distribuirPorNsu(cert: CertificadoEmUso, ambiente: AmbienteSefaz, cnpj: string, ultNsu: bigint): Promise<RespostaDistribuicao> {
     const corpoHttp = await this.chamar({
       url: URL_DISTRIBUICAO[ambiente],
       action: ACTION_DIST_NSU,
