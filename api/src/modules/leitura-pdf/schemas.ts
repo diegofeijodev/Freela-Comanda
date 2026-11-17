@@ -7,11 +7,11 @@ export const SCHEMA_NOTA = {
   additionalProperties: false,
   required: ['chave', 'numero', 'serie', 'emitente_nome', 'emitente_cnpj', 'data_emissao', 'valor_total', 'forma_pagamento', 'itens', 'parcelas'],
   properties: {
-    chave: { type: ['string', 'null'], description: 'Chave de acesso de 44 dígitos, só números' },
+    chave: { type: ['string', 'null'], description: '44 caracteres; as posições 7 a 18 podem ter letras (CNPJ alfanumérico)' },
     numero: { type: ['string', 'null'] },
     serie: { type: ['string', 'null'] },
     emitente_nome: { type: 'string' },
-    emitente_cnpj: { type: ['string', 'null'], description: 'Só números' },
+    emitente_cnpj: { type: ['string', 'null'], description: 'CNPJ com 14 caracteres, números e letras maiúsculas, sem pontuação' },
     data_emissao: { type: 'string', description: 'aaaa-mm-dd' },
     valor_total: { type: 'number' },
     forma_pagamento: { type: 'string', enum: [...FORMAS_PGTO] },
@@ -93,7 +93,7 @@ export const SCHEMA_DDA = {
         required: ['beneficiario', 'cnpj', 'vencimento', 'valor', 'linha_digitavel'],
         properties: {
           beneficiario: { type: 'string' },
-          cnpj: { type: ['string', 'null'], description: 'Só números' },
+          cnpj: { type: ['string', 'null'], description: 'CNPJ com 14 caracteres, números e letras maiúsculas, sem pontuação' },
           vencimento: { type: 'string', description: 'aaaa-mm-dd' },
           valor: { type: 'number' },
           linha_digitavel: { type: ['string', 'null'], description: 'Só números' },

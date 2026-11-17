@@ -163,7 +163,7 @@ req DELETE "/v1/itens-estoque/$SAL" "$ADM"; check "exclui insumo livre" 200 "$CO
 req PATCH /v1/sazonalidade/11 "$ADM" '{"fator_pct":25}'; check "sazonalidade" 25 "$(j .fator_pct)"
 
 # ---------- entrada de nota
-CH="35261012345678000199550010000099991000099999"
+CH="35261012345678000199550010000099991000099991"
 req GET "/v1/notas/existe?chave=$CH" "$ADM"; check "nota nova" false "$(j .existe)"
 NOTA="{\"chave\":\"$CH\",\"numero\":\"9999\",\"serie\":\"1\",\"fornecedor_nome\":\"Frigorífico Smoke\",\"fornecedor_cnpj\":\"12.345.678/0001-99\",\"data_emissao\":\"$HOJE\",\"data_entrada\":\"$HOJE\",\"valor_total\":691.95,\"forma_pagamento\":\"boleto\",\"origem\":\"xml\",\"atualizar_preco\":true,\"itens\":[{\"codigo\":\"P01\",\"descricao\":\"PICANHA BOVINA KG\",\"unidade\":\"KG\",\"quantidade\":10.5,\"valor_unitario\":65.9,\"item_estoque_id\":\"$(sql "select id from itens_estoque where nome='Picanha'")\",\"fator\":1},{\"codigo\":\"P02\",\"descricao\":\"SACOLA\",\"unidade\":\"UN\",\"quantidade\":1,\"valor_unitario\":0,\"item_estoque_id\":null}],\"parcelas\":[{\"vencimento\":\"2026-11-20\",\"valor\":345.98},{\"vencimento\":\"2026-12-20\",\"valor\":345.97}]}"
 req POST /v1/notas "$ADM" "$NOTA"; check "dá entrada na nota" 201 "$CODE"; check "duas parcelas" 2 "$(j .contas)"
@@ -172,7 +172,7 @@ check "entrada no estoque" 10.5 "$(sql "select quantidade::float from movimentac
 check "preço atualizado" 65.9 "$(sql "select preco_unitario::float from itens_estoque where nome='Picanha'")"
 req GET /v1/vinculos?cnpj=12345678000199 "$ADM"; check "vínculo salvo" P01 "$(j '.[0].codigo_fornecedor')"
 check "fornecedor criado pelo CNPJ" 1 "$(sql "select count(*) from fornecedores where cnpj='12345678000199'")"
-NOTA2=$(echo "$NOTA" | sed "s/$CH/35261012345678000199550010000099981000099998/; s/\"boleto\"/\"pix\"/; s/\"9999\"/\"9998\"/")
+NOTA2=$(echo "$NOTA" | sed "s/$CH/35261012345678000199550010000099981000099994/; s/\"boleto\"/\"pix\"/; s/\"9999\"/\"9998\"/")
 req POST /v1/notas "$ADM" "$NOTA2"; check "nota à vista" true "$(j .a_vista)"
 check "conta à vista já paga" paga "$(sql "select status from contas_pagar where descricao like 'NF 9998%'")"
 NOTA3=$(echo "$NOTA" | sed "s/$CH/35261012345678000199550010000099971000099997/; s/\"parcelas\":\[.*\]}/\"parcelas\":[]}/")
@@ -185,7 +185,7 @@ nota_foto() { # $1=chave $2=itens(json) $3=forma $4=parcelas(json)
     '{chave:$ch,numero:"7001",fornecedor_nome:"Laticínios Smoke",data_entrada:$d,valor_total:178,forma_pagamento:$fp,origem:"foto",atualizar_preco:false,itens:$it,parcelas:$pa}'
 }
 NI='[{"descricao":"REQUEIJAO CX","unidade":"CX","quantidade":2,"valor_unitario":89,"fator":12,"novo_insumo":{"nome":"Requeijão Smoke","unidade":"un","subgrupo":"frios, laticinios e ovos"}}]'
-req POST /v1/notas "$ADM" "$(nota_foto 35261012345678000199550010000070011000070011 "$NI")"; check "nota por foto" 201 "$CODE"; check "insumo criado" 1 "$(j .insumos_criados)"
+req POST /v1/notas "$ADM" "$(nota_foto 35261012345678000199550010000070011000070019 "$NI")"; check "nota por foto" 201 "$CODE"; check "insumo criado" 1 "$(j .insumos_criados)"
 check "insumo novo: unidade em maiúsculas" UN "$(sql "select unidade from itens_estoque where nome='Requeijão Smoke'")"
 check "insumo novo: preço por unidade" 7.4167 "$(sql "select round(preco_unitario,4)::float from itens_estoque where nome='Requeijão Smoke'")"
 check "insumo novo: unidades por embalagem" 12 "$(sql "select qtd_por_embalagem::int from itens_estoque where nome='Requeijão Smoke'")"
@@ -193,16 +193,16 @@ check "insumo novo: fornecedor" "Laticínios Smoke" "$(sql "select fornecedor fr
 check "insumo novo: subgrupo (nome gravado como na tabela)" "Frios, Laticínios e Ovos" "$(sql "select subgrupo from itens_estoque where nome='Requeijão Smoke'")"
 check "insumo novo: entrada no estoque" 24 "$(sql "select m.quantidade::float from movimentacoes m join itens_estoque i on i.id=m.item_estoque_id where i.nome='Requeijão Smoke'")"
 NI2='[{"descricao":"REQUEIJAO CX","unidade":"CX","quantidade":1,"valor_unitario":89,"fator":12,"novo_insumo":{"nome":"REQUEIJAO SMOKE","unidade":"un"}}]'
-req POST /v1/notas "$ADM" "$(nota_foto 35261012345678000199550010000070021000070021 "$NI2")"; check "insumo repetido pelo nome (outra caixa)" 0 "$(j .insumos_criados)"
+req POST /v1/notas "$ADM" "$(nota_foto 35261012345678000199550010000070021000070024 "$NI2")"; check "insumo repetido pelo nome (outra caixa)" 0 "$(j .insumos_criados)"
 check "insumo não duplicou" 1 "$(sql "select count(*) from itens_estoque where lower(nome)='requeijão smoke'")"
 NI3='[{"descricao":"A","quantidade":1,"valor_unitario":5,"novo_insumo":{"nome":"Nata Smoke","unidade":"kg"}},{"descricao":"B","quantidade":1,"valor_unitario":5,"novo_insumo":{"nome":"  NATA  smoke ","unidade":"kg"}}]'
-req POST /v1/notas "$ADM" "$(nota_foto 35261012345678000199550010000070031000070031 "$NI3")"; check "mesmo nome em duas linhas" 1 "$(j .insumos_criados)"
+req POST /v1/notas "$ADM" "$(nota_foto 35261012345678000199550010000070031000070030 "$NI3")"; check "mesmo nome em duas linhas" 1 "$(j .insumos_criados)"
 check "mesmo nome em duas linhas: 1 insumo" 1 "$(sql "select count(*) from itens_estoque where nome ilike 'nata%smoke%'")"
 NI4=$(echo "$NI" | jq -c ".[0].item_estoque_id=\"$(sql "select id from itens_estoque where nome='Picanha'")\"")
-req POST /v1/notas "$ADM" "$(nota_foto 35261012345678000199550010000070041000070041 "$NI4")"; check "existente + novo na mesma linha" 400 "$CODE"
+req POST /v1/notas "$ADM" "$(nota_foto 35261012345678000199550010000070041000070045 "$NI4")"; check "existente + novo na mesma linha" 400 "$CODE"
 check "existente + novo: mensagem" "Escolha um insumo existente ou cadastre um novo, não os dois" "$(j .error.message)"
 NI5='[{"descricao":"Z","quantidade":1,"valor_unitario":5,"novo_insumo":{"nome":"Nao Deve Existir","unidade":"un"}}]'
-req POST /v1/notas "$ADM" "$(nota_foto 35261012345678000199550010000070051000070051 "$NI5" boleto)"; check "a prazo sem parcelas" 400 "$CODE"
+req POST /v1/notas "$ADM" "$(nota_foto 35261012345678000199550010000070051000070050 "$NI5" boleto)"; check "a prazo sem parcelas" 400 "$CODE"
 check "nada criado se a nota falha" 0 "$(sql "select count(*) from itens_estoque where nome='Nao Deve Existir'")"
 NI7='[{"descricao":"R1","quantidade":1,"valor_unitario":5,"novo_insumo":{"nome":"Rollback Smoke","unidade":"un"}},{"descricao":"R2","quantidade":1,"valor_unitario":5,"item_estoque_id":"00000000-0000-4000-8000-000000000000"}]'
 req POST /v1/notas "$ADM" "$(nota_foto 35261012345678000199550010000070071000070071 "$NI7")"; echo "rollback: HTTP $CODE $(j .error.code)"
@@ -210,14 +210,14 @@ check "falha dentro da transação não é 201" 1 "$([ "$CODE" != 201 ] && echo 
 check "rollback desfaz o insumo novo" 0 "$(sql "select count(*) from itens_estoque where nome='Rollback Smoke'")"
 check "rollback não deixa nota gravada" 0 "$(sql "select count(*) from notas_entrada where chave='35261012345678000199550010000070071000070071'")"
 NI6='[{"descricao":"Y","quantidade":1,"valor_unitario":5,"novo_insumo":{"nome":"Smoke Sem Grupo","unidade":"un","subgrupo":"Grupo Inventado"}}]'
-req POST /v1/notas "$ADM" "$(nota_foto 35261012345678000199550010000070061000070061 "$NI6")"; check "subgrupo inexistente: nota" 201 "$CODE"
+req POST /v1/notas "$ADM" "$(nota_foto 35261012345678000199550010000070061000070066 "$NI6")"; check "subgrupo inexistente: nota" 201 "$CODE"
 check "subgrupo inexistente cai no padrão" Mercearia "$(sql "select subgrupo from itens_estoque where nome='Smoke Sem Grupo'")"
 # chave formatada com espaços = a mesma nota já lançada (só dígitos)
-CHF="35 2610 1234 5678 0001 9955 0010 0000 7001 1000 0700 11"
+CHF="35 2610 1234 5678 0001 9955 0010 0000 7001 1000 0700 19"
 req POST /v1/notas "$ADM" "$(nota_foto "$CHF" "$NI")"; check "chave com espaços: nota repetida" "Esta nota já foi lançada" "$(j .error.message)"
 # valor zero no insumo novo: cria sem preço
 NI8='[{"descricao":"BRINDE","quantidade":1,"valor_unitario":0,"fator":0,"novo_insumo":{"nome":"Brinde Smoke","unidade":"un"}}]'
-req POST /v1/notas "$ADM" "$(nota_foto 35261012345678000199550010000070081000070081 "$NI8")"; check "insumo novo com valor zero" 201 "$CODE"
+req POST /v1/notas "$ADM" "$(nota_foto 35261012345678000199550010000070081000070087 "$NI8")"; check "insumo novo com valor zero" 201 "$CODE"
 check "insumo novo com valor zero: sem preço" 1 "$(sql "select count(*) from itens_estoque where nome='Brinde Smoke' and preco_unitario is null")"
 
 # ---------- contas a pagar / DRE / caixa
@@ -243,6 +243,31 @@ req POST /v1/dre-subgrupos "$ADM" '{"nome":"despesas com marketing","sigla":"MKT
 req PATCH "/v1/dre-subgrupos/$(j .id)" "$ADM" '{"meta_pct":4.5}'; check "meta do subgrupo" 4.5 "$(j .meta_pct)"
 req POST /v1/plano-contas/lote "$ADM" '{"linhas":[{"grupo":"DRE","subgrupo":"DESPESAS COM MARKETING","conta":"INSTAGRAM"},{"grupo":"DRE","conta":"OUTROS"}]}'
 check "importa plano de contas" 2 "$(j .importadas)"
+
+# ---------- CNPJ e chave com letras
+nota_cnpj() { # $1=chave $2=número $3=série $4=confirmar (opcional)
+  jq -nc --arg ch "$1" --arg n "$2" --arg s "$3" --arg c "${4:-}" --arg d "$HOJE" \
+    '{chave:$ch,numero:$n,serie:(if $s=="" then null else $s end),fornecedor_nome:"Atacadão Smoke",fornecedor_cnpj:"12.abc.345/01de-35",data_entrada:$d,valor_total:1234.56,forma_pagamento:"pix",origem:"xml",atualizar_preco:false,itens:[{descricao:"CAIXA SMOKE",unidade:"UN",quantidade:1,valor_unitario:1234.56}],parcelas:[]} + (if $c=="" then {} else {confirmar_repetida:true} end)'
+}
+VETOR=35261112ABC34501DE35550010000044111000044116
+req POST /v1/notas "$ADM" "$(nota_cnpj 35261112ABC34501DE35550010000044111000044111 4411 1)"; check "chave com DV errado: 400" 400 "$CODE"
+check "chave com DV errado: code" CHAVE_INVALIDA "$(j .error.code)"
+check "chave com DV errado: frase" "A chave de acesso da nota é inválida. Confira os 44 caracteres." "$(j .error.message)"
+req POST /v1/notas "$ADM" "$(nota_cnpj '35 2611 12ab c345 01de 3555 0010 0000 4411 1000 0441 16' 4411 1)"; check "nota alfanumérica: 201" 201 "$CODE"
+check "nota alfanumérica: chave igual ao vetor" "$VETOR" "$(sql "select chave from notas_entrada where numero='4411'")"
+check "nota alfanumérica: CNPJ do fornecedor" 12ABC34501DE35 "$(sql "select fornecedor_cnpj from notas_entrada where numero='4411'")"
+check "nota alfanumérica: fornecedor criado" 1 "$(sql "select count(*) from fornecedores where cnpj='12ABC34501DE35'")"
+req GET "/v1/notas/existe?chave=$(echo "$VETOR" | tr 'A-Z' 'a-z')" "$ADM"; check "existe com a chave em minúsculas" true "$(j .existe)"
+req GET "/v1/vinculos?cnpj=12.345.678/0001-99" "$ADM"; check "vínculos com o CNPJ pontuado" P01 "$(j '.[0].codigo_fornecedor')"
+req POST /v1/fornecedores "$ADM" '{"nome":"Forn Letras Smoke","cnpj":"12.abc.345/01de-35"}'; check "fornecedor com letras" 12ABC34501DE35 "$(j .cnpj)"
+sql "insert into fornecedores (nome, cnpj) values ('Forn Migra Smoke', '98.abc.765/43de-21')" >/dev/null
+sql "insert into notas_entrada (fornecedor_nome, fornecedor_cnpj) values ('Forn Migra Smoke', '98.765.432/0001-10')" >/dev/null
+sql "$(cat prisma/migrations/20261116140000_cnpj_alfanumerico/migration.sql)" >/dev/null
+check "migração: fornecedor normalizado" 98ABC76543DE21 "$(sql "select cnpj from fornecedores where nome='Forn Migra Smoke'")"
+check "migração: nota normalizada" 98765432000110 "$(sql "select fornecedor_cnpj from notas_entrada where fornecedor_nome='Forn Migra Smoke'")"
+sql "$(cat prisma/migrations/20261116140000_cnpj_alfanumerico/migration.sql)" >/dev/null
+check "migração idempotente: fornecedor" 98ABC76543DE21 "$(sql "select cnpj from fornecedores where nome='Forn Migra Smoke'")"
+check "migração idempotente: nota" 98765432000110 "$(sql "select fornecedor_cnpj from notas_entrada where fornecedor_nome='Forn Migra Smoke'")"
 
 # ---------- importações
 req POST /v1/importacoes/insumos "$ADM" '{"arquivo":"insumos.csv","modo":"acrescentar","linhas":[{"codigo":"S01","nome":"Smoke Cebola","unidade":"kg","preco_unitario":"4,50","consumo_semanal_base":"1,5"}]}'
@@ -312,10 +337,19 @@ req PUT /v1/certificado-digital "$LOJA" "$VALIDO"; check "loja não envia certif
 req DELETE /v1/certificado-digital "$LOJA"; check "loja não remove certificado" 403 "$CODE"
 req GET /v1/certificado-digital "$ADM"; check "certificado: status" 200 "$CODE"
 check "certificado ausente" ausente "$(j .situacao)"; check "histórico vazio" 0 "$(j '.historico | length')"
+req PATCH /v1/configuracoes "$ADM" '{"cnpj":"  "}'; check "CNPJ em branco é aceito" 200 "$CODE"; check "CNPJ em branco: vazio" "" "$(j .cnpj)"
 req PUT /v1/certificado-digital "$ADM" "$VALIDO"; check "empresa sem CNPJ: 400" 400 "$CODE"
 check "empresa sem CNPJ: code" EMPRESA_SEM_CNPJ "$(j .error.code)"
 check "empresa sem CNPJ: frase" "Preencha o CNPJ da empresa no quadro Empresa, toque em Salvar (no alto da página) e envie o certificado de novo." "$(j .error.message)"
 req PATCH /v1/configuracoes "$ADM" '{"cnpj":"12.345.678/0001-95"}'; check "CNPJ da empresa gravado" 200 "$CODE"
+check "CNPJ da empresa normalizado" 12345678000195 "$(j .cnpj)"
+req PATCH /v1/configuracoes "$ADM" '{"cnpj":"12.345.678/0001-94"}'; check "CNPJ com DV errado: 400" 400 "$CODE"
+check "CNPJ com DV errado: code" CNPJ_INVALIDO "$(j .error.code)"
+check "CNPJ com DV errado: frase" "CNPJ inválido. Confira os 14 caracteres (pode ter letras)." "$(j .error.message)"
+check "CNPJ com DV errado: banco intacto" 12345678000195 "$(sql "select cnpj from configuracoes where id=1")"
+req PATCH /v1/configuracoes "$ADM" '{"mkup_padrao":2.5}'; check "salvar sem o CNPJ: 200" 200 "$CODE"
+req PATCH /v1/configuracoes "$ADM" '{"cnpj":"12.abc.345/01de-35"}'; check "CNPJ com letras" 12ABC34501DE35 "$(j .cnpj)"
+req PATCH /v1/configuracoes "$ADM" '{"cnpj":"12.345.678/0001-95"}'
 req PUT /v1/certificado-digital "$ADM" "$(cert valido.pfx errada)"; check "senha errada: 400" 400 "$CODE"
 check "senha errada: code" CERTIFICADO_SENHA "$(j .error.code)"
 check "senha errada: nada gravado" 0 "$(sql "select count(*) from certificado_digital")"

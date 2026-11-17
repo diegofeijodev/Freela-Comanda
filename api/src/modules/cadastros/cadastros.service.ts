@@ -1,4 +1,5 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { cnpjValido, normalizarCnpj } from '../../common/fiscal/cnpj';
 import { PrismaService } from '../../common/database/prisma.service';
 import type {
   CentroCustoDto,
@@ -19,8 +20,16 @@ export class CadastrosService {
   config() {
     return this.prisma.configuracoes.findUniqueOrThrow({ where: { id: 1 } });
   }
-  salvarConfig(dto: ConfiguracoesDto) {
-    return this.prisma.configuracoes.update({ where: { id: 1 }, data: dto });
+  async salvarConfig(dto: ConfiguracoesDto) {
+    const data: ConfiguracoesDto = { ...dto };
+    if (dto.cnpj !== undefined) {
+      const cnpj = normalizarCnpj(dto.cnpj);
+      if (cnpj !== '' && !cnpjValido(cnpj)) {
+        throw new BadRequestException({ code: 'CNPJ_INVALIDO', message: 'CNPJ inválido. Confira os 14 caracteres (pode ter letras).' });
+      }
+      data.cnpj = cnpj;
+    }
+    return this.prisma.configuracoes.update({ where: { id: 1 }, data });
   }
 
   // ----- sazonalidade
@@ -50,7 +59,7 @@ export class CadastrosService {
   }
   criarFornecedor(dto: FornecedorDto) {
     return this.prisma.fornecedores.create({
-      data: { nome: dto.nome.trim(), telefone: dto.telefone || null, contato: dto.contato || null, cnpj: dto.cnpj || null },
+      data: { nome: dto.nome.trim(), telefone: dto.telefone || null, contato: dto.contato || null, cnpj: normalizarCnpj(dto.cnpj ?? '') || null },
     });
   }
   excluirFornecedor(id: string) {

@@ -65,7 +65,7 @@ describe('esquema para o Gemini', () => {
     expect(JSON.stringify(g)).not.toContain('"null"');
     expect(g.type).toBe('OBJECT');
     expect(g.required).toEqual(SCHEMA_NOTA.required);
-    expect(g.properties.chave).toEqual({ type: 'STRING', nullable: true, description: 'Chave de acesso de 44 dígitos, só números' });
+    expect(g.properties.chave).toEqual({ type: 'STRING', nullable: true, description: '44 caracteres; as posições 7 a 18 podem ter letras (CNPJ alfanumérico)' });
     expect(g.properties.forma_pagamento.type).toBe('STRING');
     expect(g.properties.forma_pagamento.enum).toContain('boleto');
     expect(g.properties.itens.items.properties.quantidade).toEqual({ type: 'NUMBER' });

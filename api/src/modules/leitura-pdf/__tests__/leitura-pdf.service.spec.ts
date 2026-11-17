@@ -80,11 +80,19 @@ describe('leitura de PDF', () => {
     expect((await servico(nota('31/12/2026')).lerNota(PDF)).data_emissao).toBe('2026-12-31');
   });
 
-  it('chave: só dígitos e só com 44; senão null', async () => {
+  it('chave: normaliza, confere o DV e só devolve se for válida; senão null', async () => {
     const lida = async (chave: unknown) => ((await servico(new LeitorFalso({ chave, data_emissao: '2026-10-20', itens: [] })).lerNota(PDF)) as { chave?: unknown }).chave;
-    expect(await lida('35 2610 1234 5678 0001 9955 0010 0000 7001 1000 0700 11')).toBe('35261012345678000199550010000070011000070011');
+    expect(await lida('35 2610 1234 5678 0001 9955 0010 0000 7001 1000 0700 19')).toBe('35261012345678000199550010000070011000070019');
+    expect(await lida('35261012345678000199550010000070011000070011')).toBeNull();
+    expect(await lida('35261112abc34501de35550010000044111000044116')).toBe('35261112ABC34501DE35550010000044111000044116');
     expect(await lida('3526101234567800019955001000007001100007001')).toBeNull();
     expect(await lida(null)).toBeNull();
+  });
+
+  it('emitente_cnpj: normalizado (letras maiúsculas, sem pontuação) ou null', async () => {
+    const lido = async (emitente_cnpj: unknown) => ((await servico(new LeitorFalso({ emitente_cnpj, data_emissao: '2026-10-20', itens: [] })).lerNota(PDF)) as { emitente_cnpj?: unknown }).emitente_cnpj;
+    expect(await lido('12.abc.345/01de-35')).toBe('12ABC34501DE35');
+    expect(await lido('')).toBeNull();
   });
 
   it('DDA: devolve a lista de boletos', async () => {

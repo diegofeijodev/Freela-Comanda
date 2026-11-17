@@ -1,4 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { chaveValida, normalizarChave } from '../../common/fiscal/chave-acesso';
+import { normalizarCnpj } from '../../common/fiscal/cnpj';
 import { isDateString } from '../../common/time/dates';
 import { PrismaService } from '../../common/database/prisma.service';
 import { LEITOR_PDF, LeituraPdfErro, type ArquivoLeitura, type LeitorPdf } from './leitor-pdf.port';
@@ -17,10 +19,10 @@ const diaValido = (d: string | null | undefined): string => {
   return isDateString(v) ? v : '';
 };
 
-/** Chave de acesso: só dígitos e só se tiver exatamente 44; senão null. */
+/** Chave de acesso: maiúsculas, só `[0-9A-Z]`, e só se for válida (44 caracteres e DV conferido); senão null. */
 const chave44 = (c: unknown): string | null => {
-  const d = typeof c === 'string' ? c.replace(/\D/g, '') : '';
-  return d.length === 44 ? d : null;
+  const n = typeof c === 'string' ? normalizarChave(c) : '';
+  return chaveValida(n) ? n : null;
 };
 
 type NotaLida = {
@@ -58,6 +60,7 @@ export class LeituraPdfService {
     }
     r.data_emissao = diaValido(r.data_emissao);
     r.chave = chave44(r.chave);
+    r.emitente_cnpj = typeof r.emitente_cnpj === 'string' ? normalizarCnpj(r.emitente_cnpj) || null : null;
     r.parcelas = (r.parcelas ?? []).map((p) => ({ ...p, vencimento: diaValido(p.vencimento) }));
     return { ...r, itens: limparItens(r.itens, insumos, subgrupos) };
   }

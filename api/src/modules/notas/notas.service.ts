@@ -1,5 +1,7 @@
 import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { chaveValida, normalizarChave } from '../../common/fiscal/chave-acesso';
+import { normalizarCnpj } from '../../common/fiscal/cnpj';
 import { normalizaNome } from '../../common/parse/normaliza';
 import { PrismaService } from '../../common/database/prisma.service';
 import { dayToDb } from '../../common/time/dates';
@@ -19,12 +21,13 @@ export class NotasService {
   }
 
   async existe(chave: string) {
-    return { existe: !!(await this.prisma.notas_entrada.findUnique({ where: { chave }, select: { id: true } })) };
+    const c = normalizarChave(chave);
+    return { existe: !!(await this.prisma.notas_entrada.findUnique({ where: { chave: c }, select: { id: true } })) };
   }
 
   /** Vínculos produto do fornecedor → insumo salvos por lancar_nota (para pré-preencher a próxima nota). */
   vinculos(cnpj: string) {
-    return this.prisma.vinculos_produto.findMany({ where: { fornecedor_cnpj: cnpj } });
+    return this.prisma.vinculos_produto.findMany({ where: { fornecedor_cnpj: normalizarCnpj(cnpj) } });
   }
 
   /**
@@ -42,13 +45,16 @@ export class NotasService {
         message: 'Escolha um insumo existente ou cadastre um novo, não os dois',
       });
     }
-    const chave = dto.chave?.replace(/\D/g, '') || null;
+    const chave = normalizarChave(dto.chave ?? '') || null;
+    if (chave && !chaveValida(chave)) {
+      throw new BadRequestException({ code: 'CHAVE_INVALIDA', message: 'A chave de acesso da nota é inválida. Confira os 44 caracteres.' });
+    }
     if (chave && (await this.prisma.notas_entrada.findUnique({ where: { chave }, select: { id: true } }))) {
       throw new ConflictException({ code: 'DUPLICADO', message: 'Esta nota já foi lançada' });
     }
     const totalItens = dto.itens.reduce((s, i) => s + i.quantidade * i.valor_unitario, 0);
     const valorNota = dto.valor_total || totalItens;
-    const cnpj = dto.fornecedor_cnpj?.replace(/\D/g, '') || null;
+    const cnpj = normalizarCnpj(dto.fornecedor_cnpj ?? '') || null;
 
     return this.prisma.$transaction(
       async (tx) => {
