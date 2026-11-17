@@ -5,6 +5,7 @@
 // do campo (a resposta 422 vem sozinha); as outras no estilo da UX §6.3. A Task 9 leva estas frases para `frases.ts`.
 
 import { gtinValido } from '../../common/fiscal/documentos';
+import { cabeNoEsquema, textoDoCupom } from '../../common/fiscal/texto-fiscal';
 import { precoCentavos } from './totais';
 
 export type Crt = 1 | 2 | 3 | 4;
@@ -24,7 +25,8 @@ export interface PerfilFiscal {
   ativo: boolean;
 }
 
-export type MotivoProduto = 'falta_ncm' | 'falta_perfil' | 'sem_preco' | 'inativo' | 'perfil_inativo' | 'perfil_fora_do_regime';
+export type MotivoProduto =
+  'falta_ncm' | 'falta_perfil' | 'sem_preco' | 'inativo' | 'perfil_inativo' | 'perfil_fora_do_regime' | 'nome_fora_do_padrao';
 
 /** CRT que pedem CSOSN (Simples, excesso de sublimite e MEI); o CRT 3 (regime normal) pede CST. Desenho §3.2. */
 export const CRT_COM_CSOSN: readonly Crt[] = [1, 2, 4];
@@ -38,6 +40,12 @@ export const CFOP_SEM_ST = ['5101', '5102', '5103', '5104', '5115'] as const;
 export const CFOP_CSOSN_500 = ['5405', '5656', '5667'] as const;
 /** CST 60 (N12-44). */
 export const CFOP_CST_60 = ['5405'] as const;
+/** PIS/COFINS que vão só com o CST (grupos PISNT/COFINSNT). */
+export const CST_PIS_COFINS_NT = ['04', '05', '06', '07', '08', '09'] as const;
+/** PIS/COFINS que vão em PISOutr/COFINSOutr com base, alíquota e valor zerados (prática do Simples; decisão do controlador, T6-3). */
+export const CST_PIS_COFINS_OUTR_ZERADO = ['49', '99'] as const;
+/** Os outros pedem alíquota (ou quantidade), que o perfil ainda não tem: ficam barrados (T6-3). */
+const CST_PIS_COFINS_ACEITOS = [...CST_PIS_COFINS_NT, ...CST_PIS_COFINS_OUTR_ZERADO] as const;
 
 /** Formata o CFOP como na tela: 5405 → 5.405. */
 const cfopTexto = (c: string) => `${c[0]}.${c.slice(1)}`;
@@ -56,7 +64,15 @@ export const FRASES_VALIDACAO = {
   osDois: 'Escolha o CSOSN (Simples) ou o CST (regime normal), não os dois.',
   csosnSemSt: (csosn: string) => `O CSOSN ${csosn} só vale com o tipo de venda (CFOP) ${listaCfop(CFOP_SEM_ST)}.`,
   cfopFora: (cfop: string) => `O tipo de venda (CFOP) ${cfopTexto(cfop)} não entra no cupom.`,
-  gtin: 'Este GTIN não confere. Confira os números ou deixe em branco (produto sem código de barras).',
+  // UX §5.7 (literal)
+  gtin: 'Este código de barras não confere. Confira os números (8, 12, 13 ou 14).',
+  // decisões do controlador na rodada da Tarefa 6 (literais)
+  cst20: 'O CST 20 ainda não pode ser usado no Comanda. Fale com o contador.',
+  semAliqIcms: 'Informe a alíquota do ICMS.',
+  pisCofinsBarrado: 'Este CST de PIS/COFINS ainda não pode ser usado no Comanda. Fale com o contador.',
+  // texto fora do TString do esquema (U+0020–U+00FF), no estilo "não confere" da UX §6.3
+  nomeCaractere: 'O nome no cupom não confere: a SEFAZ não aceita emoji nem símbolos.',
+  unidadeCaractere: 'A unidade no cupom não confere: a SEFAZ não aceita emoji nem símbolos.',
   // UX §5.7 (literais)
   ncm: 'O NCM tem 8 números.',
   cest: 'O CEST tem 7 números.',
@@ -86,6 +102,9 @@ function presente(s: string | null | undefined): s is string {
   return s != null && s.trim() !== '';
 }
 
+/** Código aparado (' 102 ' → '102'); vazio = null. */
+const aparado = (s: string | null | undefined): string | null => (presente(s) ? s.trim() : null);
+
 const contem = (lista: readonly string[], v: string) => lista.includes(v);
 
 /** Decimal com ponto, de 0 a 100, com até `casas` casas. */
@@ -99,12 +118,16 @@ function percentualValido(v: string, casas: number): boolean {
  * CFOP × código; formatos. Com `crt` nulo (regime ainda não cadastrado), aceita CSOSN ou CST.
  */
 export function erroDoPerfil(p: PerfilFiscal, crt: Crt | null): string | null {
-  const csosn = presente(p.csosn) ? p.csosn : null;
-  const cst = presente(p.cst_icms) ? p.cst_icms : null;
+  const csosn = aparado(p.csosn);
+  const cst = aparado(p.cst_icms);
+  const cfop = aparado(p.cfop) ?? '';
+  const aliq = aparado(p.aliq_icms);
+  const pis = aparado(p.pis_cst);
+  const cofins = aparado(p.cofins_cst);
   if (csosn !== null && cst !== null) return F.osDois;
 
-  if (!/^\d{4}$/.test(p.cfop)) return F.semCfop;
-  if (!contem(CFOP_ACEITOS, p.cfop)) return F.cfopFora(p.cfop);
+  if (!/^\d{4}$/.test(cfop)) return F.semCfop;
+  if (!contem(CFOP_ACEITOS, cfop)) return F.cfopFora(cfop);
 
   if (crt === null) {
     if (csosn === null && cst === null) return F.semCodigo;
@@ -117,23 +140,32 @@ export function erroDoPerfil(p: PerfilFiscal, crt: Crt | null): string | null {
   if (csosn !== null) {
     if (!contem(CSOSN_ACEITOS, csosn)) return F.csosnFora(csosn);
     if (csosn === '500') {
-      if (!contem(CFOP_CSOSN_500, p.cfop)) return F.csosn500;
-    } else if (!contem(CFOP_SEM_ST, p.cfop)) {
+      if (!contem(CFOP_CSOSN_500, cfop)) return F.csosn500;
+    } else if (!contem(CFOP_SEM_ST, cfop)) {
       return F.csosnSemSt(csosn);
     }
   } else if (cst !== null) {
     if (!contem(CST_ACEITOS, cst)) return F.cstFora(cst);
-    if (cst === '60' && !contem(CFOP_CST_60, p.cfop)) return F.cst60;
+    if (cst === '20') return F.cst20; // o grupo ICMS20 pede a redução da base (pRedBC), que o perfil não tem (T6-2)
+    if (cst === '60' && !contem(CFOP_CST_60, cfop)) return F.cst60;
+    if (cst === '00' && aliq === null) return F.semAliqIcms;
   }
 
-  if (presente(p.aliq_icms) && !percentualValido(p.aliq_icms, 2)) return F.aliqIcms;
-  if (presente(p.pis_cst) && !/^\d{2}$/.test(p.pis_cst)) return F.pisCst;
-  if (presente(p.cofins_cst) && !/^\d{2}$/.test(p.cofins_cst)) return F.cofinsCst;
-  if (presente(p.c_ativ_sn) && !/^\d{2}$/.test(p.c_ativ_sn)) return F.cAtivSn;
-  if (presente(p.ibs_sn_aliq) && !percentualValido(p.ibs_sn_aliq, 4)) return F.ibsSnAliq;
-  if (presente(p.cbs_sn_aliq) && !percentualValido(p.cbs_sn_aliq, 4)) return F.cbsSnAliq;
-  if (presente(p.ibscbs_cst) && !/^\d{3}$/.test(p.ibscbs_cst)) return F.ibscbsCst;
-  if (presente(p.ibscbs_cclass_trib) && !/^\d{6}$/.test(p.ibscbs_cclass_trib)) return F.ibscbsCclassTrib;
+  if (aliq !== null && !percentualValido(aliq, 2)) return F.aliqIcms;
+  if (pis !== null && !/^\d{2}$/.test(pis)) return F.pisCst;
+  if (pis !== null && !contem(CST_PIS_COFINS_ACEITOS, pis)) return F.pisCofinsBarrado;
+  if (cofins !== null && !/^\d{2}$/.test(cofins)) return F.cofinsCst;
+  if (cofins !== null && !contem(CST_PIS_COFINS_ACEITOS, cofins)) return F.pisCofinsBarrado;
+  const cAtivSn = aparado(p.c_ativ_sn);
+  const ibsSn = aparado(p.ibs_sn_aliq);
+  const cbsSn = aparado(p.cbs_sn_aliq);
+  const ibscbsCst = aparado(p.ibscbs_cst);
+  const cClassTrib = aparado(p.ibscbs_cclass_trib);
+  if (cAtivSn !== null && !/^\d{2}$/.test(cAtivSn)) return F.cAtivSn;
+  if (ibsSn !== null && !percentualValido(ibsSn, 4)) return F.ibsSnAliq;
+  if (cbsSn !== null && !percentualValido(cbsSn, 4)) return F.cbsSnAliq;
+  if (ibscbsCst !== null && !/^\d{3}$/.test(ibscbsCst)) return F.ibscbsCst;
+  if (cClassTrib !== null && !/^\d{6}$/.test(cClassTrib)) return F.ibscbsCclassTrib;
   return null;
 }
 
@@ -148,17 +180,25 @@ function temPreco(preco: string | null): boolean {
   return precoCentavos(preco) > 0n;
 }
 
+/** O nome que vai no `xProd` cabe no cupom: não vazio depois de limpo e só com o que o `TString` do esquema aceita. */
+function nomeCabeNoCupom(nome: string | null): boolean {
+  const t = textoDoCupom(nome ?? '', 120);
+  return t !== '' && cabeNoEsquema(t);
+}
+
 /**
  * Por que o produto não entra no cupom, na ordem do tipo `MotivoProduto`. Vazio = pronto para o cupom.
  * Perfil desativado esconde o motivo do regime (o conserto é o mesmo: escolher outro perfil). Com `crt` nulo, o regime não é conferido
- * (a emissão já para antes, por falta de configuração).
+ * (a emissão já para antes, por falta de configuração). `nome_cupom` = o nome que vai no cupom: `nfce_itens.descricao_cupom` ou, vazio,
+ * `itens_cardapio.nome` (emoji ou símbolo no nome do cardápio = `nome_fora_do_padrao`; o conserto é o "Nome no cupom").
  */
 export function motivosDoProduto(
-  i: { ativo: boolean; preco_venda: string | null; ncm: string | null; perfil: PerfilFiscal | null },
+  i: { ativo: boolean; preco_venda: string | null; ncm: string | null; perfil: PerfilFiscal | null; nome_cupom: string | null },
   crt: Crt | null,
 ): MotivoProduto[] {
   const m: MotivoProduto[] = [];
-  if (i.ncm == null || !/^\d{8}$/.test(i.ncm)) m.push('falta_ncm');
+  const ncm = aparado(i.ncm);
+  if (ncm === null || !/^\d{8}$/.test(ncm)) m.push('falta_ncm');
   if (i.perfil === null) m.push('falta_perfil');
   if (!temPreco(i.preco_venda)) m.push('sem_preco');
   if (!i.ativo) m.push('inativo');
@@ -166,23 +206,36 @@ export function motivosDoProduto(
     if (!i.perfil.ativo) m.push('perfil_inativo');
     else if (crt !== null && !perfilValeNoRegime(i.perfil, crt)) m.push('perfil_fora_do_regime');
   }
+  if (!nomeCabeNoCupom(i.nome_cupom)) m.push('nome_fora_do_padrao');
   return m;
 }
 
-/** Primeiro erro dos dados fiscais do item, na ordem dos campos. Campo vazio = ausente (NCM e perfil vazios deixam o item incompleto). */
+/**
+ * Primeiro erro dos dados fiscais do item, na ordem dos campos. Campo vazio (ou origem nula) = ausente (NCM e perfil vazios deixam o
+ * item incompleto). Códigos aparados antes de conferir; nome e unidade só com o que o esquema aceita (emoji e símbolos não).
+ */
 export function erroDoItemFiscal(i: {
   ncm?: string | null;
   cest?: string | null;
   gtin?: string | null;
-  origem?: number;
+  origem?: number | null;
   descricao_cupom?: string | null;
   unidade?: string | null;
 }): string | null {
-  if (presente(i.ncm) && !/^\d{8}$/.test(i.ncm)) return F.ncm;
-  if (presente(i.cest) && !/^\d{7}$/.test(i.cest)) return F.cest;
-  if (presente(i.gtin) && !gtinValido(i.gtin)) return F.gtin;
-  if (i.origem !== undefined && !(Number.isInteger(i.origem) && i.origem >= 0 && i.origem <= 8)) return F.origem;
-  if (presente(i.descricao_cupom) && Array.from(i.descricao_cupom).length > 120) return F.descricao;
-  if (presente(i.unidade) && Array.from(i.unidade).length > 6) return F.unidade;
+  const ncm = aparado(i.ncm);
+  const cest = aparado(i.cest);
+  const gtin = aparado(i.gtin);
+  if (ncm !== null && !/^\d{8}$/.test(ncm)) return F.ncm;
+  if (cest !== null && !/^\d{7}$/.test(cest)) return F.cest;
+  if (gtin !== null && !gtinValido(gtin)) return F.gtin;
+  if (i.origem != null && !(Number.isInteger(i.origem) && i.origem >= 0 && i.origem <= 8)) return F.origem;
+  if (presente(i.descricao_cupom)) {
+    if (Array.from(i.descricao_cupom).length > 120) return F.descricao;
+    if (!cabeNoEsquema(textoDoCupom(i.descricao_cupom, 120))) return F.nomeCaractere;
+  }
+  if (presente(i.unidade)) {
+    if (Array.from(i.unidade).length > 6) return F.unidade;
+    if (!cabeNoEsquema(textoDoCupom(i.unidade, 6))) return F.unidadeCaractere;
+  }
   return null;
 }

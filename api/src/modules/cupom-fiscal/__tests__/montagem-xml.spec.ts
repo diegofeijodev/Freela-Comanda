@@ -305,15 +305,20 @@ describe('montarNfe', () => {
     expect(xml).toContain('<ICMSTot><vBC>32.00</vBC><vICMS>4.73</vICMS>');
   });
 
-  it('ICMS: CST 00 ou 20 sem alíquota é recusado com frase fixa; CST 20 com alíquota também (falta a redução da base no perfil)', () => {
+  it('ICMS: CST 00 sem alíquota (ou torta) é recusado; CST 20 é sempre recusado (barrado por ora, como na validação)', () => {
     const normal = { ...dados().emitente, crt: 3 as const };
-    for (const cst of ['00', '20'])
-      expect(erroDe(() => montarNfe(dados({ emitente: normal, itens: [{ ...PRATO, csosn: null, cstIcms: cst }] }))).message).toBe(
-        FRASES_MONTAGEM.semAliquota,
-      );
+    expect(erroDe(() => montarNfe(dados({ emitente: normal, itens: [{ ...PRATO, csosn: null, cstIcms: '00' }] }))).message).toBe(
+      FRASES_MONTAGEM.semAliquota,
+    );
+    expect(FRASES_MONTAGEM.semAliquota).toBe('Informe a alíquota do ICMS.');
+    expect(FRASES_MONTAGEM.cst20).toBe('O CST 20 ainda não pode ser usado no Comanda. Fale com o contador.');
+    expect(FRASES_MONTAGEM.pisCofins).toBe('Este CST de PIS/COFINS ainda não pode ser usado no Comanda. Fale com o contador.');
+    expect(erroDe(() => montarNfe(dados({ emitente: normal, itens: [{ ...PRATO, csosn: null, cstIcms: '20' }] }))).message).toBe(
+      FRASES_MONTAGEM.cst20,
+    );
     expect(
       erroDe(() => montarNfe(dados({ emitente: normal, itens: [{ ...PRATO, csosn: null, cstIcms: '00', aliqIcms: '18.123' }] }))).message,
-    ).toBe(FRASES_MONTAGEM.semAliquota);
+    ).toBe(FRASES_MONTAGEM.aliquota);
     expect(
       erroDe(() => montarNfe(dados({ emitente: normal, itens: [{ ...PRATO, csosn: null, cstIcms: '20', aliqIcms: '18.00' }] }))).message,
     ).toBe(FRASES_MONTAGEM.cst20);
@@ -334,22 +339,50 @@ describe('montarNfe', () => {
       expect(erroDe(() => montarNfe(dados({ emitente: { ...e, crt }, itens: [{ ...PRATO, csosn, cstIcms: cst }] }))).message).toBe(frase);
   });
 
-  it('PIS/COFINS: vazio = grupo omitido; 04 a 09 = PISNT/COFINSNT; os que pedem base e alíquota são recusados', () => {
+  it('PIS/COFINS: vazio = grupo omitido; 04 a 09 = NT; 49 e 99 = Outr com zeros; os que pedem alíquota são recusados', () => {
     const sem = montarNfe(dados({ itens: [{ ...PRATO, pisCst: null, cofinsCst: '' }] }));
     expect(sem).not.toContain('<PIS>');
     expect(sem).not.toContain('<COFINS>');
     const nt = montarNfe(dados({ itens: [{ ...PRATO, pisCst: '07', cofinsCst: '09' }] }));
     expect(nt).toContain('</ICMS><PIS><PISNT><CST>07</CST></PISNT></PIS><COFINS><COFINSNT><CST>09</CST></COFINSNT></COFINS></imposto>');
+    const outr = montarNfe(dados({ itens: [{ ...PRATO, pisCst: '49', cofinsCst: '99' }] }));
+    expect(outr).toContain(
+      '</ICMS><PIS><PISOutr><CST>49</CST><vBC>0.00</vBC><pPIS>0.0000</pPIS><vPIS>0.00</vPIS></PISOutr></PIS>' +
+        '<COFINS><COFINSOutr><CST>99</CST><vBC>0.00</vBC><pCOFINS>0.0000</pCOFINS><vCOFINS>0.00</vCOFINS></COFINSOutr></COFINS></imposto>',
+    );
+    expect(outr).toContain('<vPIS>0.00</vPIS><vCOFINS>0.00</vCOFINS><vOutro>');
     for (const [pis, cofins] of [
       ['01', null],
-      ['49', null],
-      [null, '99'],
+      ['50', null],
+      [null, '98'],
       ['03', '03'],
       ['10', null],
     ])
       expect(erroDe(() => montarNfe(dados({ itens: [{ ...PRATO, pisCst: pis, cofinsCst: cofins }] }))).message).toBe(
         FRASES_MONTAGEM.pisCofins,
       );
+  });
+
+  it('códigos com espaços em volta são aparados (como na validação)', () => {
+    const item: ItemXml = {
+      ...CHOPP,
+      csosn: ' 500 ',
+      ncm: ' 22030000',
+      cest: '0302100 ',
+      gtin: ' 7891000315507 ',
+      cfop: ' 5405 ',
+      pisCst: ' 49 ',
+    };
+    expect(montarNfe(dados({ itens: [PRATO, item] }))).toContain(
+      '<cEAN>7891000315507</cEAN><xProd>Chopp &amp; &quot;Lager&quot; &lt;300&gt; ml</xProd><NCM>22030000</NCM><CEST>0302100</CEST><CFOP>5405</CFOP>',
+    );
+    expect(montarNfe(dados({ itens: [PRATO, item] }))).toContain(
+      '<ICMSSN500><orig>0</orig><CSOSN>500</CSOSN></ICMSSN500></ICMS><PIS><PISOutr><CST>49</CST>',
+    );
+    const normal = { ...dados().emitente, crt: 3 as const };
+    expect(montarNfe(dados({ emitente: normal, itens: [{ ...PRATO, csosn: null, cstIcms: ' 00 ', aliqIcms: ' 18 ' }] }))).toContain(
+      '<CST>00</CST><modBC>3</modBC>',
+    );
   });
 
   it('chave que não confere com a nota (CNPJ, série, número, cNF ou mês do dhEmi) é recusada', () => {

@@ -5,19 +5,20 @@
 //    dentro do lote); 2. `assinarXmlEnveloped(xml, 'NFe' + chave, cert)`; 3. `inserirSupl` (QR fora da assinatura, antes da `Signature`);
 // 4. `corpoEnviNfe` (o `nfeDadosMsg` e o envelope `sem_prefixo` são do adaptador, desenho §8.3); 5. `montarNfeProc` ao autorizar.
 //
-// Nenhum dado entra cru: código e número passam por expressão do esquema; texto livre por NFC → aspas e travessões do teclado em ASCII →
-// `textoFiscal` (U+0085/U+2028/U+2029 viram espaço, sem controles, cortado no tamanho do esquema) → só U+0020–U+00FF (o `TString` do
-// esquema) → escape de & < > ". Recusa = `MontagemNfceErro` com frase fixa, sem dado do cupom (nem nome, nem CPF): um texto que a SEFAZ
-// recusasse pelo esquema (225) pararia o ambiente inteiro (§5.3); aqui para só este cupom.
+// Nenhum dado entra cru: código (aparado) e número passam por expressão do esquema; texto livre por `textoDoCupom` (NFC, aspas e
+// travessões do teclado em ASCII, `textoFiscal`: quebras de linha e U+0085/U+2028/U+2029 viram espaço, sem controles, cortado no tamanho
+// do esquema) → `cabeNoEsquema` (só U+0020–U+00FF, o `TString` do esquema) → escape de & < > ". A validação do produto usa os mesmos.
+// Recusa = `MontagemNfceErro` com frase fixa, sem dado do cupom (nem nome, nem CPF): um texto que a SEFAZ recusasse pelo esquema (225)
+// pararia o ambiente inteiro (§5.3); aqui para só este cupom.
 
 import { cnpjValido } from '../../common/fiscal/cnpj';
 import { montarChaveNfce } from '../../common/fiscal/chave-acesso';
 import { cpfValido, gtinValido } from '../../common/fiscal/documentos';
-import { textoFiscal } from '../../common/fiscal/texto-fiscal';
+import { cabeNoEsquema, textoDoCupom } from '../../common/fiscal/texto-fiscal';
 import { XMLDSIG } from '../sefaz/assinatura-xml';
 import { dhSefaz } from '../sefaz/eventos-xml';
 import { calcularTotais, decimal2, quantidadeValida, type Totais, type TPag } from './totais';
-import { CRT_COM_CSOSN, type Crt } from './validacao-fiscal';
+import { CRT_COM_CSOSN, CST_PIS_COFINS_NT, CST_PIS_COFINS_OUTR_ZERADO, FRASES_VALIDACAO, type Crt } from './validacao-fiscal';
 
 export const NS_NFE = 'http://www.portalfiscal.inf.br/nfe';
 export const VER_PROC = 'FreelaComanda 1.0';
@@ -97,9 +98,11 @@ export const FRASES_MONTAGEM = {
   totais: 'Os valores do cupom não conferem com os itens e os pagamentos.',
   regime: 'O código do ICMS do perfil fiscal não confere com o regime da empresa (CSOSN no Simples, CST no regime normal).',
   codigoIcms: 'O código do ICMS do perfil fiscal não entra no cupom.',
-  semAliquota: 'O CST 00 e o CST 20 pedem a alíquota do ICMS (de 0 a 100, com até 2 casas) no perfil fiscal.',
-  cst20: 'O CST 20 pede o percentual de redução da base do ICMS, que o perfil fiscal ainda não tem.',
-  pisCofins: 'O CST do PIS ou da COFINS pede base e alíquota, que o perfil fiscal não tem: use de 04 a 09 ou deixe em branco.',
+  // as mesmas da validação do perfil (a validação barra antes; a montagem recusa de novo se o perfil escapar)
+  semAliquota: FRASES_VALIDACAO.semAliqIcms,
+  aliquota: FRASES_VALIDACAO.aliqIcms,
+  cst20: FRASES_VALIDACAO.cst20,
+  pisCofins: FRASES_VALIDACAO.pisCofinsBarrado,
   tamanho: 'O cupom passou do tamanho que a SEFAZ aceita (500 KB).',
 } as const;
 
@@ -125,25 +128,11 @@ function presente(s: string | null | undefined): s is string {
 
 const ESCAPE: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' };
 const esc = (s: string): string => s.replace(/[&<>"]/g, (c) => ESCAPE[c]);
-/** O `TString` do esquema: `[!-ÿ]{1}[ -ÿ]{0,}[!-ÿ]{1}|[!-ÿ]{1}` (as pontas já saem aparadas do `textoFiscal`). */
-const SO_LATIN1 = /^[\u0020-\u00FF]*$/;
-
-function limpar(s: string, max: number): string {
-  const teclado = s
-    .normalize('NFC')
-    .replace(/[\t\n\r]/g, ' ') // o textoFiscal apaga os controles: sem isto, a quebra de linha colaria as palavras
-    .replace(/[\u2018\u2019]/g, "'")
-    .replace(/[\u201C\u201D]/g, '"')
-    .replace(/[\u2013\u2014]/g, '-')
-    .replace(/\u2026/g, '...')
-    .replace(/[\u0080-\u0084\u0086-\u009F]/g, ''); // controles C1 (o U+0085 vira espaço no textoFiscal)
-  return textoFiscal(teclado, max).normalize('NFC');
-}
 
 /** Texto obrigatório do esquema, já escapado. Vazio depois de limpo = "Falta …"; abaixo do mínimo = fora do padrão. */
 function txt(s: string | null | undefined, max: number, min: number, campo: string): string {
-  const t = limpar(s ?? '', max);
-  if (!SO_LATIN1.test(t)) recusa(F.caractere(campo));
+  const t = textoDoCupom(s ?? '', max);
+  if (!cabeNoEsquema(t)) recusa(F.caractere(campo));
   if (t === '') recusa(F.vazio(campo));
   if (Array.from(t).length < min) recusa(F.formato(campo));
   return esc(t);
@@ -151,14 +140,18 @@ function txt(s: string | null | undefined, max: number, min: number, campo: stri
 
 /** Texto opcional: vazio depois de limpo = grupo omitido. */
 function txtOpcional(s: string | null | undefined, max: number, min: number, campo: string): string | null {
-  return limpar(s ?? '', max) === '' ? null : txt(s, max, min, campo);
+  return textoDoCupom(s ?? '', max) === '' ? null : txt(s, max, min, campo);
 }
 
 // --- códigos e números -------------------------------------------------------------------------------------------------------------
 
+/** Código aparado (' 102 ' → '102'), como na validação; vazio = null. */
+const aparado = (s: string | null | undefined): string | null => (presente(s) ? s.trim() : null);
+
 function codigo(v: string | null | undefined, re: RegExp, campo: string): string {
-  if (typeof v !== 'string' || !re.test(v)) recusa(F.formato(campo));
-  return v as string;
+  const t = aparado(v);
+  if (t === null || !re.test(t)) recusa(F.formato(campo));
+  return t as string;
 }
 
 /** Telefone do esquema: só dígitos, de 6 a 14 (a máscara da tela sai). Vazio = omitido. */
@@ -175,10 +168,12 @@ function quantidade4(q: string): string {
 
 /** Alíquota de 0 a 100 com até 2 casas → centésimos de ponto percentual (18.5 → 1850). */
 function aliquotaCentesimos(a: string | null): bigint {
-  const m = a === null ? null : /^([0-9]{1,3})(?:\.([0-9]{1,2}))?$/.exec(a);
-  if (!m) return recusa(F.semAliquota);
+  const t = aparado(a);
+  if (t === null) return recusa(F.semAliquota);
+  const m = /^([0-9]{1,3})(?:\.([0-9]{1,2}))?$/.exec(t);
+  if (!m) return recusa(F.aliquota);
   const v = BigInt(m[1]) * 100n + BigInt((m[2] ?? '').padEnd(2, '0'));
-  return v > 10000n ? recusa(F.semAliquota) : v;
+  return v > 10000n ? recusa(F.aliquota) : v;
 }
 
 const percentual2 = (c: bigint): string => `${c / 100n}.${(c % 100n).toString().padStart(2, '0')}`;
@@ -201,24 +196,22 @@ const GRUPO_CST_SIMPLES = new Map<string, string>([
   ['60', 'ICMS60'],
   ['90', 'ICMS90'],
 ]);
-/** PISNT/COFINSNT: só o CST. Os outros grupos pedem base e alíquota (ou quantidade), que o perfil não tem. */
-const CST_PIS_COFINS_NT = new Set(['04', '05', '06', '07', '08', '09']);
 
 type Icms = { xml: string; vBC: bigint; vICMS: bigint };
 
 /** `base` = valor do item menos o desconto rateado (centavos). */
 function icmsDoItem(i: ItemXml, crt: Crt, base: bigint): Icms {
-  const csosn = presente(i.csosn) ? i.csosn : null;
-  const cst = presente(i.cstIcms) ? i.cstIcms : null;
+  const csosn = aparado(i.csosn);
+  const cst = aparado(i.cstIcms);
   if ((csosn === null) === (cst === null) || CRT_COM_CSOSN.includes(crt) !== (csosn !== null)) recusa(F.regime);
   const orig = `<orig>${i.origem}</orig>`;
   if (csosn !== null) {
     const grupo = GRUPO_CSOSN.get(csosn) ?? recusa(F.codigoIcms);
     return { xml: `<ICMS><${grupo}>${orig}<CSOSN>${csosn}</CSOSN></${grupo}></ICMS>`, vBC: 0n, vICMS: 0n };
   }
-  if (cst === '00' || cst === '20') {
-    const p = aliquotaCentesimos(i.aliqIcms); // decisão do controlador: CST 00/20 sem alíquota = recusa
-    if (cst === '20') recusa(F.cst20); // o ICMS20 do esquema exige pRedBC, que o perfil não tem
+  if (cst === '20') recusa(F.cst20); // barrado por ora (T6-2): o ICMS20 do esquema exige pRedBC, que o perfil não tem
+  if (cst === '00') {
+    const p = aliquotaCentesimos(i.aliqIcms); // CST 00 sem alíquota = recusa
     const vICMS = (base * p + 5000n) / 10000n; // metade para cima
     const xml =
       `<ICMS><ICMS00>${orig}<CST>00</CST><modBC>3</modBC><vBC>${decimal2(base)}</vBC><pICMS>${percentual2(p)}</pICMS>` +
@@ -229,10 +222,19 @@ function icmsDoItem(i: ItemXml, crt: Crt, base: bigint): Icms {
   return { xml: `<ICMS><${grupo}>${orig}<CST>${cst}</CST></${grupo}></ICMS>`, vBC: 0n, vICMS: 0n };
 }
 
-function pisCofins(cst: string | null, grupo: 'PIS' | 'COFINS'): string {
-  if (!presente(cst)) return ''; // vazio = grupo omitido (opcional na NFC-e)
-  if (!CST_PIS_COFINS_NT.has(cst)) recusa(F.pisCofins);
-  return `<${grupo}><${grupo}NT><CST>${cst}</CST></${grupo}NT></${grupo}>`;
+/**
+ * Vazio = grupo omitido (opcional na NFC-e); 04 a 09 = PISNT/COFINSNT (só o CST); 49 e 99 = PISOutr/COFINSOutr com vBC 0.00, alíquota
+ * 0.0000 e valor 0.00 (T6-3, prática do Simples). Os outros pedem alíquota (ou quantidade), que o perfil não tem: recusa.
+ */
+function pisCofins(valor: string | null, grupo: 'PIS' | 'COFINS'): string {
+  const cst = aparado(valor);
+  if (cst === null) return '';
+  if ((CST_PIS_COFINS_NT as readonly string[]).includes(cst)) return `<${grupo}><${grupo}NT><CST>${cst}</CST></${grupo}NT></${grupo}>`;
+  if (!(CST_PIS_COFINS_OUTR_ZERADO as readonly string[]).includes(cst)) recusa(F.pisCofins);
+  return (
+    `<${grupo}><${grupo}Outr><CST>${cst}</CST><vBC>0.00</vBC><p${grupo}>0.0000</p${grupo}><v${grupo}>0.00</v${grupo}>` +
+    `</${grupo}Outr></${grupo}>`
+  );
 }
 
 // --- conferências de entrada ---------------------------------------------------------------------------------------------------------
@@ -323,7 +325,8 @@ function detXml(i: ItemXml, n: number, d: DadosNfce, t: Totais): { xml: string; 
   const xProd = d.tpAmb === 2 && n === 1 ? XPROD_HOMOLOGACAO : nome;
   const ncm = codigo(i.ncm, /^[0-9]{8}$/, 'o NCM do produto');
   const cest = presente(i.cest) ? codigo(i.cest, /^[0-9]{7}$/, 'o CEST do produto') : null;
-  const ean = presente(i.gtin) ? (gtinValido(i.gtin) ? i.gtin : recusa(F.formato('o GTIN do produto'))) : 'SEM GTIN';
+  const gtin = aparado(i.gtin);
+  const ean = gtin === null ? 'SEM GTIN' : gtinValido(gtin) ? gtin : recusa(F.formato('o GTIN do produto'));
   const cfop = codigo(i.cfop, /^[123567][0-9]{3}$/, 'o CFOP do produto');
   if (!Number.isInteger(i.origem) || i.origem < 0 || i.origem > 8) recusa(F.formato('a origem do produto'));
   const u = txt(i.unidade, 6, 1, 'a unidade do produto');

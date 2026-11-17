@@ -1,6 +1,6 @@
 import { chaveValida, montarChaveNfce, partesDaChave } from '../chave-acesso';
 import { cpfValido, gtinValido, mascararCpf } from '../documentos';
-import { textoFiscal } from '../texto-fiscal';
+import { cabeNoEsquema, textoDoCupom, textoFiscal } from '../texto-fiscal';
 
 describe('peças fiscais da NFC-e', () => {
   it('monta a chave (UF 35, modelo 65, DV pelo módulo 11)', () => {
@@ -46,5 +46,18 @@ describe('peças fiscais da NFC-e', () => {
     expect(textoFiscal('a\u2028b\u2029c', 120)).toBe('a b c');
     expect(textoFiscal('a'.repeat(130), 120)).toHaveLength(120);
     expect(textoFiscal('😀'.repeat(5), 3)).toBe('😀😀😀');
+  });
+
+  it('texto fiscal: TAB, LF e CR viram espaço (não colam as palavras); controles C1 somem', () => {
+    expect(textoFiscal('Obrigado!\nVolte\tsempre\r\nfim', 120)).toBe('Obrigado! Volte sempre fim');
+    expect(textoFiscal('a\u0080b\u009Fc\u007Fd', 120)).toBe('abcd');
+    expect(textoFiscal('a\u0085b', 120)).toBe('a b');
+  });
+
+  it('texto do cupom: aspas, travessões e reticências do teclado em ASCII, acento composto; cabeNoEsquema = só U+0020–U+00FF', () => {
+    expect(textoDoCupom('\u201CEspecial\u201D \u2013 Cafe\u0301\u2026 d\u2019\u00E1gua\n', 120)).toBe('"Especial" - Café... d\'água');
+    expect(textoDoCupom('x'.repeat(130), 120)).toHaveLength(120);
+    expect(cabeNoEsquema(textoDoCupom('Pão & "Café" <grande> ç ÿ', 120))).toBe(true);
+    for (const t of ['Chopp 🍺', 'Feito ✓', 'Ω', '\u20AC 10']) expect(cabeNoEsquema(textoDoCupom(t, 120))).toBe(false);
   });
 });
