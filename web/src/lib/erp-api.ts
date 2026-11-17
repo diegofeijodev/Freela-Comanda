@@ -1,5 +1,6 @@
 // Chamadas da API do Freela ERP — substituem as consultas `supabase.from(...)` / `rpc(...)` do protótipo, uma a uma.
 // O fio é snake_case com os mesmos nomes do banco (numeric = number, date = "AAAA-MM-DD"), então os tipos espelham as tabelas.
+import { isAxiosError } from 'axios';
 import { api } from '@/modules/shared/infrastructure/http';
 import type { AuthUser, Perfil } from '@/modules/auth/infrastructure/auth.storage';
 
@@ -437,7 +438,25 @@ export const situacaoSefaz = () => get<SituacaoBuscaSefaz>('/v1/notas-sefaz/situ
 export const configurarBuscaSefaz = (busca_ligada: boolean) => put<SituacaoBuscaSefaz>('/v1/notas-sefaz/configuracao', { busca_ligada });
 export const buscarSefazAgora = () => post<{ iniciada: true }>('/v1/notas-sefaz/buscar');
 export const listarNotasSefaz = (filtro: 'a_conferir' | 'todas') => get<NotaSefaz[]>('/v1/notas-sefaz', { filtro, limite: 500 });
-export const xmlNotaSefaz = async (id: string) => (await api.get<string>(`/v1/notas-sefaz/${id}/xml`, { responseType: 'text' })).data;
+// `responseType: 'text'`: o corpo do erro (`{ error: { code, message } }`) também chega como TEXTO. Volta a ser objeto aqui, para o
+// errMsg/errCode acharem a frase e o código do servidor (senão a tela mostraria "Request failed with status code 409").
+export const xmlNotaSefaz = async (id: string) => {
+  try {
+    return (await api.get<string>(`/v1/notas-sefaz/${id}/xml`, { responseType: 'text' })).data;
+  } catch (e) {
+    if (isAxiosError(e) && e.response && typeof e.response.data === 'string') e.response.data = corpoDoErroXml(e.response.data);
+    throw e;
+  }
+};
+function corpoDoErroXml(texto: string): unknown {
+  try {
+    const j = JSON.parse(texto) as { error?: { message?: unknown } } | null;
+    if (typeof j?.error?.message === 'string' && j.error.message) return j;
+  } catch {
+    // não é o JSON da API (proxy, HTML…): fica a frase fixa
+  }
+  return { error: { message: 'Não consegui abrir o XML desta nota. Tente de novo.' } };
+}
 export const ignorarNotaSefaz = (id: string, motivo: MotivoIgnorar, texto?: string) =>
   post<NotaSefaz>(`/v1/notas-sefaz/${id}/ignorar`, texto ? { motivo, texto } : { motivo });
 export const reabrirNotaSefaz = (id: string) => post<NotaSefaz>(`/v1/notas-sefaz/${id}/reabrir`);
