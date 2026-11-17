@@ -204,6 +204,7 @@ async function main(): Promise<void> {
     conferir(evB.enviar_apos.getTime() - evB.pedida_em.getTime() === 60_000, 'evento do admin espera 60 s');
     const notaB = await db.notas_sefaz.findUniqueOrThrow({ where: { id: b.id } });
     conferir(notaB.motivo_ignorar === 'compra_nao_aconteceu' && notaB.motivo_texto === evB.x_just, 'nota ignorada com o motivo novo');
+    conferir(evB.saiu_em === null, 'evento novo sem saiu_em (a coluna nova existe e nasce nula)');
 
     // 4. um tique: T1 grava `enviando` (XML assinado, tentativa 1, lote aberto) antes da porta; T2 grava o retorno e fecha o lote
     await db.sefaz_manifestacoes.update({ where: { id: evB.id }, data: { enviar_apos: new Date(Date.now() - 1000) } });
@@ -250,6 +251,7 @@ async function main(): Promise<void> {
     conferir(linhaA.resposta?.pode_responder === true && linhaA.resposta.prazo_perto === false, 'caixa: A respondível, sem aviso');
     conferir(linhaB.resposta?.final?.tipo === 'nao_aconteceu' && linhaB.resposta.final.estado === 'registrada', 'caixa: final de B');
     conferir(linhaB.resposta?.pode_responder === false, 'caixa: B já respondida');
+    conferir(regA.saiu_em !== null && regB.saiu_em !== null, 'T2: saiu_em gravado nos eventos do lote que saiu');
 
     // 5. parada: o lote volta 280 (certificado) → `parada_certificado` com o histórico `respostas_paradas` no CHECK de verdade
     porta.antes = undefined;
@@ -264,11 +266,16 @@ async function main(): Promise<void> {
     conferir(hist?.c_stat === 280 && hist.situacao === 'parada_certificado', 'histórico respostas_paradas com o código');
     const evC = await db.sefaz_manifestacoes.findFirstOrThrow({ where: { nota_sefaz_id: c.id } });
     conferir(evC.situacao === 'na_fila' && evC.tentativas === 0, '280 não gasta tentativa: volta à fila');
+    conferir(evC.saiu_em !== null && evC.c_stat === null, '280 do lote: sem c_stat do evento, mas saiu_em gravado (o lote saiu)');
     conferir((await respostas.processar()).fim === 'parada' && porta.chamadas.length === 2, 'parada: nenhum lote');
     await caixa.configurarRespostas(true, QUEM); // "Ligar as respostas de novo"
     const religada = await db.sefaz_manifestacao.findUniqueOrThrow({ where: onde });
     conferir(religada.situacao === 'ok' && religada.mensagem === null && religada.falhas_seguidas === 0, 'religada: ok');
     conferir(religada.ligada_em?.getTime() === ligada.ligada_em?.getTime(), 'religar depois da parada não reescreve ligada_em');
+    await caixa.configurarRespostas(false, QUEM);
+    await caixa.configurarRespostas(true, QUEM); // o "Desfazer" do desligar
+    const desfeita = await db.sefaz_manifestacao.findUniqueOrThrow({ where: onde });
+    conferir(desfeita.ligada && desfeita.ligada_em?.getTime() === ligada.ligada_em?.getTime(), 'desligar e religar não reescrevem ligada_em');
     // "Voltar para a lista" depois da parada: o lote do 280 chegou à SEFAZ (`respondida`), então pela regra da fila (`jaEnviada`) o
     // evento já saiu e fica na fila (decisão do controlador na rodada de correção 1)
     await caixa.reabrir(c.id, QUEM);

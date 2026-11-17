@@ -115,17 +115,22 @@ function conferirLinha(l: sefaz_manifestacao | null, agora: Date): Recusa | null
 const cStatGravavel = (c: number | null): number | null => (c !== null && c >= 100 && c <= 9999 ? c : null);
 
 /**
- * Já saiu para a SEFAZ: gastou tentativa, ou a SEFAZ já respondeu a ele alguma vez (`c_stat` gravado: a T2 guarda a última resposta e não
- * a apaga num lote que não teve resposta para ele), ou o lote dele pode ter chegado lá (`resultadoDoLote` = resultado de cada lote, por
- * id). Uma falha ANTES de enviar não conta (a T2 desfaz o +1). O planejador e a caixa (rotas) usam a mesma conta. Resíduo aceito
- * (decisão do controlador): evento que saiu sem NENHUMA resposta, foi para "Tentar de novo" (0 tentativas) e cujo lote seguinte falhou
- * antes de enviar parece "nunca saiu".
+ * Já saiu para a SEFAZ: algum lote dele saiu (`saiu_em`, gravado pela T2 e pela queda, nunca apagado), ou gastou tentativa, ou a SEFAZ já
+ * respondeu a ele alguma vez (`c_stat` gravado: a T2 guarda a última resposta e não a apaga num lote que não teve resposta para ele), ou o
+ * lote atual dele pode ter chegado lá (`resultadoDoLote` = resultado de cada lote, por id; cobre as linhas de antes da coluna). Uma falha
+ * ANTES de enviar não conta (a T2 desfaz o +1 e não grava `saiu_em`). O planejador e a caixa (rotas) usam a mesma conta. O `saiu_em` fecha
+ * o caso "saiu sem NENHUMA resposta → 'Tentar de novo' (0 tentativas) → lote seguinte que falha antes de enviar (troca o `lote_id`)".
  */
 export function jaEnviada(
-  e: Pick<sefaz_manifestacoes, 'tentativas' | 'lote_id' | 'c_stat'>,
+  e: Pick<sefaz_manifestacoes, 'tentativas' | 'lote_id' | 'c_stat' | 'saiu_em'>,
   resultadoDoLote: ReadonlyMap<string, string | null>,
 ): boolean {
-  return e.tentativas > 0 || e.c_stat !== null || (e.lote_id !== null && LOTE_SAIU.has(resultadoDoLote.get(e.lote_id) ?? ''));
+  return (
+    e.saiu_em !== null ||
+    e.tentativas > 0 ||
+    e.c_stat !== null ||
+    (e.lote_id !== null && LOTE_SAIU.has(resultadoDoLote.get(e.lote_id) ?? ''))
+  );
 }
 
 /** A linha do banco no formato do planejador. */
@@ -193,25 +198,62 @@ export class RespostasSefazService {
     return { fim: 'feito', enviados: m.lote.eventos.length };
   }
 
-  /** Condições sem rede, nesta ordem: disponível → CNPJ → linha ligada e `ok` → pausa → relógio → certificado (e a raiz do CNPJ). */
+  /**
+   * Condições sem rede, nesta ordem: disponível → CNPJ → linha ligada e `ok` → pausa → relógio → certificado (e a raiz do CNPJ). O relógio
+   * fora da hora e o certificado que não serve PARAM as respostas (`parada_relogio` / `parada_certificado`, com frase, histórico e log),
+   * como a mesma causa vinda da SEFAZ: sem isso a fila ficaria parada sem rastro. Volta com "Ligar as respostas de novo".
+   */
   private async preparar(agora: Date): Promise<Preparo | Recusa> {
     if (!this.disponivel()) return { fim: 'indisponivel' };
     const ambiente = this.ciclo.ambiente() as AmbienteSefaz;
     const cnpj = await this.ciclo.cnpjDaEmpresa();
     if (!cnpj) return { fim: 'sem_cnpj' };
-    const linha = await this.prisma.sefaz_manifestacao.findUnique({ where: { ambiente_cnpj: { ambiente, cnpj } } });
+    const onde = { ambiente, cnpj };
+    const linha = await this.prisma.sefaz_manifestacao.findUnique({ where: { ambiente_cnpj: onde } });
     const parada = conferirLinha(linha, agora);
     if (parada) return parada;
-    if (await this.relogioFora(ambiente, agora)) return { fim: 'relogio' };
+    if (await this.relogioFora(ambiente, agora)) {
+      await this.pararSemRede(onde, 'parada_relogio', FRASE_RESPOSTA.relogioParou, 'relogio', agora);
+      return { fim: 'relogio' };
+    }
     let cert: CertificadoEmUso;
     try {
       cert = await this.certificados.emUso(agora);
     } catch (e) {
-      if (e instanceof CertificadoErro) return { fim: 'certificado' };
-      throw e;
+      if (!(e instanceof CertificadoErro)) throw e;
+      // Só a classe e o código (descreverErro): a mensagem do certificado leva a data do vencimento.
+      await this.pararSemRede(onde, 'parada_certificado', FRASE_RESPOSTA.assinaturaCertificado, descreverErro(e), agora);
+      return { fim: 'certificado' };
     }
-    if (normalizarCnpj(cert.cnpj).slice(0, 8) !== cnpj.slice(0, 8)) return { fim: 'certificado' };
+    if (normalizarCnpj(cert.cnpj).slice(0, 8) !== cnpj.slice(0, 8)) {
+      await this.pararSemRede(onde, 'parada_certificado', FRASE_RESPOSTA.assinaturaCertificado, 'raiz_do_cnpj', agora);
+      return { fim: 'certificado' };
+    }
     return { ambiente, cnpj, cert };
+  }
+
+  /**
+   * A parada da conferência sem rede, sob a trava das respostas (a que espera, como as rotas): relê a linha e só grava se ela ainda estiver
+   * ligada, `ok` e fora da pausa (o admin pode ter desligado no meio). `causa` vai só para o log: `relogio`, `raiz_do_cnpj` ou a classe e o
+   * código do erro do certificado, nunca a mensagem nem dado dele.
+   */
+  private async pararSemRede(
+    onde: { ambiente: AmbienteSefaz; cnpj: string },
+    situacao: Extract<SituacaoRespostas, 'parada_relogio' | 'parada_certificado'>,
+    mensagem: string,
+    causa: string,
+    agora: Date,
+  ): Promise<void> {
+    const gravou = await this.prisma.$transaction(async (tx) => {
+      await this.esperarTravaEventos(tx);
+      const linha = await tx.sefaz_manifestacao.findUnique({ where: { ambiente_cnpj: onde } });
+      if (!linha || conferirLinha(linha, agora)) return false;
+      await this.gravarSituacao(tx, onde, { situacao, mensagem, falhasSeguidas: linha.falhas_seguidas, pausaAte: null }, null, agora);
+      return true;
+    }, TX1);
+    if (gravou) {
+      this.logger.warn(JSON.stringify({ evento: 'sefaz.eventos', ambiente: onde.ambiente, alerta: 'respostas_paradas', situacao, causa }));
+    }
   }
 
   /**
@@ -261,8 +303,11 @@ export class RespostasSefazService {
           chamada: QUEDA,
         });
         for (const de of d.eventos) {
-          // gastou (a tentativa da T1 fica); na 3ª, `falhou`: o CHECK de `tentativas` é 0–3
-          await tx.sefaz_manifestacoes.update({ where: { id: de.id }, data: { situacao: de.estado, atualizada_em: agora } });
+          // gastou (a tentativa da T1 fica); na 3ª, `falhou`: o CHECK de `tentativas` é 0–3. O lote pode ter chegado à SEFAZ: `saiu_em`.
+          await tx.sefaz_manifestacoes.update({
+            where: { id: de.id },
+            data: { situacao: de.estado, saiu_em: agora, atualizada_em: agora },
+          });
         }
         await this.gravarSituacao(tx, onde, d, null, agora);
         return fim({ fim: d.situacao === 'ok' ? 'pausa' : 'parada' });
@@ -533,6 +578,8 @@ export class RespostasSefazService {
       chamada,
     });
     const veio656 = resp !== null && d.eventos.some((e) => e.cStat === 656);
+    // O lote saiu (respondido ou sem resposta útil): `saiu_em` em cada evento dele, nunca apagado (a falha antes de enviar não grava).
+    const saiu = d.resultado !== 'falha_antes_de_enviar';
 
     await this.prisma.$transaction(async (tx) => {
       await this.esperarTravaEventos(tx);
@@ -560,6 +607,7 @@ export class RespostasSefazService {
             tentativas: de.gastou ? ev.tentativas : ev.tentativas - 1,
             n_prot: de.protocolo,
             ...resposta,
+            ...(saiu ? { saiu_em: agora } : {}),
             atualizada_em: agora,
           },
         });

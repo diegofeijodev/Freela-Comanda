@@ -4,7 +4,13 @@
 import { Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy } from '@nestjs/common';
 import { PRIMEIRO_TIQUE_MS, TIQUE_MS } from './agenda';
 import { CicloSefazService, descreverErro } from './ciclo.service';
-import { RespostasSefazService } from './respostas.service';
+import { RespostasSefazService, type FimRespostas } from './respostas.service';
+
+/**
+ * Fins das respostas que deixam a fila sem andar até alguém agir (relógio, certificado, parada, empresa sem CNPJ): cada tique registra, para
+ * nunca parar sem rastro. Os de espera curta ou sem nada a fazer (pausa, ocupada, vazia, desligadas) não.
+ */
+const FIM_QUE_AVISA: ReadonlySet<FimRespostas> = new Set(['relogio', 'certificado', 'parada', 'sem_cnpj']);
 
 @Injectable()
 export class AgendadorSefaz implements OnApplicationBootstrap, OnModuleDestroy {
@@ -57,7 +63,8 @@ export class AgendadorSefaz implements OnApplicationBootstrap, OnModuleDestroy {
       }
       // Depois da classificação: a ciência só nasce para nota que já está na caixa. Busca desligada ou parada não para a fila.
       try {
-        await this.respostas.processar();
+        const { fim } = await this.respostas.processar();
+        if (FIM_QUE_AVISA.has(fim)) this.logger.warn(JSON.stringify({ evento: 'sefaz.eventos', alerta: 'respostas_sem_envio', fim }));
       } catch (e) {
         this.logger.error(`sefaz.agendador: respostas falharam (${descreverErro(e)})`);
       }

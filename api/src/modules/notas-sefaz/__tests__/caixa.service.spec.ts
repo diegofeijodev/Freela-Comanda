@@ -1109,6 +1109,22 @@ describe('CaixaSefazService', () => {
         expect(t.sefaz_manifestacoes).toEqual(antes);
       });
 
+      it('variável desligada (ausente ou "desligada"): 503 SEFAZ_RESPOSTAS_DESLIGADAS, e nada muda (I5)', async () => {
+        for (const manifestacao of [undefined, 'desligada']) {
+          const { svc, t } = montarR({ manifestacao });
+          t.sefaz_manifestacoes.push(evento('ok', '210220', { situacao: 'falhou', tentativas: 3 }));
+          const antes = t.sefaz_manifestacoes.map((e) => ({ ...e }));
+          expect(await recusa(svc.responderDeNovo(N.ok, QUEM, AGORA))).toEqual({
+            status: 503,
+            code: 'SEFAZ_RESPOSTAS_DESLIGADAS',
+            message: FRASE_DESLIGADAS,
+          });
+          expect(t.sefaz_manifestacoes).toEqual(antes);
+          // a nota de outro CNPJ continua 404 (a nota é conferida antes, como no ignorar)
+          expect(await recusa(svc.responderDeNovo(ID_FORA, QUEM, AGORA))).toMatchObject({ status: 404 });
+        }
+      });
+
       it('id desconhecido ou de outro CNPJ: 404; servidor sem a busca: 503 SEFAZ_DESLIGADA', async () => {
         const { svc, t } = montarR();
         expect(await recusa(svc.responderDeNovo(ID_FORA, QUEM, AGORA))).toMatchObject({ status: 404, code: 'NOT_FOUND' });
@@ -1241,10 +1257,20 @@ describe('CaixaSefazService', () => {
         expect(s.respostas.pausa_ate).toBe(MAIS65.toISOString());
       });
 
-      it('ligar depois de desligadas grava ligada_em de novo (as notas lançadas enquanto desligadas não são confirmadas)', async () => {
+      it('ligar depois de desligadas NÃO reescreve ligada_em: vale a 1ª vez (as notas lançadas enquanto desligadas são confirmadas ao religar)', async () => {
         const { svc, t } = montar({ manifestacao: 'ligada', linha: null, respostas: { ligada: false, ligada_em: diasAtras(7) } });
         await svc.configurarRespostas(true, QUEM, AGORA);
-        expect(t.sefaz_manifestacao[0]).toMatchObject({ ligada: true, ligada_em: AGORA });
+        expect(t.sefaz_manifestacao[0]).toMatchObject({ ligada: true, ligada_em: diasAtras(7), alterada_em: AGORA });
+      });
+
+      it('desligar e o "Desfazer" (ligar de novo logo depois) não mexem em ligada_em; a linha sem ligada_em ganha a 1ª', async () => {
+        const { svc, t } = montar({ manifestacao: 'ligada', linha: null, respostas: { ligada: true, ligada_em: diasAtras(7) } });
+        await svc.configurarRespostas(false, QUEM, AGORA);
+        await svc.configurarRespostas(true, QUEM, new Date(AGORA.getTime() + 5000));
+        expect(t.sefaz_manifestacao[0]).toMatchObject({ ligada: true, ligada_em: diasAtras(7) });
+        const nova = montar({ manifestacao: 'ligada', linha: null, respostas: { ligada: false, ligada_em: null } });
+        await nova.svc.configurarRespostas(true, QUEM, AGORA);
+        expect(nova.t.sefaz_manifestacao[0]).toMatchObject({ ligada: true, ligada_em: AGORA });
       });
 
       it('desligar: só ligada = false, autoria e o histórico; pausa, falhas, ligada_em, situação e a fila ficam', async () => {
@@ -1316,6 +1342,50 @@ describe('CaixaSefazService', () => {
         const r = await svc.listar('todas', 100, AGORA);
         expect(r).toHaveLength(5);
         expect(r.every((l) => l.resposta === null)).toBe(true);
+      });
+
+      it('variável desligada COM linhas em sefaz_manifestacoes (I3): a resposta e o aviso do prazo aparecem; a nota sem eventos segue null', async () => {
+        const m = montarR({ manifestacao: undefined });
+        m.t.sefaz_manifestacoes.push(
+          evento('perto', '210210', { situacao: 'registrada', n_prot: NPROT, c_stat: 135 }),
+          evento('perto2', '210210', { situacao: 'registrada', n_prot: NPROT, c_stat: 135 }),
+          evento('perto2', '210220', { situacao: 'falhou', tentativas: 3 }),
+        );
+        const s = await aberta(m.svc);
+        expect(s.respostas).toEqual({
+          disponivel: false,
+          ligadas: false,
+          situacao: 'ok',
+          mensagem: null,
+          pausa_ate: null,
+          ligadas_por_nome: null,
+          ligadas_em: null,
+          na_fila: 0,
+          falharam: 0,
+          prazos_perto: [
+            {
+              id: N.perto,
+              numero: '106',
+              serie: '1',
+              emitente_nome: 'Forn perto',
+              prazo_final: new Date(diasAtras(85).getTime() + 90 * D).toISOString(),
+            },
+            {
+              id: N.perto2,
+              numero: '107',
+              serie: '1',
+              emitente_nome: 'Forn perto2',
+              prazo_final: new Date(diasAtras(82).getTime() + 90 * D).toISOString(),
+            },
+          ],
+        });
+        const perto = await linhaDaLista(m.svc, 'perto');
+        expect(perto.resposta).toMatchObject({ ciencia: { estado: 'registrada', protocolo: NPROT }, final: null, prazo_perto: true });
+        // a resposta final que falhou não responde: o aviso continua
+        const perto2 = await linhaDaLista(m.svc, 'perto2');
+        expect(perto2.resposta).toMatchObject({ final: { estado: 'falhou', tipo: 'nao_reconheco' }, prazo_perto: true });
+        expect((await linhaDaLista(m.svc, 'ok')).resposta).toBeNull();
+        expect((await linhaDaLista(m.svc, 'velha')).resposta).toBeNull();
       });
 
       it('empresa sem CNPJ: respostas disponíveis e desligadas', async () => {

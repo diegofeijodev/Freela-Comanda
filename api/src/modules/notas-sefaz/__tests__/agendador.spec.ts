@@ -73,6 +73,20 @@ describe('AgendadorSefaz', () => {
     await expect(ag.tique()).resolves.toBeUndefined();
   });
 
+  it('respostas que terminam em relógio, certificado, parada ou sem CNPJ viram logger.warn com o fim (I2); as outras não', async () => {
+    const avisos: string[] = [];
+    jest.spyOn(Logger.prototype, 'warn').mockImplementation((...a: unknown[]) => void avisos.push(a.map(String).join(' ')));
+    const fins: ResumoRespostas['fim'][] = ['relogio', 'certificado', 'parada', 'sem_cnpj'];
+    const quietos: ResumoRespostas['fim'][] = ['feito', 'vazia', 'nao_ligadas', 'indisponivel', 'pausa', 'ocupada'];
+    const processar = jest.fn();
+    for (const fim of [...fins, ...quietos]) processar.mockResolvedValueOnce({ fim, enviados: 0 });
+    const { ag } = montar('desligado', undefined, processar);
+    for (let i = 0; i < fins.length + quietos.length; i++) await ag.tique();
+    expect(processar).toHaveBeenCalledTimes(fins.length + quietos.length);
+    expect(avisos.map((a) => JSON.parse(a))).toEqual(fins.map((fim) => ({ evento: 'sefaz.eventos', alerta: 'respostas_sem_envio', fim })));
+    expect(erros).toHaveLength(0);
+  });
+
   it('a busca e a classificação falhando, as respostas rodam mesmo assim', async () => {
     const ciclo = jest.fn().mockRejectedValue(new Error('x'));
     const { falso, respostas } = montar('producao', ciclo);

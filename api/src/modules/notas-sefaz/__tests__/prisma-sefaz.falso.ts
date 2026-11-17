@@ -152,6 +152,7 @@ function padroes(tabela: NomeTabela): Record<string, unknown> {
         xml_evento: null,
         xml_retorno: null,
         impressao_digital: null,
+        saiu_em: null,
         criada_em: agora,
         atualizada_em: agora,
       };

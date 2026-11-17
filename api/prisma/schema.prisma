@@ -284,6 +284,7 @@ model sefaz_manifestacoes {
   xml_evento        String?
   xml_retorno       String?
   impressao_digital String?   @db.Char(64)
+  saiu_em           DateTime? @db.Timestamptz(6)
   criada_em         DateTime  @default(now()) @db.Timestamptz(6)
   atualizada_em     DateTime  @default(now()) @db.Timestamptz(6)
 

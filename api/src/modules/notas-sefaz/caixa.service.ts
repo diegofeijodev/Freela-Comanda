@@ -132,7 +132,10 @@ export type SituacaoBuscaResposta =
       respostas: RespostasSefaz;
     };
 
-/** Quadro "Respostas à SEFAZ" do painel. Sem `SEFAZ_MANIFESTACAO=ligada`: `disponivel = false` e o resto vazio. */
+/**
+ * Quadro "Respostas à SEFAZ" do painel. Sem `SEFAZ_MANIFESTACAO=ligada`: `disponivel = false` e o resto vazio, MENOS `prazos_perto`, que só
+ * lê o banco (a obrigação de responder fica no banco mesmo com a variável vazia: o aviso do 80º dia não pode sumir).
+ */
 export type RespostasSefaz = {
   disponivel: boolean;
   ligadas: boolean;
@@ -182,13 +185,13 @@ export type NotaSefazLinha = {
   pode_conferir: boolean;
   nao_parece_compra: boolean;
   ignorada: { em: string; por_nome: string | null; motivo: MotivoIgnorar; texto: string | null } | null;
-  /** null com a variável `SEFAZ_MANIFESTACAO` desligada. */
+  /** null com a variável `SEFAZ_MANIFESTACAO` desligada E nenhum evento da nota em `sefaz_manifestacoes` (só as AÇÕES dependem dela). */
   resposta: RespostaNota | null;
 };
 
 type Contexto = { ambiente: AmbienteSefaz; cnpj: string };
-/** Os eventos de cada nota (por id) e o resultado dos lotes deles; null = respostas indisponíveis no servidor. */
-type EventosDasNotas = { porNota: Map<string, sefaz_manifestacoes[]>; resultadoDoLote: Map<string, string | null> } | null;
+/** Os eventos de cada nota (por id), o resultado dos lotes deles e se as respostas existem no servidor (`disponivel`). */
+type EventosDasNotas = { porNota: Map<string, sefaz_manifestacoes[]>; resultadoDoLote: Map<string, string | null>; disponivel: boolean };
 const iso = (d: Date | null): string | null => (d ? d.toISOString() : null);
 
 const respostasVazias = (disponivel: boolean): RespostasSefaz => ({
@@ -366,17 +369,10 @@ export class CaixaSefazService {
 
   /**
    * O quadro das respostas. `ligadas_por_nome` e `ligadas_em` vêm da mesma escrita (a autoria do último "Ligar", como na busca), não de
-   * `ligada_em` (a base da confirmação automática, que um "Ligar de novo" depois de uma parada não reescreve).
+   * `ligada_em` (a base da confirmação automática, gravada só na 1ª vez que as respostas são ligadas). Sem a variável, só `prazos_perto`
+   * (lido do banco pela linha de cada nota) sobrevive: a obrigação dos 90 dias continua avisada.
    */
   private async quadroRespostas(onde: Contexto | null, derivadas: { nota: notas_sefaz; linha: NotaSefazLinha }[]): Promise<RespostasSefaz> {
-    if (!this.respostas.disponivel()) return respostasVazias(false);
-    if (!onde) return respostasVazias(true);
-    const [linha, naFila, falharam] = await Promise.all([
-      this.prisma.sefaz_manifestacao.findUnique({ where: { ambiente_cnpj: onde } }),
-      this.prisma.sefaz_manifestacoes.count({ where: { ...onde, situacao: 'na_fila' } }),
-      this.prisma.sefaz_manifestacoes.count({ where: { ...onde, situacao: 'falhou' } }),
-    ]);
-    const ligadas = linha?.ligada ?? false;
     const prazosPerto = derivadas
       .filter((d) => d.linha.resposta?.prazo_perto && d.linha.resposta.prazo_final)
       .map((d) => ({
@@ -387,6 +383,14 @@ export class CaixaSefazService {
         prazo_final: d.linha.resposta!.prazo_final!,
       }))
       .sort((a, b) => (a.prazo_final < b.prazo_final ? -1 : a.prazo_final > b.prazo_final ? 1 : a.id < b.id ? -1 : 1));
+    if (!this.respostas.disponivel()) return { ...respostasVazias(false), prazos_perto: prazosPerto };
+    if (!onde) return respostasVazias(true);
+    const [linha, naFila, falharam] = await Promise.all([
+      this.prisma.sefaz_manifestacao.findUnique({ where: { ambiente_cnpj: onde } }),
+      this.prisma.sefaz_manifestacoes.count({ where: { ...onde, situacao: 'na_fila' } }),
+      this.prisma.sefaz_manifestacoes.count({ where: { ...onde, situacao: 'falhou' } }),
+    ]);
+    const ligadas = linha?.ligada ?? false;
     return {
       disponivel: true,
       ligadas,
@@ -477,9 +481,11 @@ export class CaixaSefazService {
 
   /**
    * "Ligar as respostas" / "Desligar as respostas", sob a trava das respostas (a T1 do tique lê a mesma linha). Ligar pede as conferências
-   * de "Ligar a busca" (não a busca ligada) e volta a situação a `ok` com as falhas zeradas; `ligada_em` (base da confirmação automática) só
-   * muda na passagem de desligada para ligada: "Ligar de novo" depois de uma parada não a reescreve. Nenhum dos dois mexe em `pausa_ate` nem
-   * na fila: desligadas, os eventos na fila esperam.
+   * de "Ligar a busca" (não a busca ligada) e volta a situação a `ok` com as falhas zeradas (é também o "Ligar as respostas de novo" de uma
+   * parada, que nunca muda `ligada`). `ligada_em` (base da confirmação automática) é gravado só na 1ª vez que as respostas são ligadas e
+   * nunca mais muda: desligar e religar (inclusive o "Desfazer" do desligar) e o "Ligar de novo" não a reescrevem, e a nota lançada com as
+   * respostas desligadas é confirmada quando forem religadas. Nenhum dos dois mexe em `pausa_ate` nem na fila: desligadas, os eventos na
+   * fila esperam.
    */
   async configurarRespostas(ligar: boolean, quem: Quem, agora: Date = new Date()): Promise<SituacaoBuscaResposta> {
     if (!this.respostas.disponivel()) throw this.respostasDesligadas();
@@ -497,7 +503,7 @@ export class CaixaSefazService {
         else {
           await tx.sefaz_manifestacao.update({
             where: { ambiente_cnpj: onde },
-            data: { ...volta, ...(linha.ligada ? {} : { ligada_em: agora }) },
+            data: { ...volta, ...(linha.ligada_em ? {} : { ligada_em: agora }) },
           });
         }
         await tx.sefaz_distribuicao_historico.create(historico(onde, 'respostas_ligadas', 'ok'));
@@ -678,8 +684,9 @@ export class CaixaSefazService {
           atualizada_em: agora,
         },
       });
-      // A mesma regra da fila (`jaEnviada`): gastou tentativa OU o lote dele pode ter chegado à SEFAZ. O "Tentar de novo" zera as
-      // tentativas mas mantém o `lote_id`, então a resposta que falhou depois de sair continua reconhecida como "já saiu".
+      // A mesma regra da fila (`jaEnviada`): algum lote dele saiu (`saiu_em`), gastou tentativa, a SEFAZ já respondeu a ele, ou o lote
+      // dele pode ter chegado lá. O "Tentar de novo" zera as tentativas mas não apaga `saiu_em`, então a resposta que falhou depois de sair
+      // continua reconhecida como "já saiu" (mesmo que o lote seguinte falhe antes de enviar e troque o `lote_id`).
       const naFila = await tx.sefaz_manifestacoes.findMany({ where: { nota_sefaz_id: nota.id, origem: 'admin', situacao: 'na_fila' } });
       const resultadoDoLote = await resultadosDosLotes(tx, naFila);
       const ids = naFila.filter((e) => !jaEnviada(e, resultadoDoLote)).map((e) => e.id);
@@ -704,12 +711,14 @@ export class CaixaSefazService {
   }
 
   /**
-   * "Tentar de novo": o evento `falhou` mais recente da nota volta à fila com as tentativas zeradas e sai no próximo tique. O `lote_id`
-   * fica: é a prova de que ele já saiu (o `reabrir` não o cancela).
+   * "Tentar de novo": o evento `falhou` mais recente da nota volta à fila com as tentativas zeradas e sai no próximo tique. Sem a variável
+   * `SEFAZ_MANIFESTACAO`, 503 (depois de achar a nota, como o `ignorar`). O `lote_id` e o `saiu_em` ficam: são a prova de que ele já saiu
+   * (o `reabrir` não o cancela).
    */
   async responderDeNovo(id: string, quem: Quem, agora: Date = new Date()): Promise<NotaSefazLinha> {
     const { ambiente, cnpj } = await this.contexto();
     const nota = await this.achar(id, { ambiente, cnpj });
+    if (!this.respostas.disponivel()) throw this.respostasDesligadas();
     const tp = await this.prisma.$transaction(async (tx) => {
       await this.respostas.esperarTravaEventos(tx);
       const [ultimo] = await tx.sefaz_manifestacoes.findMany({
@@ -750,9 +759,11 @@ export class CaixaSefazService {
     return this.derivarLinhas(onde.ambiente, notas, agora);
   }
 
-  /** Os eventos das notas (todas as situações) e o resultado dos lotes deles; null sem `SEFAZ_MANIFESTACAO=ligada`. */
+  /**
+   * Os eventos das notas (todas as situações) e o resultado dos lotes deles. Lidos mesmo sem `SEFAZ_MANIFESTACAO=ligada`: a leitura só
+   * olha o banco, e uma ciência registrada obriga uma resposta final em 90 dias com ou sem a variável.
+   */
   private async eventosDasNotas(notas: notas_sefaz[]): Promise<EventosDasNotas> {
-    if (!this.respostas.disponivel()) return null;
     const eventos = notas.length
       ? await this.prisma.sefaz_manifestacoes.findMany({ where: { nota_sefaz_id: { in: notas.map((n) => n.id) } } })
       : [];
@@ -762,7 +773,7 @@ export class CaixaSefazService {
       if (lista) lista.push(e);
       else porNota.set(e.nota_sefaz_id, [e]);
     }
-    return { porNota, resultadoDoLote: await resultadosDosLotes(this.prisma, eventos) };
+    return { porNota, resultadoDoLote: await resultadosDosLotes(this.prisma, eventos), disponivel: this.respostas.disponivel() };
   }
 
   private async derivarLinhas(ambiente: AmbienteSefaz, notas: notas_sefaz[], agora: Date) {
@@ -776,9 +787,10 @@ export class CaixaSefazService {
         { situacao_sefaz: nota.situacao_sefaz as SituacaoSefaz, motivo_ignorar: motivo },
         { lancada: lancada !== null, parecida: parecidas.length > 0 },
       );
+      // Com a variável, toda nota; sem ela, só a que tem evento (sem nenhum, a tela é a da entrega 2).
       let resposta: RespostaNota | null = null;
-      if (eventos) {
-        const daNota = eventos.porNota.get(nota.id) ?? [];
+      const daNota = eventos.porNota.get(nota.id) ?? [];
+      if (eventos.disponivel || daNota.length > 0) {
         const existentes = daNota.map((e) => eventoExistente(e, eventos.resultadoDoLote));
         resposta = respostaDaNota(notaParaPlano(nota, situacao, lancada), daNota, existentes, agora);
       }

@@ -186,6 +186,60 @@ describe('RespostasSefazService', () => {
       expect(t.sefaz_manifestacoes).toHaveLength(0); // nem o planejador rodou
     });
 
+    it.each<[string, Parameters<typeof montar>[0], string]>([
+      [
+        'vencido',
+        {
+          certErro: new CertificadoErro(
+            MSG_USO.vencido(new Date('2026-11-01T03:00:00Z')),
+            422,
+            'CERTIFICADO_VENCIDO',
+            new Date('2026-11-01T03:00:00Z'),
+          ),
+        },
+        'CertificadoErro CERTIFICADO_VENCIDO',
+      ],
+      [
+        'não cadastrado',
+        { certErro: new CertificadoErro(MSG_USO.naoCadastrado, 503, 'CERTIFICADO_NAO_CADASTRADO') },
+        'CertificadoErro CERTIFICADO_NAO_CADASTRADO',
+      ],
+      ['de outra empresa (outra raiz)', { certCnpj: '99888777000166' }, 'raiz_do_cnpj'],
+    ])('certificado %s: as respostas param (parada_certificado), com frase, histórico e log só com a classe (I2)', async (_n, o, causa) => {
+      const { svc, t, porta } = montar(o);
+      t.notas_sefaz.push(nota(VETOR));
+      expect(await svc.processar(em(AGORA))).toEqual({ fim: 'certificado', enviados: 0 });
+      expect(porta.chamadas).toHaveLength(0);
+      expect(linhaDe(t)).toMatchObject({
+        ligada: true,
+        situacao: 'parada_certificado',
+        mensagem: FRASE_RESPOSTA.assinaturaCertificado,
+      });
+      expect(t.sefaz_distribuicao_historico).toEqual([
+        expect.objectContaining({ evento: 'respostas_paradas', situacao: 'parada_certificado', c_stat: null, feito_em: AGORA }),
+      ]);
+      const alerta = logs.find((l) => l.includes('respostas_paradas'))!;
+      expect(JSON.parse(alerta)).toMatchObject({ evento: 'sefaz.eventos', situacao: 'parada_certificado', causa });
+      // nunca a mensagem do certificado (a data do vencimento, o CNPJ dele)
+      expect(logs.join('\n')).not.toMatch(/venceu|01\/11\/2026|99888777/);
+      expect(await svc.processar(em(min(5)))).toEqual({ fim: 'parada', enviados: 0 });
+    });
+
+    it('certificado de outra raiz com a linha que mudou dentro da trava (desligada pelo admin): nada gravado', async () => {
+      const { svc, t, porta, prisma } = montar({ certCnpj: '99888777000166' });
+      t.notas_sefaz.push(nota(VETOR));
+      // o admin desliga entre a conferência sem rede e a trava: a escrita da parada relê a linha
+      const original = prisma.$transaction.bind(prisma);
+      jest.spyOn(prisma, '$transaction').mockImplementation(((fn: unknown, o?: unknown) => {
+        linhaDe(t).ligada = false;
+        return (original as (f: unknown, o?: unknown) => Promise<unknown>)(fn, o);
+      }) as never);
+      expect(await svc.processar(em(AGORA))).toEqual({ fim: 'certificado', enviados: 0 });
+      expect(porta.chamadas).toHaveLength(0);
+      expect(linhaDe(t)).toMatchObject({ ligada: false, situacao: 'ok', mensagem: null });
+      expect(t.sefaz_distribuicao_historico).toHaveLength(0);
+    });
+
     it('a ordem: com tudo errado, vale a 1ª condição (disponível), e o certificado só é lido no fim', async () => {
       const { svc, certificados } = montar({ env: { SEFAZ_MANIFESTACAO: 'desligada' }, cnpjEmpresa: '', linha: { ligada: false } });
       expect((await svc.processar(em(AGORA))).fim).toBe('indisponivel');
@@ -216,14 +270,43 @@ describe('RespostasSefazService', () => {
           dh_resp: dhResp,
         });
 
-      it('deriva de 3 min → relogio, nenhuma chamada', async () => {
-        const { svc, t, porta, certificados } = montar();
+      it('deriva de 3 min → relogio, nenhuma chamada; as respostas param com frase, histórico e log (I2)', async () => {
+        const { svc, t, porta, certificados, chavesUsadas } = montar({ linha: { falhas_seguidas: 1 } });
         t.notas_sefaz.push(nota(VETOR));
         // a anterior sem deriva (13h35), a última com 3 min (terminada 13h58, dhResp 14h01): vale a última
         t.sefaz_consultas.push(consulta('2026-11-17T13:35:00-03:00', min(-30)), consulta('2026-11-17T14:01:00-03:00', min(-7)));
         expect(await svc.processar(em(AGORA))).toEqual({ fim: 'relogio', enviados: 0 });
         expect(porta.chamadas).toHaveLength(0);
         expect(certificados.emUso).not.toHaveBeenCalled();
+        expect(linhaDe(t)).toMatchObject({
+          ligada: true,
+          ligada_em: LIGADA_EM,
+          situacao: 'parada_relogio',
+          mensagem: FRASE_RESPOSTA.relogioParou,
+          falhas_seguidas: 1,
+          pausa_ate: null,
+        });
+        expect(t.sefaz_distribuicao_historico).toEqual([
+          expect.objectContaining({
+            evento: 'respostas_paradas',
+            situacao: 'parada_relogio',
+            c_stat: null,
+            mensagem: FRASE_RESPOSTA.relogioParou,
+            feito_em: AGORA,
+          }),
+        ]);
+        expect(chavesUsadas).toEqual([CHAVE_TRAVA_SEFAZ_EVENTOS]); // gravado sob a trava das respostas
+        const alerta = logs.find((l) => l.includes('respostas_paradas'))!;
+        expect(JSON.parse(alerta)).toMatchObject({
+          evento: 'sefaz.eventos',
+          ambiente: 'producao',
+          situacao: 'parada_relogio',
+          causa: 'relogio',
+        });
+        expect(t.sefaz_manifestacoes).toHaveLength(0); // nem o planejador rodou
+        // o tique seguinte não confere de novo: está parada (o admin liga de novo)
+        expect(await svc.processar(em(min(5)))).toEqual({ fim: 'parada', enviados: 0 });
+        expect(t.sefaz_distribuicao_historico).toHaveLength(1);
       });
 
       it('deriva de 1 min, ou a de 3 min com mais de 24 h, não segura', async () => {
@@ -456,10 +539,59 @@ describe('RespostasSefazService', () => {
     describe('ja_enviada (notas 8 e 9): o que conta como já saiu para a SEFAZ', () => {
       it('qualquer resposta da SEFAZ ao evento (c_stat gravado) prova que ele saiu, mesmo sem tentativa e sem lote que saiu', () => {
         const falhaAntes = new Map([['L', 'falha_antes_de_enviar']]);
-        expect(jaEnviada({ tentativas: 0, lote_id: null, c_stat: 999 }, new Map())).toBe(true);
-        expect(jaEnviada({ tentativas: 0, lote_id: 'L', c_stat: 656 }, falhaAntes)).toBe(true);
-        expect(jaEnviada({ tentativas: 0, lote_id: 'L', c_stat: null }, falhaAntes)).toBe(false);
-        expect(jaEnviada({ tentativas: 0, lote_id: null, c_stat: null }, new Map())).toBe(false);
+        expect(jaEnviada({ tentativas: 0, lote_id: null, c_stat: 999, saiu_em: null }, new Map())).toBe(true);
+        expect(jaEnviada({ tentativas: 0, lote_id: 'L', c_stat: 656, saiu_em: null }, falhaAntes)).toBe(true);
+        expect(jaEnviada({ tentativas: 0, lote_id: 'L', c_stat: null, saiu_em: null }, falhaAntes)).toBe(false);
+        expect(jaEnviada({ tentativas: 0, lote_id: null, c_stat: null, saiu_em: null }, new Map())).toBe(false);
+      });
+
+      it('saiu_em gravado prova que saiu, mesmo com 0 tentativas, sem c_stat e com o lote trocado por um que falhou antes de enviar', () => {
+        const falhaAntes = new Map([['L', 'falha_antes_de_enviar']]);
+        expect(jaEnviada({ tentativas: 0, lote_id: 'L', c_stat: null, saiu_em: AGORA }, falhaAntes)).toBe(true);
+        expect(jaEnviada({ tentativas: 0, lote_id: null, c_stat: null, saiu_em: AGORA }, new Map())).toBe(true);
+      });
+
+      it('a T2 grava saiu_em em todo evento de lote que saiu (respondido ou sem resposta útil) e nunca o apaga; a falha antes de enviar não grava', async () => {
+        const { svc, t, porta } = montar();
+        const n = nota(VETOR);
+        t.notas_sefaz.push(n);
+        porta.proximas.push(sefazErro('SEFAZ_REDE', false)); // falha antes de enviar: não saiu
+        await svc.processar(em(AGORA));
+        expect(evDa(t, n)).toMatchObject({ situacao: 'na_fila', tentativas: 0, saiu_em: null });
+        porta.proximas.push(retornoLote(108, [])); // lote respondido (108): saiu, sem gastar
+        await svc.processar(em(min(15)));
+        expect(evDa(t, n)).toMatchObject({ situacao: 'na_fila', tentativas: 0, c_stat: null, saiu_em: min(15) });
+        porta.proximas.push(sefazErro('SEFAZ_REDE', false));
+        await svc.processar(em(min(75)));
+        expect(t.sefaz_eventos_lotes.at(-1)!.resultado).toBe('falha_antes_de_enviar');
+        expect(evDa(t, n).saiu_em).toEqual(min(15)); // a falha antes de enviar não apaga
+      });
+
+      it('sem NENHUMA resposta anterior: 3 lotes sem resposta (falhou) → religar → "Tentar de novo" → tique que falha ANTES de enviar → reabrir: continua na fila', async () => {
+        const { svc, t, porta, prisma, ciclo, notas, certificados } = montar();
+        const n = nota(VETOR, { ignorada_em: min(-60), ignorada_por_nome: 'Ana', motivo_ignorar: 'nao_reconheco' });
+        t.notas_sefaz.push(n);
+        t.sefaz_manifestacoes.push(evento(n, { tp_evento: '210220', origem: 'admin' }));
+        const caixa = new CaixaSefazService(prisma, ciclo, notas, certificados, svc);
+        const quem = { id: randomUUID(), nome: 'Ana' };
+        for (const m of [0, 15, 30]) {
+          porta.proximas.push(sefazErro('SEFAZ_TEMPO', true));
+          expect(await svc.processar(em(min(m)))).toEqual({ fim: 'feito', enviados: 1 });
+        }
+        expect(evDa(t, n, '210220')).toMatchObject({ situacao: 'falhou', tentativas: 3, c_stat: null, saiu_em: min(30) });
+        expect(linhaDe(t).situacao).toBe('parada_configuracao'); // 3 sem resposta útil
+
+        await caixa.configurarRespostas(true, quem, min(40)); // "Ligar as respostas de novo"
+        await caixa.responderDeNovo(n.id, quem, min(45));
+        porta.proximas.push(sefazErro('SEFAZ_REDE', false));
+        expect(await svc.processar(em(min(45)))).toEqual({ fim: 'feito', enviados: 1 });
+        const depois = evDa(t, n, '210220');
+        expect(t.sefaz_eventos_lotes.find((l) => l.id === depois.lote_id)!.resultado).toBe('falha_antes_de_enviar');
+        expect(depois).toMatchObject({ situacao: 'na_fila', tentativas: 0, c_stat: null, saiu_em: min(30) });
+
+        await caixa.reabrir(n.id, quem, min(46));
+        expect(evDa(t, n, '210220').situacao).toBe('na_fila');
+        expect(porta.chamadas).toHaveLength(4);
       });
 
       it('999 três vezes → "Tentar de novo" → tique que falha ANTES de enviar (reescreve o lote) → reabrir: continua na fila', async () => {
