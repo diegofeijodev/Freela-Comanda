@@ -296,6 +296,263 @@ model sefaz_manifestacoes {
   @@index([lote_id])
 }
 
+/// Cupom fiscal (NFC-e): o emitente (uma linha, id = 1). CNPJ, razão social e nome fantasia continuam em `configuracoes`. Só nossa.
+/// `cupom_lanca_venda` nulo = não respondido. Fora de `configuracoes` de propósito (a loja lê `configuracoes` inteira).
+model nfce_emitente {
+  id                         Int       @id @default(1)
+  ie                         String?
+  crt                        Int?      @db.SmallInt
+  logradouro                 String?
+  numero                     String?
+  complemento                String?
+  bairro                     String?
+  cep                        String?   @db.Char(8)
+  cod_municipio              String    @default("3556206") @db.Char(7)
+  municipio                  String    @default("Valinhos")
+  uf                         String    @default("SP") @db.Char(2)
+  telefone                   String?
+  nat_op                     String    @default("VENDA")
+  inf_cpl                    String?
+  resp_tec_cnpj              String?   @db.Char(14)
+  resp_tec_contato           String?
+  resp_tec_email             String?
+  resp_tec_fone              String?
+  series_outro_sistema       Int[]     @default([]) @db.SmallInt
+  sem_outro_sistema          Boolean   @default(false)
+  cupom_lanca_venda          Boolean?
+  cupom_lanca_venda_por      String?   @db.Uuid
+  cupom_lanca_venda_por_nome String?
+  cupom_lanca_venda_em       DateTime? @db.Timestamptz(6)
+  tp_regime_ibscbs           Int?      @db.SmallInt
+  atualizado_por             String?   @db.Uuid
+  atualizado_por_nome        String?
+  atualizado_em              DateTime? @db.Timestamptz(6)
+}
+
+/// Cupom fiscal: uma linha por ambiente (`homologacao`, `producao`), travada com FOR UPDATE na reserva do número. Nasce com a emissão desligada.
+/// `csc_cifrado` (AES-256-GCM, rótulo `nfce-csc`) nunca sai do servidor; só `csc_dica` (4 últimos caracteres).
+model nfce_ambientes {
+  ambiente          String    @id
+  emissao_ligada    Boolean   @default(false)
+  ligada_cnpj       String?   @db.Char(14)
+  ligada_serie      Int?      @db.SmallInt
+  serie             Int?      @db.SmallInt
+  proximo_numero    BigInt    @default(1)
+  csc_cifrado       String?
+  csc_dica          String?   @db.Char(4)
+  id_csc            Int?
+  situacao          String    @default("ok")
+  mensagem          String?
+  bloqueado_ate     DateTime? @db.Timestamptz(6)
+  ultimo_656_em     DateTime? @db.Timestamptz(6)
+  ultimo_status_em  DateTime? @db.Timestamptz(6)
+  alterada_por      String?   @db.Uuid
+  alterada_por_nome String?
+  alterada_em       DateTime? @db.Timestamptz(6)
+}
+
+/// Trilha (só inserção) de ligar, desligar, paradas automáticas e mudanças de configuração do cupom. `campos` = nomes, nunca o valor do CSC.
+model nfce_ambientes_historico {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ambiente       String
+  evento         String
+  campos         String[] @default([])
+  situacao       String
+  c_stat         Int?
+  mensagem       String?
+  feito_por      String?  @db.Uuid
+  feito_por_nome String?
+  feito_em       DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([ambiente, feito_em(sort: Desc)])
+}
+
+/// Perfil fiscal do cupom (CFOP, CSOSN ou CST do ICMS, PIS/COFINS e os campos do IBS/CBS). Perfil em uso só é desativado.
+model nfce_perfis_fiscais {
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  nome                String    @unique
+  cfop                String    @db.Char(4)
+  csosn               String?   @db.Char(3)
+  cst_icms            String?   @db.Char(2)
+  aliq_icms           Decimal?  @db.Decimal(5, 2)
+  pis_cst             String?   @db.Char(2)
+  cofins_cst          String?   @db.Char(2)
+  c_ativ_sn           String?   @db.Char(2)
+  ibs_sn_aliq         Decimal?  @db.Decimal(7, 4)
+  cbs_sn_aliq         Decimal?  @db.Decimal(7, 4)
+  ibscbs_cst          String?   @db.Char(3)
+  ibscbs_cclass_trib  String?   @db.Char(6)
+  ativo               Boolean   @default(true)
+  criado_em           DateTime  @default(now()) @db.Timestamptz(6)
+  atualizado_por      String?   @db.Uuid
+  atualizado_por_nome String?
+  atualizado_em       DateTime? @db.Timestamptz(6)
+
+  itens nfce_itens[]
+}
+
+/// Dados fiscais do item do cardápio (1 para 1). NCM ou perfil nulo = cadastro incompleto; GTIN nulo = "SEM GTIN".
+model nfce_itens {
+  item_cardapio_id    String    @id @db.Uuid
+  perfil_fiscal_id    String?   @db.Uuid
+  ncm                 String?   @db.Char(8)
+  cest                String?   @db.Char(7)
+  gtin                String?   @db.VarChar(14)
+  origem              Int       @default(0) @db.SmallInt
+  descricao_cupom     String?   @db.VarChar(120)
+  unidade             String?   @db.VarChar(6)
+  atualizado_por      String?   @db.Uuid
+  atualizado_por_nome String?
+  atualizado_em       DateTime? @db.Timestamptz(6)
+
+  item_cardapio itens_cardapio       @relation(fields: [item_cardapio_id], references: [id], onDelete: Cascade)
+  perfil        nfce_perfis_fiscais? @relation(fields: [perfil_fiscal_id], references: [id], onDelete: Restrict)
+
+  @@index([perfil_fiscal_id])
+}
+
+/// Um cupom fiscal por linha (a única tabela com estado). Imutável depois de autorizado (gatilho `nfce_cupons_imutavel`; DELETE sempre
+/// recusado). Os índices únicos parciais `nfce_cupons_numero_vivo` e `nfce_cupons_chave_viva` e o parcial `nfce_cupons_pendentes` só
+/// existem no SQL. `venda_*` = marcador da venda no estoque (as funções `nfce_lancar_venda`/`nfce_desfazer_venda` gravam os `_em`).
+/// `xml_autorizado` (o `nfeProc`) só sai pela rota própria.
+model nfce_cupons {
+  id                     String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ambiente               String
+  serie                  Int       @db.SmallInt
+  numero                 BigInt
+  chave                  String    @db.VarChar(44)
+  c_nf                   String    @db.Char(8)
+  tp_emis                Int       @default(1) @db.SmallInt
+  dh_cont                DateTime? @db.Timestamptz(6)
+  x_just                 String?
+  dh_emi                 DateTime  @db.Timestamptz(6)
+  situacao               String    @default("enviando")
+  numero_reaproveitavel  Boolean   @default(true)
+  envios                 Int       @default(0) @db.SmallInt
+  chave_idempotencia     String    @unique @db.Uuid
+  pedido_hash            String    @db.Char(64)
+  lanca_venda            Boolean
+  consumidor_doc         String?   @db.VarChar(14)
+  valor_produtos         Decimal   @db.Decimal(15, 2)
+  valor_desconto         Decimal   @default(0) @db.Decimal(15, 2)
+  valor_total            Decimal   @db.Decimal(15, 2)
+  valor_troco            Decimal   @default(0) @db.Decimal(15, 2)
+  autorizada_em          DateTime? @db.Timestamptz(6)
+  n_prot                 String?   @db.VarChar(17)
+  c_stat                 Int?
+  x_motivo               String?
+  alerta_c_msg           String?
+  alerta_x_msg           String?
+  dig_val                String?
+  xml_autorizado         String?
+  cancelado_em           DateTime? @db.Timestamptz(6)
+  cancelamento_motivo    String?
+  cancelamento_n_prot    String?   @db.VarChar(17)
+  cancelamento_pedido_em DateTime? @db.Timestamptz(6)
+  venda_lancada_em       DateTime? @db.Timestamptz(6)
+  venda_desfeita_em      DateTime? @db.Timestamptz(6)
+  venda_erro             String?
+  descartado_em          DateTime? @db.Timestamptz(6)
+  descarte_motivo        String?
+  emitido_por            String?   @db.Uuid
+  emitido_por_nome       String?
+  criado_em              DateTime  @default(now()) @db.Timestamptz(6)
+  atualizado_em          DateTime  @default(now()) @db.Timestamptz(6)
+
+  itens        nfce_cupom_itens[]
+  pagamentos   nfce_cupom_pagamentos[]
+  envios_sefaz nfce_envios[]
+  vendas       vendas[]
+
+  @@index([ambiente, criado_em(sort: Desc)])
+}
+
+/// Linha do cupom: a fotografia do item na emissão. `nome_cardapio` = `itens_cardapio.nome` do momento (o `produto_relatorio` da venda).
+/// Só muda com o cupom fora de autorizado/cancelando/denegado/cancelado (gatilho `nfce_filhos_imutaveis`), fora o SET NULL do cardápio.
+model nfce_cupom_itens {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  cupom_id           String   @db.Uuid
+  n_item             Int      @db.SmallInt
+  item_cardapio_id   String?  @db.Uuid
+  nome_cardapio      String
+  c_prod             String   @db.VarChar(60)
+  x_prod             String   @db.VarChar(120)
+  ncm                String   @db.Char(8)
+  cest               String?  @db.Char(7)
+  gtin               String?  @db.VarChar(14)
+  origem             Int      @db.SmallInt
+  unidade            String   @db.VarChar(6)
+  cfop               String   @db.Char(4)
+  csosn              String?  @db.Char(3)
+  cst_icms           String?  @db.Char(2)
+  aliq_icms          Decimal? @db.Decimal(5, 2)
+  pis_cst            String?  @db.Char(2)
+  cofins_cst         String?  @db.Char(2)
+  c_ativ_sn          String?  @db.Char(2)
+  ibs_sn_aliq        Decimal? @db.Decimal(7, 4)
+  cbs_sn_aliq        Decimal? @db.Decimal(7, 4)
+  ibscbs_cst         String?  @db.Char(3)
+  ibscbs_cclass_trib String?  @db.Char(6)
+  perfil_nome        String
+  quantidade         Decimal  @db.Decimal(15, 4)
+  valor_unitario     Decimal  @db.Decimal(15, 2)
+  valor_bruto        Decimal  @db.Decimal(15, 2)
+  valor_desconto     Decimal  @default(0) @db.Decimal(15, 2)
+
+  cupom         nfce_cupons     @relation(fields: [cupom_id], references: [id], onDelete: Restrict)
+  item_cardapio itens_cardapio? @relation(fields: [item_cardapio_id], references: [id], onDelete: SetNull)
+
+  @@unique([cupom_id, n_item])
+  @@index([item_cardapio_id])
+}
+
+/// Formas de pagamento do cupom. Mesmo gatilho de imutável dos itens.
+model nfce_cupom_pagamentos {
+  id         String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  cupom_id   String  @db.Uuid
+  ordem      Int     @db.SmallInt
+  t_pag      String  @db.Char(2)
+  valor      Decimal @db.Decimal(15, 2)
+  tp_integra Int?    @db.SmallInt
+
+  cupom nfce_cupons @relation(fields: [cupom_id], references: [id], onDelete: Restrict)
+
+  @@unique([cupom_id, ordem])
+}
+
+/// Diário das chamadas NFC-e à SEFAZ (só inserção, mais o fechamento da própria linha): prova das travas do 656 e guarda dos eventos.
+/// `cupom_id` nulo só no `status`; `id_lote` sai da sequence `nfce_id_lote_seq` (só no SQL). `xml_enviado` nunca contém o CSC.
+model nfce_envios {
+  id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ambiente              String
+  cupom_id              String?   @db.Uuid
+  servico               String
+  tentativa             Int?      @db.SmallInt
+  id_lote               BigInt?
+  iniciada_em           DateTime  @db.Timestamptz(6)
+  terminada_em          DateTime? @db.Timestamptz(6)
+  resultado             String?
+  c_stat_lote           Int?
+  c_stat                Int?
+  x_motivo              String?
+  n_prot                String?   @db.VarChar(17)
+  dh_recbto             String?
+  dig_val               String?
+  rejeicao              Boolean   @default(false)
+  erro_code             String?
+  duracao_ms            Int?
+  xml_enviado           String?
+  xml_retorno           String?
+  iniciada_por          String?   @db.Uuid
+  iniciada_por_nome     String?
+  certificado_impressao String?   @db.Char(64)
+
+  cupom nfce_cupons? @relation(fields: [cupom_id], references: [id], onDelete: Restrict)
+
+  @@index([ambiente, iniciada_em(sort: Desc)])
+  @@index([cupom_id])
+}
+
 model configuracoes {
   id                    Int     @id @default(1)
   nome_unidade          String  @default("Chopp & Espeto Valinhos")
@@ -385,6 +642,8 @@ model itens_cardapio {
   ficha_ingredientes ficha_ingredientes[]
   de_para_produtos   de_para_produtos[]
   vendas             vendas[]
+  nfce_item          nfce_itens?
+  nfce_cupom_itens   nfce_cupom_itens[]
 }
 
 model ficha_ingredientes {
@@ -439,13 +698,17 @@ model vendas {
   valor_total       Decimal   @default(0) @db.Decimal
   importacao_id     String?   @db.Uuid
   created_at        DateTime  @default(now()) @db.Timestamptz(6)
+  /// Só nossa (não existe no Lovable): a venda lançada pelo cupom fiscal autorizado (`nfce_lancar_venda`). Nula = venda da importação.
+  nfce_cupom_id     String?   @db.Uuid
 
   itens_cardapio itens_cardapio? @relation(fields: [item_cardapio_id], references: [id], onDelete: SetNull)
   importacoes    importacoes?    @relation(fields: [importacao_id], references: [id], onDelete: SetNull)
+  nfce_cupom     nfce_cupons?    @relation(fields: [nfce_cupom_id], references: [id], onDelete: Restrict)
   movimentacoes  movimentacoes[]
 
   @@unique([pedido, produto_relatorio, data])
   @@index([data])
+  @@index([nfce_cupom_id])
 }
 
 model movimentacoes {

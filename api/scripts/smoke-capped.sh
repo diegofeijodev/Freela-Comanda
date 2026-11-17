@@ -31,11 +31,15 @@ echo "$PROVA"
 # barreira); confere T1/T2, CHECKs, FKs e os 2 índices parciais e apaga o que criou
 DATABASE_URL="$URL" NODE_OPTIONS="--max-old-space-size=400 --require $SEM_REDE" npm_config_update_notifier=false \
   npx ts-node --transpile-only scripts/respostas-sefaz-banco.ts
+# cupom fiscal (NFC-e) no Postgres de verdade, sob a barreira: linhas semeadas, CHECKs, índice parcial dos cupons vivos, gatilhos de
+# imutável e as funções nfce_lancar_venda/nfce_desfazer_venda (venda e baixa no estoque); apaga o que criou
+DATABASE_URL="$URL" NODE_OPTIONS="--max-old-space-size=400 --require $SEM_REDE" npm_config_update_notifier=false \
+  npx ts-node --transpile-only scripts/nfce-banco.ts
 LOG=$(mktemp)
 # npm_config_update_notifier=false: o aviso de versão do npx também roda sob a barreira e daria falso "BARROU CONEXÃO NA API"
 DATABASE_URL="$URL" PORT=$PORTA NODE_OPTIONS="--max-old-space-size=600 --require $SEM_REDE" ANTHROPIC_API_KEY= npm_config_update_notifier=false \
   CERTIFICADO_SECRET=smoke-certificado-segredo-de-teste-0123456789 \
-  SEFAZ_DFE_AMBIENTE=producao SEFAZ_MANIFESTACAO=ligada \
+  SEFAZ_DFE_AMBIENTE=producao SEFAZ_MANIFESTACAO=ligada NFCE_AMBIENTE=homologacao \
   setsid npx ts-node --transpile-only -r tsconfig-paths/register src/main.ts >"$LOG" 2>&1 &
 API_PID=$!
 trap 'kill -- -$API_PID 2>/dev/null || kill $API_PID 2>/dev/null || true' EXIT

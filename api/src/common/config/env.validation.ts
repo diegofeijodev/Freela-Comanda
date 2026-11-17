@@ -36,6 +36,13 @@ const envSchema = z
      */
     SEFAZ_MANIFESTACAO: z.preprocess(vazioComoAusente, z.enum(['desligada', 'ligada']).default('desligada')),
 
+    /**
+     * Cupom fiscal (NFC-e modelo 65). Ausente ou vazia = `desligado`: emitir, consultar, cancelar, testar e ligar respondem 503 e nenhuma
+     * conexão sai (os cadastros e a leitura dos cupons continuam). Separada de `SEFAZ_DFE_AMBIENTE`. `producao` só com o "eu autorizo" do
+     * dono; valor desconhecido derruba a subida, de propósito.
+     */
+    NFCE_AMBIENTE: z.preprocess(vazioComoAusente, z.enum(['desligado', 'homologacao', 'producao']).default('desligado')),
+
     SWAGGER_ENABLED: z.string().optional(),
 
     /**

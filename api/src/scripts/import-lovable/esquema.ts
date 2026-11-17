@@ -1,7 +1,7 @@
 /**
  * O que o importador sabe do NOSSO banco (migrações 20261028220000_init e 20261028220100_regras), escrito à mão de propósito:
  * a carga usa só estas listas, e na hora de rodar o importador confere que o banco conectado é exatamente isto (tabelas, colunas,
- * gatilhos, nenhuma sequence). Migração nova que mexa nestas tabelas = atualizar aqui (o `esquema.spec.ts` acusa).
+ * gatilhos, nenhuma coluna com sequence). Migração nova que mexa nestas tabelas = atualizar aqui (o `esquema.spec.ts` acusa).
  */
 
 export type Tabela = { nome: string; colunas: readonly string[] };
@@ -262,10 +262,22 @@ export const TABELAS_SO_NOSSAS = ['users', '_prisma_migrations', 'ia_chave', 'ce
   'sefaz_manifestacao',
   'sefaz_eventos_lotes',
   'sefaz_manifestacoes',
+  'nfce_emitente',
+  'nfce_ambientes',
+  'nfce_ambientes_historico',
+  'nfce_perfis_fiscais',
+  'nfce_itens',
+  'nfce_cupons',
+  'nfce_cupom_itens',
+  'nfce_cupom_pagamentos',
+  'nfce_envios',
 ] as const;
 
 /** Colunas nossas em tabela do Lovable: ficam nulas na carga (que só insere `colunas`) e o importador as desconta ao conferir o banco. */
-export const COLUNAS_SO_NOSSAS: Readonly<Record<string, readonly string[]>> = { notas_entrada: ['repetida_de'] };
+export const COLUNAS_SO_NOSSAS: Readonly<Record<string, readonly string[]>> = {
+  notas_entrada: ['repetida_de'],
+  vendas: ['nfce_cupom_id'],
+};
 
 /** A migração `regras` semeia estas três; a carga aceita exatamente esses seeds e os SUBSTITUI pelos do Lovable. */
 export const TABELAS_COM_SEED = ['configuracoes', 'sazonalidade', 'subgrupos'] as const;
@@ -296,6 +308,21 @@ export const GATILHOS: readonly { tabela: string; nome: string; porque: string }
     nome: 'vendas_baixa_trg',
     porque:
       'desligado durante a carga e religado no fim: as baixas de estoque das vendas já vêm prontas em movimentacoes (senão dobrariam)',
+  },
+  {
+    tabela: 'nfce_cupons',
+    nome: 'nfce_cupons_imutavel',
+    porque: 'tabela só nossa (cupom fiscal), que a carga não toca: desligar e religar junto com os outros não muda nada',
+  },
+  {
+    tabela: 'nfce_cupom_itens',
+    nome: 'nfce_filhos_imutaveis',
+    porque: 'tabela só nossa (cupom fiscal), que a carga não toca: desligar e religar junto com os outros não muda nada',
+  },
+  {
+    tabela: 'nfce_cupom_pagamentos',
+    nome: 'nfce_filhos_imutaveis',
+    porque: 'tabela só nossa (cupom fiscal), que a carga não toca: desligar e religar junto com os outros não muda nada',
   },
 ];
 

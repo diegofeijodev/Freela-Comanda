@@ -3,6 +3,12 @@ import { join } from 'node:path';
 import { conferirEsquemaNosso } from '../banco';
 import { COLUNAS_SO_NOSSAS, COLUNAS_USERS, GATILHOS, TABELAS, TABELAS_SO_NOSSAS } from '../esquema';
 
+/**
+ * A única sequence permitida: avulsa, só para o `idLote` da NFC-e (não é padrão de coluna nenhuma, e a carga não a toca). Coluna com
+ * `nextval`/identity continua proibida aqui e no `conferirEsquemaNosso`.
+ */
+const SEQUENCE_AVULSA = 'CREATE SEQUENCE "nfce_id_lote_seq" AS BIGINT MINVALUE 1 MAXVALUE 999999999999999 NO CYCLE;';
+
 /** Lê as migrações versionadas: a lista fixa do importador não pode se afastar delas. */
 const MIGR = join(__dirname, '../../../../prisma/migrations');
 const sql = readdirSync(MIGR)
@@ -28,7 +34,7 @@ describe('esquema.ts × migrações', () => {
   it('ordem de carga respeita toda chave estrangeira (mãe antes da filha)', () => {
     const ordem = TABELAS.map((t) => t.nome);
     const fks = [...sql.matchAll(/ALTER TABLE "([a-z_]+)" ADD CONSTRAINT "[a-z_]+" FOREIGN KEY \("[a-z_]+"\) REFERENCES "([a-z_]+)"/g)];
-    expect(fks).toHaveLength(25);
+    expect(fks).toHaveLength(32);
     for (const [, filha, mae] of fks) {
       if (filha === mae) continue; // auto-referência (notas_entrada.repetida_de): sem ordem a respeitar
       if ((TABELAS_SO_NOSSAS as readonly string[]).includes(filha!)) continue; // tabela só nossa (SEFAZ): a carga não toca
@@ -41,8 +47,8 @@ describe('esquema.ts × migrações', () => {
     expect(gat.sort()).toEqual(GATILHOS.map((g) => `${g.tabela}.${g.nome}`).sort());
   });
 
-  it('nenhuma sequence/identity nas migrações (a carga não faz setval)', () => {
-    expect(sql).not.toMatch(/SERIAL|IDENTITY|nextval|CREATE SEQUENCE/i);
+  it('nenhuma sequence/identity nas migrações (a carga não faz setval), fora a sequence avulsa do idLote da NFC-e', () => {
+    expect(sql.replace(SEQUENCE_AVULSA, '')).not.toMatch(/SERIAL|IDENTITY|nextval|CREATE SEQUENCE/i);
   });
 
   it('toda coluna acrescentada por migração em tabela do Lovable está em COLUNAS_SO_NOSSAS', () => {
@@ -64,6 +70,33 @@ describe('respostas à SEFAZ (migração notas_sefaz_respostas)', () => {
   it('as duas chaves estrangeiras de sefaz_manifestacoes têm índice (nota_sefaz_id e lote_id)', () => {
     expect(sql).toContain('CREATE INDEX "sefaz_manifestacoes_nota_sefaz_id_idx" ON "sefaz_manifestacoes"("nota_sefaz_id");');
     expect(sql).toContain('CREATE INDEX "sefaz_manifestacoes_lote_id_idx" ON "sefaz_manifestacoes"("lote_id");');
+  });
+});
+
+describe('cupom fiscal (migração nfce)', () => {
+  const m = readFileSync(join(MIGR, '20261119120000_nfce', 'migration.sql'), 'utf8');
+  it('as 9 tabelas novas estão em TABELAS_SO_NOSSAS e vendas.nfce_cupom_id em COLUNAS_SO_NOSSAS', () => {
+    for (const t of [
+      'nfce_emitente',
+      'nfce_ambientes',
+      'nfce_ambientes_historico',
+      'nfce_perfis_fiscais',
+      'nfce_itens',
+      'nfce_cupons',
+      'nfce_cupom_itens',
+      'nfce_cupom_pagamentos',
+      'nfce_envios',
+    ])
+      expect(TABELAS_SO_NOSSAS).toContain(t);
+    expect(COLUNAS_SO_NOSSAS.vendas).toEqual(['nfce_cupom_id']);
+  });
+  it('a sequence do idLote é avulsa (aparece uma vez, e nenhuma coluna a usa como padrão)', () => {
+    expect(m.split(SEQUENCE_AVULSA)).toHaveLength(2);
+    expect(sql).not.toMatch(/nextval|SERIAL|IDENTITY/i);
+  });
+  it('os 3 gatilhos de imutável estão em GATILHOS', () => {
+    for (const t of ['nfce_cupons.nfce_cupons_imutavel', 'nfce_cupom_itens.nfce_filhos_imutaveis', 'nfce_cupom_pagamentos.nfce_filhos_imutaveis'])
+      expect(GATILHOS.map((g) => `${g.tabela}.${g.nome}`)).toContain(t);
   });
 });
 
