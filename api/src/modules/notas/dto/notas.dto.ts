@@ -50,7 +50,7 @@ export class LancarNotaDto {
   @IsDayString() data_entrada!: string;
   @IsNumber() valor_total!: number;
   @IsIn([...FORMAS_PGTO]) forma_pagamento!: (typeof FORMAS_PGTO)[number];
-  @IsIn(['xml', 'pdf', 'foto']) origem!: 'xml' | 'pdf' | 'foto';
+  @IsIn(['xml', 'pdf', 'foto', 'sefaz']) origem!: 'xml' | 'pdf' | 'foto' | 'sefaz';
   @IsBoolean() atualizar_preco!: boolean;
   @IsOptional() @IsBoolean() confirmar_repetida?: boolean;
 

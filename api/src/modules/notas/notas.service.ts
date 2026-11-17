@@ -1,11 +1,14 @@
-import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Optional } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import { chaveValida, normalizarChave, normalizarNumeroSerie } from '../../common/fiscal/chave-acesso';
-import { normalizarCnpj } from '../../common/fiscal/cnpj';
+import { cnpjValido, normalizarCnpj } from '../../common/fiscal/cnpj';
 import { fraseNotaRepetida, pareceRepetida, type NotaParecida, type RefNota } from '../../common/fiscal/nota-repetida';
 import { normalizaNome } from '../../common/parse/normaliza';
 import { PrismaService } from '../../common/database/prisma.service';
 import { dateToString, dayToDb } from '../../common/time/dates';
+import { podeConferir, situacaoDaNota, type MotivoIgnorar } from '../notas-sefaz/situacao-nota';
+import type { SituacaoSefaz } from '../notas-sefaz/classificacao';
 import type { LancarNotaDto } from './dto/notas.dto';
 
 /** Formas pagas no ato: viram conta já quitada (A_VISTA do protótipo, src/lib/nfe.ts). */
@@ -46,7 +49,35 @@ const r2 = (n: number) => Math.round(n * 100) / 100;
 
 @Injectable()
 export class NotasService {
-  constructor(private readonly prisma: PrismaService) {}
+  /** `config` ausente = busca na SEFAZ desligada (nenhuma nota entra com origem `sefaz`). */
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly config?: ConfigService,
+  ) {}
+
+  /**
+   * "Dar entrada" de uma nota da SEFAZ: confere no SERVIDOR (não só na tela) que ela pode ser conferida — produção, XML completo e
+   * nem cancelada, nem denegada, nem ignorada (a mesma `podeConferir` da caixa). Nota de homologação nunca passa.
+   */
+  private async conferirOrigemSefaz(chave: string | null): Promise<void> {
+    const recusa = () =>
+      new ConflictException({
+        code: 'SEFAZ_NAO_CONFERIVEL',
+        message: 'Esta nota não pode ser conferida pela SEFAZ. Dê entrada pelo arquivo ou pela foto.',
+      });
+    const ambiente = this.config?.get<string>('SEFAZ_DFE_AMBIENTE');
+    if (ambiente !== 'producao' || !chave) throw recusa();
+    const cfg = await this.prisma.configuracoes.findUnique({ where: { id: 1 }, select: { cnpj: true } });
+    const cnpj = normalizarCnpj(cfg?.cnpj ?? '');
+    if (!cnpjValido(cnpj)) throw recusa();
+    const n = await this.prisma.notas_sefaz.findUnique({ where: { ambiente_chave: { ambiente: 'producao', chave } } });
+    if (!n || n.cnpj_destinatario !== cnpj) throw recusa();
+    const situacao = situacaoDaNota(
+      { situacao_sefaz: n.situacao_sefaz as SituacaoSefaz, motivo_ignorar: n.motivo_ignorar as MotivoIgnorar | null },
+      { lancada: false, parecida: false },
+    );
+    if (!podeConferir('producao', n.documento_completo_id !== null, situacao)) throw recusa();
+  }
 
   recentes(limite: number) {
     return this.prisma.notas_entrada.findMany({ orderBy: { created_at: 'desc' }, take: Math.min(Math.max(limite, 1), 200) });
@@ -107,6 +138,7 @@ export class NotasService {
     if (chave && (await this.prisma.notas_entrada.findUnique({ where: { chave }, select: { id: true } }))) {
       throw new ConflictException({ code: 'DUPLICADO', message: 'Esta nota já foi lançada' });
     }
+    if (dto.origem === 'sefaz') await this.conferirOrigemSefaz(chave);
     const totalItens = dto.itens.reduce((s, i) => s + i.quantidade * i.valor_unitario, 0);
     const valorNota = dto.valor_total || totalItens;
     const cnpj = normalizarCnpj(dto.fornecedor_cnpj ?? '') || null;

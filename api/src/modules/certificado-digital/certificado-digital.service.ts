@@ -232,7 +232,7 @@ export class CertificadoDigitalService implements CertificadoDigitalPort {
       throw ilegivel(); // nunca repassa a mensagem da biblioteca (pode citar trecho da chave)
     }
     const situacao = situacaoDe({ temLinha: true, temSegredo, legivel: true, validoAte: linha.valido_ate, agora });
-    if (situacao === 'vencido') throw new CertificadoErro(MSG_USO.vencido(linha.valido_ate), 422, 'CERTIFICADO_VENCIDO');
+    if (situacao === 'vencido') throw new CertificadoErro(MSG_USO.vencido(linha.valido_ate), 422, 'CERTIFICADO_VENCIDO', linha.valido_ate);
     const cnpjEmpresa = await this.cnpjDaEmpresa();
     if (compararCnpj(linha.cnpj, cnpjEmpresa) === 'diferente') {
       throw new CertificadoErro(msgOutroCnpj(linha.cnpj, linha.titular, cnpjEmpresa), 422, 'CERTIFICADO_OUTRO_CNPJ');

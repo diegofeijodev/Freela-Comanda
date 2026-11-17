@@ -27,6 +27,9 @@ describe('LancarNotaDto', () => {
     const o = { ...base, itens: [{ ...base.itens[0], novo_insumo: { nome: '', unidade: 'un' } }] };
     expect(erros(o).length).toBeGreaterThan(0);
   });
+  it('origem sefaz passa', () => {
+    expect(erros({ ...base, origem: 'sefaz' })).toHaveLength(0);
+  });
   it('origem inválida falha', () => {
     expect(erros({ ...base, origem: 'x' }).length).toBeGreaterThan(0);
   });

@@ -19,6 +19,8 @@ export class CertificadoErro extends Error {
     message: string,
     readonly status: 422 | 503,
     readonly code: 'CERTIFICADO_NAO_CADASTRADO' | 'CERTIFICADO_ILEGIVEL' | 'CERTIFICADO_VENCIDO' | 'CERTIFICADO_OUTRO_CNPJ',
+    /** Só no VENCIDO: a data de vencimento, para a frase "venceu em …" da tela. */
+    readonly validoAte?: Date,
   ) {
     super(message);
     this.name = 'CertificadoErro';

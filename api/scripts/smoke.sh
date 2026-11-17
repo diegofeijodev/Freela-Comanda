@@ -418,6 +418,149 @@ check "histórico no banco" 3 "$(sql "select count(*) from certificado_digital_h
 check "uma única linha removido (duplo toque não duplica)" 1 "$(sql "select count(*) from certificado_digital_historico where evento='removido'")"
 check "removido grava a filial" 12345678000276 "$(sql "select cnpj from certificado_digital_historico where evento='removido'")"
 req GET /v1/configuracoes "$LOJA"; check "loja lê config sem certificado" 0 "$(echo "$BODY" | grep -c BEGIN)"
+# ---------- notas da SEFAZ (nenhuma chamada à SEFAZ: busca desligada e sem certificado)
+# Barreiras: a linha semeada tem busca_ligada=false (o agendador, 1 min depois do boot, para em "não ligada" antes de qualquer rede),
+# o certificado acabou de ser removido (a única tentativa de ligar dá 503 e não grava nada) e o último check confere que
+# sefaz_consultas só tem a linha semeada (a consulta é gravada ANTES de qualquer pergunta sair).
+SZ=/v1/notas-sefaz
+ZERO=00000000-0000-4000-8000-000000000000
+for r in "GET $SZ/situacao" "GET $SZ" "GET $SZ/$ZERO/xml" "POST $SZ/buscar" "POST $SZ/$ZERO/reabrir"; do
+  req "${r%% *}" "${r#* }" "$LOJA"; check "loja barrada em $r" 403 "$CODE"
+done
+req PUT $SZ/configuracao "$LOJA" '{"busca_ligada":false}'; check "loja barrada em PUT $SZ/configuracao" 403 "$CODE"
+req POST "$SZ/$ZERO/ignorar" "$LOJA" '{"motivo":"nao_e_compra"}'; check "loja barrada em POST $SZ/:id/ignorar" 403 "$CODE"
+req GET $SZ/situacao; check "notas da SEFAZ sem token" 401 "$CODE"
+
+req GET $SZ/situacao "$ADM"; check "situação: 200" 200 "$CODE"
+check "situação: ambiente" producao "$(j .ambiente)"; check "situação: busca desligada" false "$(j .busca_ligada)"
+check "situação: sem certificado" CERTIFICADO_NAO_CADASTRADO "$(j .certificado.code)"
+check "situação: frase sem certificado" "Envie o certificado digital da empresa no quadro acima para ligar a busca." "$(j .certificado.mensagem)"
+req PUT $SZ/configuracao "$ADM" '{"busca_ligada":true}'; check "ligar sem certificado: 503" 503 "$CODE"
+check "ligar sem certificado: code" CERTIFICADO_NAO_CADASTRADO "$(j .error.code)"
+check "ligar sem certificado: nada ligado" 0 "$(sql "select count(*) from sefaz_distribuicao where busca_ligada")"
+check "ligar sem certificado: nada gravado" 0 "$(sql "select count(*) from sefaz_distribuicao")"
+req PUT $SZ/configuracao "$ADM" '{"busca_ligada":"sim"}'; check "ligar com valor que não é booleano: 400" 400 "$CODE"
+req POST $SZ/buscar "$ADM"; check "buscar com a busca desligada: 409" 409 "$CODE"
+check "buscar com a busca desligada: code" SEFAZ_BUSCA_DESLIGADA "$(j .error.code)"
+check "buscar com a busca desligada: frase" "A busca na SEFAZ está desligada. Ligue em Configurações → Notas da SEFAZ." "$(j .error.message)"
+
+# semeadura por SQL (ids fixos; XML fictício em dollar-quoting); o procNFe já nasce processado para o agendador não pegá-lo
+CONS=00000000-0000-4000-8000-0000000000c1
+DOC1=00000000-0000-4000-8000-0000000000d1; DOC2=00000000-0000-4000-8000-0000000000d2
+NA=00000000-0000-4000-8000-0000000000a1; NB=00000000-0000-4000-8000-0000000000a2; NC=00000000-0000-4000-8000-0000000000a3
+ND=00000000-0000-4000-8000-0000000000a4; NE=00000000-0000-4000-8000-0000000000a5
+K880=35261111222333000181550010000008801000000887
+KPARECE=35261112ABC34501DE35550010000044111999999993
+K15=35261111222333000181550020000000151000000016
+K120=35261111222333000181550010000001201000000120
+docker exec -i erp-freela-postgres psql -U erpfreela -d "$PGDB" -v ON_ERROR_STOP=1 -q >/dev/null <<'SQL'
+insert into sefaz_distribuicao (ambiente, cnpj, busca_ligada, ult_nsu, ultima_consulta_em)
+  values ('producao', '12345678000195', false, 5, now() - interval '1 hour');
+insert into sefaz_consultas (id, ciclo_id, ambiente, cnpj, origem, ult_nsu_enviado, iniciada_em, terminada_em, resultado, c_stat)
+  values ('00000000-0000-4000-8000-0000000000c1', gen_random_uuid(), 'producao', '12345678000195', 'agendada', 0, now() - interval '1 hour', now() - interval '1 hour', 'respondida', 138);
+insert into sefaz_documentos (id, ambiente, cnpj, nsu, schema, tipo, chave, xml, consulta_id, processado_em) values
+  ('00000000-0000-4000-8000-0000000000d1', 'producao', '12345678000195', 1, 'procNFe_v4.00.xsd', 'procNFe', '35261111222333000181550010000008801000000887',
+   $x$<nfeProc><NFe><infNFe Id="NFe35261111222333000181550010000008801000000887"><dest><CNPJ>12345678000195</CNPJ></dest></infNFe></NFe></nfeProc>$x$,
+   '00000000-0000-4000-8000-0000000000c1', now()),
+  ('00000000-0000-4000-8000-0000000000d2', 'producao', '12345678000195', 2, 'procNFe_v4.00.xsd', 'procNFe', '35261112ABC34501DE35550010000044111999999993',
+   $x$<nfeProc><NFe><infNFe Id="NFe35261112ABC34501DE35550010000044111999999993"><dest><CNPJ>12345678000195</CNPJ></dest></infNFe></NFe></nfeProc>$x$,
+   '00000000-0000-4000-8000-0000000000c1', now());
+insert into notas_sefaz (id, ambiente, cnpj_destinatario, chave, emitente_cnpj, emitente_nome, numero, serie, emitida_em, valor_total, tp_nf, fin_nfe, situacao_sefaz, cancelada_em, documento_completo_id) values
+  ('00000000-0000-4000-8000-0000000000a1', 'producao', '12345678000195', '35261111222333000181550010000008801000000887', '11222333000181', 'Frigorífico Smoke', '880', '1', now() - interval '10 days', 123.45, 1, 1, 'autorizada', null, '00000000-0000-4000-8000-0000000000d1'),
+  ('00000000-0000-4000-8000-0000000000a2', 'producao', '12345678000195', '35261112ABC34501DE35550010000044111000044116', '12ABC34501DE35', 'Atacadão Smoke', '4411', '1', now() - interval '9 days', 1234.56, 1, 1, 'cancelada', now() - interval '8 days', null),
+  ('00000000-0000-4000-8000-0000000000a3', 'producao', '12345678000195', '35261112ABC34501DE35550010000044111999999993', '12ABC34501DE35', 'Atacadão Smoke', '4411', '1', now() - interval '5 days', 1234.56, 1, 1, 'autorizada', null, '00000000-0000-4000-8000-0000000000d2'),
+  ('00000000-0000-4000-8000-0000000000a4', 'producao', '12345678000195', '35261111222333000181550020000000151000000016', '11222333000181', 'Frigorífico Smoke', '15', '2', null, null, 1, 1, 'denegada', null, null),
+  ('00000000-0000-4000-8000-0000000000a5', 'producao', '12345678000195', '35261111222333000181550010000001201000000120', '11222333000181', 'Frigorífico Smoke', '120', '1', now() - interval '11 days', 50, 0, 1, 'autorizada', null, null);
+SQL
+check "semeadura da caixa" 5 "$(sql "select count(*) from notas_sefaz")"
+
+req GET $SZ/situacao "$ADM"
+check "caixa: contagem falta lançar" 2 "$(j .contagem.falta_lancar)"; check "caixa: contagem parece lançada" 1 "$(j .contagem.parece_lancada)"
+check "caixa: contagem cancelada depois de lançada" 1 "$(j .contagem.cancelada_depois_de_lancada)"
+check "caixa: nota cancelada depois de lançada" 4411 "$(j '.canceladas_depois[0].numero')"
+check "situação: ainda desligada" false "$(j .busca_ligada)"
+check "situação: notas novas desde a última consulta" 5 "$(j '.ultima_consulta.novas')"
+req GET $SZ "$ADM"; check "a conferir: 200" 200 "$CODE"; check "a conferir: 4 linhas" 4 "$(j length)"
+check "a conferir: a mais recente é a que parece lançada" "$KPARECE" "$(j '.[0].chave')"
+req GET "$SZ?filtro=todas" "$ADM"; check "todas: 5 linhas" 5 "$(j length)"
+check "todas: sem emissão no fim" "$K15" "$(j '.[4].chave')"
+req GET "$SZ?filtro=abc" "$ADM"; check "filtro inválido: 400" 400 "$CODE"
+req GET "$SZ?filtro=todas&limite=2" "$ADM"; check "limite 2" 2 "$(j length)"
+req GET "$SZ?filtro=todas&limite=9999" "$ADM"; check "limite acima do teto não dá erro" 5 "$(j length)"
+req GET "$SZ?filtro=todas" "$ADM"
+LINHA() { echo "$BODY" | jq -r --arg c "$1" ".[] | select(.chave==\$c) | $2"; }
+check "(a) falta lançar" falta_lancar "$(LINHA $K880 .situacao)"; check "(a) pode conferir" true "$(LINHA $K880 .pode_conferir)"
+check "(a) valor" 123.45 "$(LINHA $K880 .valor_total)"
+check "(e) não parece compra" true "$(LINHA $K120 .nao_parece_compra)"; check "(e) sem XML não confere" false "$(LINHA $K120 .pode_conferir)"
+check "(c) parece lançada" parece_lancada "$(LINHA $KPARECE .situacao)"; check "(c) duas parecidas" 2 "$(LINHA $KPARECE '.parecidas | length')"
+check "(c) a mais nova é a repetida confirmada" 000.004.411 "$(LINHA $KPARECE '.parecidas[0].numero')"
+check "(c) a outra é a do vetor" 4411 "$(LINHA $KPARECE '.parecidas[1].numero')"
+check "(b) cancelada depois de lançada" cancelada_depois_de_lancada "$(LINHA $VETOR .situacao)"
+check "(b) lançada pela chave" xml "$(LINHA $VETOR .lancada.origem)"
+check "(d) denegada" denegada "$(LINHA $K15 .situacao)"
+
+# XML: só o de uma nota liberada
+curl -s -o "$OUT" -D "$OUT.h" "$BASE$SZ/$NA/xml" -H "authorization: Bearer $ADM"; BODY=$(cat "$OUT")
+check "XML de (a): 200" "HTTP/1.1 200 OK" "$(head -1 "$OUT.h" | tr -d '\r')"
+check "XML de (a): content-type" text/xml "$(grep -i '^content-type:' "$OUT.h" | tr -d '\r' | cut -d' ' -f2 | cut -c1-8)"
+check "XML de (a): corpo" 1 "$(echo "$BODY" | grep -c "$K880")"
+rm -f "$OUT.h"
+req GET "$SZ/$NB/xml" "$ADM"; check "XML de (b) cancelada: 409" 409 "$CODE"; check "XML de (b): code" SEFAZ_CANCELADA "$(j .error.code)"
+req GET "$SZ/$ND/xml" "$ADM"; check "XML de (d) sem XML: 404" 404 "$CODE"; check "XML de (d): code" SEFAZ_SEM_XML "$(j .error.code)"
+req GET "$SZ/$ZERO/xml" "$ADM"; check "XML de id inexistente: 404" 404 "$CODE"
+req GET "$SZ/nao-e-uuid/xml" "$ADM"; check "XML de id malformado: 404" 404 "$CODE"
+
+# Dar entrada pela SEFAZ
+nota_sefaz() { # $1=chave $2=número $3=série $4=confirmar (opcional)
+  jq -nc --arg ch "$1" --arg n "$2" --arg s "$3" --arg c "${4:-}" --arg d "$HOJE" \
+    '{chave:$ch,numero:$n,serie:$s,fornecedor_nome:"Atacadão Smoke",fornecedor_cnpj:"12ABC34501DE35",data_entrada:$d,valor_total:10,forma_pagamento:"pix",origem:"sefaz",atualizar_preco:false,itens:[{descricao:"ITEM SEFAZ",unidade:"UN",quantidade:1,valor_unitario:10}],parcelas:[]} + (if $c=="" then {} else {confirmar_repetida:true} end)'
+}
+req POST /v1/notas "$ADM" "$(jq -nc --arg d "$HOJE" '{chave:"35261111222333000181550010000008801000000887",numero:"880",serie:"1",fornecedor_nome:"Frigorífico Smoke",fornecedor_cnpj:"11222333000181",data_entrada:$d,valor_total:10,forma_pagamento:"pix",origem:"sefaz",atualizar_preco:false,itens:[{descricao:"ITEM SEFAZ",unidade:"UN",quantidade:1,valor_unitario:10}],parcelas:[]}')"
+check "dar entrada pela SEFAZ: 201" 201 "$CODE"
+req GET "$SZ?filtro=todas" "$ADM"
+check "(a) já lançada" ja_lancada "$(LINHA $K880 .situacao)"; check "(a) lançada pela SEFAZ" sefaz "$(LINHA $K880 .lancada.origem)"
+req POST /v1/notas "$ADM" "$(nota_sefaz $KPARECE 4411 1)"; check "repetida pela SEFAZ: 409" 409 "$CODE"; check "repetida pela SEFAZ: code" NOTA_REPETIDA "$(j .error.code)"
+req POST /v1/notas "$ADM" "$(nota_sefaz $KPARECE 4411 1 true)"; check "repetida pela SEFAZ confirmada: 201" 201 "$CODE"
+req GET "$SZ?filtro=todas" "$ADM"; check "(c) já lançada" ja_lancada "$(LINHA $KPARECE .situacao)"
+# o servidor confere (não só a tela): nota cancelada, sem XML e fora da caixa não entram por origem sefaz
+req POST /v1/notas "$ADM" "$(nota_sefaz $VETOR 4411 1)"; check "origem sefaz de nota já lançada: 409" 409 "$CODE"
+req POST /v1/notas "$ADM" "$(nota_sefaz $K15 15 2)"; check "origem sefaz de nota denegada: 409" 409 "$CODE"
+check "origem sefaz de nota denegada: code" SEFAZ_NAO_CONFERIVEL "$(j .error.code)"
+req POST /v1/notas "$ADM" "$(nota_sefaz 35261111222333000181550010000000771000000071 77 1)"; check "origem sefaz de nota fora da caixa: 409" 409 "$CODE"
+
+# Ignorar e reabrir (e)
+req POST "$SZ/$NE/ignorar" "$ADM" '{}'; check "ignorar sem motivo: 400" 400 "$CODE"
+req POST "$SZ/$NE/ignorar" "$ADM" '{"motivo":"xyz"}'; check "ignorar com motivo fora da lista: 400" 400 "$CODE"
+req POST "$SZ/$NE/ignorar" "$ADM" '{"motivo":"outro"}'; check "ignorar 'outro' sem texto: 400" 400 "$CODE"
+check "ignorar 'outro' sem texto: frase" "Escreva o motivo." "$(j .error.message)"
+req POST "$SZ/$NE/ignorar" "$ADM" '{"motivo":"outro","texto":"   "}'; check "ignorar 'outro' com espaços: 400" 400 "$CODE"
+check "nada gravado nas recusas" 0 "$(sql "select count(*) from notas_sefaz where ignorada_em is not null")"
+req POST "$SZ/$NE/ignorar" "$ADM" '{"motivo":"nao_e_compra"}'; check "ignorar (e): 200" 200 "$CODE"; check "(e) ignorada" ignorada "$(j .situacao)"
+check "(e) ignorada: quem" "Admin Demo" "$(j .ignorada.por_nome)"
+req GET "$SZ" "$ADM"; check "(e) sai de a conferir" 0 "$(echo "$BODY" | jq --arg c "$K120" '[.[] | select(.chave==$c)] | length')"
+req POST "$SZ/$NE/reabrir" "$ADM"; check "reabrir (e): 200" 200 "$CODE"; check "(e) volta a falta lançar" falta_lancar "$(j .situacao)"
+check "reabrir limpa as colunas" 0 "$(sql "select count(*) from notas_sefaz where ignorada_em is not null or ignorada_por is not null or ignorada_por_nome is not null or motivo_ignorar is not null or motivo_texto is not null")"
+req POST "$SZ/$ZERO/ignorar" "$ADM" '{"motivo":"nao_e_compra"}'; check "ignorar id inexistente: 404" 404 "$CODE"
+req POST "$SZ/nao-e-uuid/ignorar" "$ADM" '{"motivo":"nao_e_compra"}'; check "ignorar id malformado: 404" 404 "$CODE"
+req POST "$SZ/$ZERO/reabrir" "$ADM"; check "reabrir id inexistente: 404" 404 "$CODE"
+req POST "$SZ/nao-e-uuid/reabrir" "$ADM"; check "reabrir id malformado: 404" 404 "$CODE"
+
+# cancelada depois de lançada (b): Ignorar comum não esconde; "Ciente" (cancelamento_conferido) esconde
+req POST "$SZ/$NB/ignorar" "$ADM" '{"motivo":"nao_e_compra"}'; check "ignorar (b) comum: 200" 200 "$CODE"
+check "(b) segue cancelada depois de lançada" cancelada_depois_de_lancada "$(j .situacao)"
+req POST "$SZ/$NB/ignorar" "$ADM" '{"motivo":"cancelamento_conferido"}'; check "(b) Ciente: 200" 200 "$CODE"; check "(b) ignorada" ignorada "$(j .situacao)"
+req GET $SZ/situacao "$ADM"; check "faixa some depois do Ciente" 0 "$(j .contagem.cancelada_depois_de_lancada)"
+
+# o banco recusa o que a regra proíbe
+sql "insert into sefaz_documentos (ambiente, cnpj, nsu, schema, tipo, consulta_id) values ('producao','12345678000195',1,'x','outro','$CONS')" >/dev/null 2>&1; check "banco: NSU repetido" 1 "$?"
+sql "insert into notas_sefaz (ambiente, cnpj_destinatario, chave, emitente_cnpj, numero, serie, situacao_sefaz) values ('producao','12345678000195','ABC','11222333000181','1','1','autorizada')" >/dev/null 2>&1; check "banco: chave ABC" 1 "$?"
+sql "update notas_sefaz set ignorada_em = now() where id = '$NE'" >/dev/null 2>&1; check "banco: ignorada sem motivo" 1 "$?"
+sql "update notas_sefaz set ignorada_em = now(), motivo_ignorar = 'outro' where id = '$NE'" >/dev/null 2>&1; check "banco: 'outro' sem texto" 1 "$?"
+sql "insert into sefaz_distribuicao (ambiente, cnpj) values ('teste','12345678000195')" >/dev/null 2>&1; check "banco: ambiente 'teste'" 1 "$?"
+
+# último check: nenhuma consulta nova, a busca continuou desligada (nada saiu para a SEFAZ)
+check "SEFAZ: só a consulta semeada" 0 "$(sql "select count(*) from sefaz_consultas where id <> '$CONS'")"
+check "SEFAZ: nenhuma busca ligada" 0 "$(sql "select count(*) from sefaz_distribuicao where busca_ligada")"
 rm -f "$PDF" "$TXT" "$JPG" "$OUT"
 
 echo "smoke: $ok ok, $falhas falha(s)"

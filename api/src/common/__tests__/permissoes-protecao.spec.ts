@@ -17,6 +17,7 @@ import { InventariosController } from '../../modules/inventarios/inventarios.con
 import { IaChaveController } from '../../modules/leitura-pdf/ia/ia-chave.controller';
 import { LeituraPdfController } from '../../modules/leitura-pdf/leitura-pdf.controller';
 import { NotasController } from '../../modules/notas/notas.controller';
+import { NotasSefazController } from '../../modules/notas-sefaz/notas-sefaz.controller';
 import { UsuariosController } from '../../modules/usuarios/usuarios.controller';
 import { VendasController } from '../../modules/vendas/vendas.controller';
 
@@ -35,6 +36,7 @@ const CONTROLLERS = [
   IaChaveController,
   LeituraPdfController,
   NotasController,
+  NotasSefazController,
   UsuariosController,
   VendasController,
 ];
@@ -100,6 +102,18 @@ describe('proteção das rotas (substitui as políticas RLS do Supabase)', () =>
 
   it('a consulta de nota repetida é só do admin', () => {
     expect(todas.filter((r) => r.rota.includes('/notas/repetidas'))).toEqual([{ rota: 'GET /v1/notas/repetidas', marca: 'admin' }]);
+  });
+
+  it('as notas da SEFAZ são só do admin', () => {
+    expect(todas.filter((r) => r.rota.includes('/notas-sefaz'))).toEqual([
+      { rota: 'GET /v1/notas-sefaz/situacao', marca: 'admin' },
+      { rota: 'PUT /v1/notas-sefaz/configuracao', marca: 'admin' },
+      { rota: 'POST /v1/notas-sefaz/buscar', marca: 'admin' },
+      { rota: 'GET /v1/notas-sefaz', marca: 'admin' },
+      { rota: 'GET /v1/notas-sefaz/:id/xml', marca: 'admin' },
+      { rota: 'POST /v1/notas-sefaz/:id/ignorar', marca: 'admin' },
+      { rota: 'POST /v1/notas-sefaz/:id/reabrir', marca: 'admin' },
+    ]);
   });
 
   it('só estas rotas são públicas', () => {

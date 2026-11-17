@@ -18,6 +18,7 @@ DATABASE_URL="$URL" NODE_OPTIONS=--max-old-space-size=400 npx ts-node --transpil
 LOG=$(mktemp)
 DATABASE_URL="$URL" PORT=$PORTA NODE_OPTIONS=--max-old-space-size=600 ANTHROPIC_API_KEY= \
   CERTIFICADO_SECRET=smoke-certificado-segredo-de-teste-0123456789 \
+  SEFAZ_DFE_AMBIENTE=producao \
   setsid npx ts-node --transpile-only -r tsconfig-paths/register src/main.ts >"$LOG" 2>&1 &
 API_PID=$!
 trap 'kill -- -$API_PID 2>/dev/null || kill $API_PID 2>/dev/null || true' EXIT

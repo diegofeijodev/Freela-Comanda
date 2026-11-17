@@ -219,3 +219,73 @@ describe('NotasService.notasLancadas', () => {
     expect(chamadas.findMany).toHaveLength(0);
   });
 });
+
+describe('NotasService.lancar com origem sefaz (confere no servidor)', () => {
+  const EMPRESA = '12345678000195';
+  function montarSefaz(o: { ambiente?: string; nota?: Record<string, unknown> | null; cnpj?: string }) {
+    const consultas: any[] = [];
+    const nota =
+      o.nota === null
+        ? null
+        : {
+            ambiente: 'producao',
+            cnpj_destinatario: EMPRESA,
+            chave: VETOR,
+            situacao_sefaz: 'autorizada',
+            motivo_ignorar: null,
+            documento_completo_id: 'doc-1',
+            ...o.nota,
+          };
+    const criadas: any[] = [];
+    const tx = {
+      notas_entrada: { create: async (a: any) => (criadas.push(a), { id: 'n1' }) },
+      itens_estoque: { findMany: async () => [] },
+      subgrupos: { findMany: async () => [] },
+      notas_entrada_itens: { createMany: async () => undefined },
+      contas_pagar: { createMany: async () => undefined },
+      fornecedores: { findFirst: async () => null, createMany: async () => undefined },
+      $executeRaw: async () => undefined,
+    };
+    const prisma = {
+      notas_entrada: { findUnique: async () => null, findMany: async () => [] },
+      configuracoes: { findUnique: async () => ({ cnpj: o.cnpj ?? '12.345.678/0001-95' }) },
+      notas_sefaz: { findUnique: async (a: any) => (consultas.push(a), nota) },
+      $transaction: async (cb: any) => cb(tx),
+    } as unknown as PrismaService;
+    const config = { get: (k: string) => (k === 'SEFAZ_DFE_AMBIENTE' ? o.ambiente : undefined) } as any;
+    return { svc: new NotasService(prisma, config), consultas, criadas };
+  }
+  const sefaz = () => dto({ origem: 'sefaz' });
+  const recusada = { status: 409, response: { code: 'SEFAZ_NAO_CONFERIVEL' } };
+
+  it('produção + XML completo + autorizada: entra', async () => {
+    const { svc, consultas, criadas } = montarSefaz({ ambiente: 'producao' });
+    await expect(svc.lancar(sefaz(), 'u1')).resolves.toMatchObject({ id: 'n1' });
+    expect(consultas[0]).toEqual({ where: { ambiente_chave: { ambiente: 'producao', chave: VETOR } } });
+    expect(criadas[0].data.origem).toBe('sefaz');
+  });
+  it.each([
+    ['servidor em homologação', { ambiente: 'homologacao' }],
+    ['servidor desligado', { ambiente: undefined }],
+    ['nota não está na caixa', { ambiente: 'producao', nota: null }],
+    ['sem XML completo', { ambiente: 'producao', nota: { documento_completo_id: null } }],
+    ['cancelada', { ambiente: 'producao', nota: { situacao_sefaz: 'cancelada' } }],
+    ['denegada', { ambiente: 'producao', nota: { situacao_sefaz: 'denegada' } }],
+    ['ignorada', { ambiente: 'producao', nota: { motivo_ignorar: 'nao_e_compra' } }],
+    ['destinatário é outro CNPJ', { ambiente: 'producao', nota: { cnpj_destinatario: '99888777000100' } }],
+    ['empresa sem CNPJ', { ambiente: 'producao', cnpj: '' }],
+  ])('recusa com 409 SEFAZ_NAO_CONFERIVEL: %s', async (_nome, o) => {
+    const { svc, criadas } = montarSefaz(o as any);
+    await expect(svc.lancar(sefaz(), 'u1')).rejects.toMatchObject(recusada);
+    expect(criadas).toHaveLength(0);
+  });
+  it('sem chave: recusa', async () => {
+    const { svc } = montarSefaz({ ambiente: 'producao' });
+    await expect(svc.lancar({ ...sefaz(), chave: undefined }, 'u1')).rejects.toMatchObject(recusada);
+  });
+  it('origem xml não consulta a caixa', async () => {
+    const { svc, consultas } = montarSefaz({ ambiente: 'homologacao' });
+    await svc.lancar(dto({ origem: 'xml' }), 'u1');
+    expect(consultas).toHaveLength(0);
+  });
+});

@@ -57,7 +57,7 @@ export type FimCiclo = 'feito' | 'desligado' | 'nao_ligada' | 'sem_cnpj' | 'cert
 export type ResumoCiclo = { fim: FimCiclo; paginas: number };
 type Origem = 'agendada' | 'botao';
 
-const MSG = {
+export const MSG_CICLO = {
   desligada: 'A busca de notas na SEFAZ não está ativada neste servidor.',
   semCnpj: 'Preencha o CNPJ da empresa no quadro Empresa e toque em Salvar no alto da página.',
   buscaDesligada: 'A busca na SEFAZ está desligada. Ligue em Configurações → Notas da SEFAZ.',
@@ -76,7 +76,7 @@ const TX2 = { maxWait: 10_000, timeout: 30_000 };
 
 const tentarTrava = (tx: Prisma.TransactionClient) =>
   tx.$queryRaw<{ ok: boolean }[]>`SELECT pg_try_advisory_xact_lock(${CHAVE_TRAVA_SEFAZ}::bigint) AS ok`;
-const esperarTrava = (tx: Prisma.TransactionClient) => tx.$executeRaw`SELECT pg_advisory_xact_lock(${CHAVE_TRAVA_SEFAZ}::bigint)`;
+export const esperarTrava = (tx: Prisma.TransactionClient) => tx.$executeRaw`SELECT pg_advisory_xact_lock(${CHAVE_TRAVA_SEFAZ}::bigint)`;
 
 /** Classe e `code` do erro, nunca a mensagem (pode trazer texto de biblioteca, SQL ou dado). */
 export function descreverErro(e: unknown): string {
@@ -173,6 +173,26 @@ export class CicloSefazService {
     return { iniciada: true, ciclo };
   }
 
+  /**
+   * Conferências de Ligar, na ordem da `buscarAgora` (ambiente → CNPJ → certificado → raiz do CNPJ), sem olhar a agenda e sem rede.
+   * Recusa = HttpException com a frase fixa. Devolve o (ambiente, CNPJ) em que a busca vai ser ligada.
+   */
+  async conferirParaLigar(agora: Date): Promise<{ ambiente: AmbienteSefaz; cnpj: string }> {
+    const ambiente = this.ambiente();
+    if (ambiente === 'desligado') throw this.recusaHttp({ fim: 'desligado' });
+    const cnpj = await this.cnpjDaEmpresa();
+    if (!cnpj) throw this.recusaHttp({ fim: 'sem_cnpj' });
+    let cert: CertificadoEmUso;
+    try {
+      cert = await this.certificados.emUso(agora);
+    } catch (e) {
+      if (e instanceof CertificadoErro) throw this.recusaHttp({ fim: 'certificado', erro: e });
+      throw e;
+    }
+    if (normalizarCnpj(cert.cnpj).slice(0, 8) !== cnpj.slice(0, 8)) throw this.recusaHttp({ fim: 'certificado', erro: null });
+    return { ambiente, cnpj };
+  }
+
   /** Passos 1–4: ambiente, CNPJ, linha e agenda, e só então o certificado (sem rede). */
   private async preparar(agora: Date): Promise<Preparo | Recusa> {
     const ambiente = this.ambiente();
@@ -203,18 +223,18 @@ export class CicloSefazService {
   private recusaHttp(r: Recusa): HttpException {
     switch (r.fim) {
       case 'desligado':
-        return new ServiceUnavailableException({ code: 'SEFAZ_DESLIGADA', message: MSG.desligada });
+        return new ServiceUnavailableException({ code: 'SEFAZ_DESLIGADA', message: MSG_CICLO.desligada });
       case 'sem_cnpj':
-        return new UnprocessableEntityException({ code: 'SEFAZ_SEM_CNPJ', message: MSG.semCnpj });
+        return new UnprocessableEntityException({ code: 'SEFAZ_SEM_CNPJ', message: MSG_CICLO.semCnpj });
       case 'nao_ligada':
-        return new ConflictException({ code: 'SEFAZ_BUSCA_DESLIGADA', message: MSG.buscaDesligada });
+        return new ConflictException({ code: 'SEFAZ_BUSCA_DESLIGADA', message: MSG_CICLO.buscaDesligada });
       case 'ocupada':
-        return new ConflictException({ code: 'SEFAZ_OCUPADA', message: MSG.ocupada });
+        return new ConflictException({ code: 'SEFAZ_OCUPADA', message: MSG_CICLO.ocupada });
       case 'aguarde':
-        return new ConflictException({ code: 'SEFAZ_AGUARDE', message: MSG.aguarde(r.liberada ? horaSp(r.liberada) : '') });
+        return new ConflictException({ code: 'SEFAZ_AGUARDE', message: MSG_CICLO.aguarde(r.liberada ? horaSp(r.liberada) : '') });
       case 'certificado':
         if (r.erro) return new HttpException({ code: r.erro.code, message: r.erro.message }, r.erro.status);
-        return new UnprocessableEntityException({ code: 'SEFAZ_CERTIFICADO_OUTRA_EMPRESA', message: MSG.outraEmpresa });
+        return new UnprocessableEntityException({ code: 'SEFAZ_CERTIFICADO_OUTRA_EMPRESA', message: MSG_CICLO.outraEmpresa });
     }
   }
 

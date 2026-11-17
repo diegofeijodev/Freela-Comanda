@@ -107,6 +107,14 @@ describe('porta CERTIFICADO_DIGITAL (emUso)', () => {
       code: 'CERTIFICADO_VENCIDO',
       message: 'O certificado digital venceu em 31/12/2035. Envie o renovado em Configurações.',
     });
+    expect(e.validoAte).toBeInstanceOf(Date);
+    expect(e.validoAte!.getTime()).toBe((await svc.emUso(AGORA)).validoAte.getTime());
+  });
+
+  it('só o vencido leva validoAte', async () => {
+    const b = await cadastrado();
+    await b.svc.remover({ id: 'u', nome: 'Ana' }, AGORA);
+    expect((await erro(b.svc.emUso(AGORA))).validoAte).toBeUndefined();
   });
 
   it('empresa mudou para outra raiz de CNPJ: 422 CERTIFICADO_OUTRO_CNPJ', async () => {
