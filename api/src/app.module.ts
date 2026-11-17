@@ -19,6 +19,7 @@ import { InventariosModule } from './modules/inventarios/inventarios.module';
 import { LeituraPdfModule } from './modules/leitura-pdf/leitura-pdf.module';
 import { CertificadoDigitalModule } from './modules/certificado-digital/certificado-digital.module';
 import { NotasModule } from './modules/notas/notas.module';
+import { NotasSefazModule } from './modules/notas-sefaz/notas-sefaz.module';
 import { UsuariosModule } from './modules/usuarios/usuarios.module';
 import { VendasModule } from './modules/vendas/vendas.module';
 
@@ -39,6 +40,7 @@ import { VendasModule } from './modules/vendas/vendas.module';
     LeituraPdfModule,
     CertificadoDigitalModule,
     NotasModule,
+    NotasSefazModule,
     ContasModule,
     CaixaModule,
     ImportacoesModule,

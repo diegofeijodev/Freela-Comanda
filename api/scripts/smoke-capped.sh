@@ -12,6 +12,8 @@ docker exec "$PG" psql -U erpfreela -d erpfreela -qc "DROP DATABASE IF EXISTS $D
 docker exec "$PG" psql -U erpfreela -d erpfreela -qc "CREATE DATABASE $DB" >/dev/null
 DATABASE_URL="$URL" NODE_OPTIONS=--max-old-space-size=400 npx prisma migrate deploy >/dev/null
 DATABASE_URL="$URL" NODE_OPTIONS=--max-old-space-size=400 npx ts-node --transpile-only prisma/seed.ts
+# ciclo da busca na SEFAZ no Postgres de verdade, com porta e certificado falsos (sem rede); apaga o que criou
+DATABASE_URL="$URL" NODE_OPTIONS=--max-old-space-size=400 npx ts-node --transpile-only scripts/ciclo-sefaz-banco.ts
 
 LOG=$(mktemp)
 DATABASE_URL="$URL" PORT=$PORTA NODE_OPTIONS=--max-old-space-size=600 ANTHROPIC_API_KEY= \
