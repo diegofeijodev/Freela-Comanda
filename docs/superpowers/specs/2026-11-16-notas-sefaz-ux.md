@@ -184,6 +184,10 @@ Complementa a Etapa 2 do desenho (17/11). Na tela nunca aparecem "ciência", "ma
 | 280–286, 290–296, 213, 403 | vermelha | "A SEFAZ recusou o certificado digital (código N). Confira o certificado digital em Configurações e ligue as respostas de novo." |
 | 3 remessas sem resposta legível | vermelha | "As respostas pararam: a SEFAZ respondeu 3 vezes de um jeito que o sistema não entende. Fale com o suporte do Freela Comanda." |
 | Defeito nosso ou código desconhecido (lote) | vermelha | "As respostas pararam por um problema que o sistema não resolve sozinho (código N). Fale com o suporte do Freela Comanda e informe este código." |
+| Nenhuma resposta da vez pôde ser assinada por causa do certificado (a chave não é RSA, ou a assinatura falhou); nada saiu | vermelha | "As respostas pararam: não foi possível assinar as respostas com o certificado digital. Confira o certificado digital em Configurações e ligue as respostas de novo." |
+| Nenhuma resposta da vez pôde ser montada ou assinada por causa do próprio dado; nada saiu | vermelha | "As respostas pararam: não foi possível montar as respostas à SEFAZ. Fale com o suporte do Freela Comanda." |
+
+As duas últimas linhas (parada pela assinatura, decidida na Tarefa 6 da entrega 3) são do construtor: revisar com a UX.
 
 **Aba "Notas da SEFAZ":**
 - **Faixa do prazo** (âmbar, `role="status"`, acima das abas, abaixo da de cancelamento; só com `prazo_perto` > 0): uma nota: "A NF 4411 de ATACADÃO S.A. precisa de uma resposta à SEFAZ até 15/02/2027. Lance a nota, toque em Não reconheço ou escolha um motivo em Ignorar." Várias: "N notas precisam de uma resposta à SEFAZ. A primeira vence em 15/02/2027." [Ver] abre "A conferir" com foco na primeira.
@@ -203,7 +207,7 @@ Complementa a Etapa 2 do desenho (17/11). Na tela nunca aparecem "ciência", "ma
 | recusada (não é desta empresa, 575) | "A SEFAZ não aceitou a resposta: a nota não é para o CNPJ da empresa." |
 | recusada (chave inválida) | "A SEFAZ não aceitou a resposta: a chave de acesso não confere." |
 | recusada (outro código) | "A SEFAZ não aceitou a resposta (código N). Fale com o seu contador." |
-| falhou | "Não consegui enviar a resposta à SEFAZ depois de 3 tentativas." + **Tentar de novo** (outline, 44 px; sucesso: toast "Resposta de volta à fila.") |
+| falhou | "Não consegui enviar a resposta à SEFAZ depois de 3 tentativas." + **Tentar de novo** (outline, 44 px; sucesso: toast "Resposta de volta à fila."; com as respostas desligadas, "Resposta de volta à fila. Ela só sai quando as respostas forem ligadas.") |
 - **Botão "Não reconheço…"** (secundário, `Ban`) em "Falta lançar" e "Parece já lançada" quando `pode_responder`: abre o diálogo Ignorar com "Não reconheço esta nota" já marcado. Ordem no celular: primária, **Ignorar…**, **Não reconheço…**, **Copiar chave**.
 - **"É a mesma nota"** (1 toque) com as respostas ligadas e `pode_responder`: toast "Nota marcada como já lançada. A confirmação vai para a SEFAZ em alguns minutos." + **Desfazer** (8 s).
 - **Diálogo Ignorar com as respostas ligadas** (motivos na ordem: "Já lancei de outro jeito" · "Não é compra" · "Não reconheço esta nota" · "A compra não aconteceu (devolvi ou cancelei)" · "Outro motivo"; o 4º só com `pode_responder`). Linha sob cada motivo, quando marcado:

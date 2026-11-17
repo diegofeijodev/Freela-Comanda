@@ -571,7 +571,13 @@ volta à fila e gasta tentativa. Frases exatas na UX §8.
 - **SOAP 1.2 sem cabeçalho** [P: MOC 7.0 §4.2; NT 2016.002 §1.1–2.4]. O `soap12:Body` leva **direto** `<nfeDadosMsg
   xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4">` (sem o elemento da operação que a distribuição usa); action
   `http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4/nfeRecepcaoEvento`; resposta em `nfeResultMsg` [S: cópia pública do WSDL do SVRS,
-  `akretion/nfelib`, `nfe/wsdl/v4_0/recepcaoevento4.wsdl`, lida em 17/11; conferir no 1º teste]. O `chamarSoap12` da entrega 2 serve sem mudança.
+  `akretion/nfelib`, `nfe/wsdl/v4_0/recepcaoevento4.wsdl`, lida em 17/11; conferir no 1º teste]. O `chamarSoap12` da entrega 2 ganhou a opção
+  `envelope: 'sem_prefixo'`, usada só pelos eventos: `<Envelope xmlns="http://www.w3.org/2003/05/soap-envelope"><Body>`, sem nenhum prefixo em
+  escopo. Por quê: a C14N inclusiva leva ao elemento assinado os `xmlns:*` declarados nos ancestrais; com o envelope da distribuição
+  (`xmlns:soap12`, `xsi`, `xsd`), quem confere a assinatura no documento recebido calcularia outro digest. Provado no teste do corpo real
+  (`eventos.adapter.spec.ts`, os bytes que o transporte de verdade manda): com o envelope prefixado nenhuma das assinaturas confere; sem
+  prefixo, todas conferem no documento inteiro e em cada evento sozinho. Sem a opção, a distribuição manda os bytes de sempre. O 1º teste
+  real confere se o AN aceita esse envelope.
 - **Evento** (um documento por evento, depois juntados no lote): `<evento xmlns="http://www.portalfiscal.inf.br/nfe" versao="1.00"><infEvento
   Id="ID{tpEvento}{chave}01">` com, nesta ordem, `cOrgao` 91, `tpAmb` 1/2, `CNPJ` do destinatário, `chNFe`, `dhEvento`, `tpEvento`, `nSeqEvento` 1,
   `verEvento` 1.00 e `detEvento versao="1.00"` com `descEvento` e, só no 210240, `xJust`. `Signature` logo depois de `</infEvento>`, dentro de `evento`.
