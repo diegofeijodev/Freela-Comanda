@@ -418,7 +418,8 @@ const caixas = await Promise.all(['Substituir certificado', 'Remover'].map((n) =
 
   // 2) Estado simulado em memória. Registrado antes do reload que o usa.
   const cert = { ok: true, code: null, mensagem: null, avisos: [] };
-  // Sem SEFAZ_MANIFESTACAO: `disponivel = false` e o resto vazio (como a API manda).
+  // Sem SEFAZ_MANIFESTACAO: `disponivel = false` e o resto vazio (como a API manda sem nenhuma resposta gravada; com resposta gravada,
+  // `prazos_perto` vem do banco: fase "sem a variável, com prazo" abaixo).
   const RESP = { disponivel: false, ligadas: false, situacao: 'ok', mensagem: null, pausa_ate: null, ligadas_por_nome: null, ligadas_em: null, na_fila: 0, falharam: 0, prazos_perto: [] };
   const desligadaComCert = {
     ambiente: 'producao', cnpj: '12345678000199', busca_ligada: false, situacao: 'ok', mensagem: null, aviso: null, ultima_consulta: null,

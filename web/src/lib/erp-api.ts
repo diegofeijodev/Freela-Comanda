@@ -415,7 +415,10 @@ export type SituacaoBuscaSefaz =
       historico: { evento: 'ligada' | 'desligada' | 'parada_automatica'; feito_por_nome: string | null; feito_em: string; c_stat: number | null }[];
       respostas: RespostasSefaz;
     };
-/** Quadro "Respostas à SEFAZ" (entrega 3). Sem `SEFAZ_MANIFESTACAO=ligada` no servidor: `disponivel = false` e o resto vazio. */
+/**
+ * Quadro "Respostas à SEFAZ" (entrega 3). Sem `SEFAZ_MANIFESTACAO=ligada` no servidor: `disponivel = false` e o resto vazio, menos
+ * `prazos_perto` (lido do banco: o aviso dos 90 dias não depende da variável). Numa parada, `ligadas` continua true (só `situacao` muda).
+ */
 export type RespostasSefaz = {
   disponivel: boolean;
   ligadas: boolean;
