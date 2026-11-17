@@ -62,7 +62,8 @@ export interface DecisaoLote {
   /**
    * O código que parou as respostas, para o histórico: o `cStat` do lote ou do evento, ou o status HTTP (é o "(código N)" da frase). Com relógio e
    * outra parada no mesmo lote, o da parada que venceu. null sem parada, ou na parada que não tem código (3 remessas sem resposta por tempo, queda
-   * ou ilegível).
+   * ou ilegível). Exceção: o 3º 5xx seguido (sem Fault ou com `Receiver`) para com a frase sem código (`tresIlegiveis`), mas aqui leva o
+   * status (ex.: 500), que é o código que parou.
    */
   cStatParada: number | null;
 }

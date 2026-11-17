@@ -1,4 +1,4 @@
-import { createHash, generateKeyPairSync, verify, X509Certificate } from 'node:crypto';
+import { createHash, createPublicKey, generateKeyPairSync, verify, X509Certificate } from 'node:crypto';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 // Oráculo: xml-crypto 6.4.0 (devDependency exata), importado SÓ em arquivos de __tests__. Nenhum teste faz rede: a chave e o
@@ -135,6 +135,11 @@ describe('assinarXmlEnveloped', () => {
   it.each<[string, string, string?]>([
     ['Id ausente', EVENTO, 'ID210240OUTRO'],
     ['Id repetido', montar(`<infEvento Id="${ID}">${CAMPOS}</infEvento><outro Id="${ID}"></outro>`)],
+    // aspas valem em texto: o DOM tem um só `Id`, e só a busca no texto (2ª ocorrência) recusa
+    ['Id repetido só no texto (dentro do xJust)', comInf(`${CAMPOS}<xJust>Id="${ID}"</xJust>`)],
+    // aparecem iguais no texto e no DOM: só o `ID_SEGURO` recusa
+    ['Id com dois-pontos (fora do ID_SEGURO)', montar(`<infEvento Id="ID:1">${CAMPOS}</infEvento>`), 'ID:1'],
+    ['Id com espaço (fora do ID_SEGURO)', montar(`<infEvento Id="ID 1">${CAMPOS}</infEvento>`), 'ID 1'],
     ['elemento com prefixo', montar(`<n:infEvento xmlns:n="${NFE}" Id="${ID}">${CAMPOS}</n:infEvento>`)],
     ['descendente com prefixo', comInf(`<n:cOrgao xmlns:n="${NFE}">91</n:cOrgao>`)],
     ['atributo com prefixo', montar(`<infEvento xmlns:n="${NFE}" n:a="1" Id="${ID}">${CAMPOS}</infEvento>`)],
@@ -160,6 +165,7 @@ describe('assinarXmlEnveloped', () => {
     expect(erro.message).toBe(FRASE);
     expect(erro.message).not.toContain('infEvento');
     expect(erro.message).not.toContain('<');
+    expect(erro.motivo).toBe('xml'); // defeito do documento, não do certificado
   });
 
   it('C14N escrita à mão: o digest e a assinatura batem com o texto canônico montado sem o xmldom', () => {
@@ -179,9 +185,41 @@ describe('assinarXmlEnveloped', () => {
     expect(assinado).toContain('z&#x2028;w'); // o texto enviado não muda
   });
 
-  it('recusa chave que não é RSA (a assinatura declarada é rsa-sha1)', () => {
+  it('C14N escrita à mão: \\r\\n literal no texto vira \\n e tab/LF literais no atributo viram espaço (XML 1.0 §2.11 e §3.3.3)', () => {
+    const xml = '<evento xmlns="urn:teste" versao="1.00"><infEvento Id="ID1" a="x\ty\nz"><c>linha 1\r\nlinha 2</c></infEvento></evento>';
+    const c14n = '<infEvento xmlns="urn:teste" Id="ID1" a="x y z"><c>linha 1\nlinha 2</c></infEvento>';
+    const assinado = assinarXmlEnveloped(xml, 'ID1', CLIENTE);
+    const digest = createHash('sha1').update(c14n, 'utf8').digest('base64');
+    expect(valor(assinado, 'DigestValue')).toBe(digest);
+    const signedInfo =
+      `<SignedInfo xmlns="${XMLDSIG.ns}"><CanonicalizationMethod Algorithm="${XMLDSIG.c14n}"></CanonicalizationMethod>` +
+      `<SignatureMethod Algorithm="${XMLDSIG.rsaSha1}"></SignatureMethod><Reference URI="#ID1"><Transforms>` +
+      `<Transform Algorithm="${XMLDSIG.enveloped}"></Transform><Transform Algorithm="${XMLDSIG.c14n}"></Transform></Transforms>` +
+      `<DigestMethod Algorithm="${XMLDSIG.sha1}"></DigestMethod><DigestValue>${digest}</DigestValue></Reference></SignedInfo>`;
+    const sv = Buffer.from(valor(assinado, 'SignatureValue') ?? '', 'base64');
+    expect(verify('RSA-SHA1', Buffer.from(signedInfo, 'utf8'), CLIENTE.certificado.publicKey, sv)).toBe(true);
+    // o texto enviado não muda (a emenda não reserializa)
+    expect(
+      assinado.startsWith('<evento xmlns="urn:teste" versao="1.00"><infEvento Id="ID1" a="x\ty\nz"><c>linha 1\r\nlinha 2</c></infEvento>'),
+    ).toBe(true);
+  });
+
+  it('recusa chave que não é RSA (a assinatura declarada é rsa-sha1): motivo certificado, mesma frase', () => {
     const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' }); // fictícia, gerada aqui
-    expect(recusa(() => assinarXmlEnveloped(EVENTO, ID, { ...CLIENTE, chavePrivada: privateKey })).message).toBe(FRASE);
+    const erro = recusa(() => assinarXmlEnveloped(EVENTO, ID, { ...CLIENTE, chavePrivada: privateKey }));
+    expect(erro.message).toBe(FRASE);
+    expect(erro.motivo).toBe('certificado');
+  });
+
+  it('crypto.sign falha (chave RSA pública no lugar da privada): motivo certificado, mesma frase, sem detalhe', () => {
+    const publica = createPublicKey(CLIENTE.chavePrivada); // asymmetricKeyType 'rsa', mas o sign recusa chave pública
+    expect(publica.asymmetricKeyType).toBe('rsa');
+    const erro = recusa(() => assinarXmlEnveloped(EVENTO, ID, { ...CLIENTE, chavePrivada: publica }));
+    expect(erro.message).toBe(FRASE);
+    expect(erro.motivo).toBe('certificado');
+    // nada além do nome e do motivo: nem `cause`, nem trecho do XML ou da chave
+    expect(Object.keys(erro).sort()).toEqual(['motivo', 'name']);
+    expect(erro).not.toHaveProperty('cause');
   });
 });
 

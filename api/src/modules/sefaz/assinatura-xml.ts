@@ -14,8 +14,14 @@ export const XMLDSIG = {
   sha1: 'http://www.w3.org/2000/09/xmldsig#sha1',
 } as const;
 
+/**
+ * De onde veio a recusa, sem detalhe: `certificado` = a chave do certificado (não é RSA, ou o `crypto.sign` falhou); `xml` = o documento
+ * ou o `Id` (fora do subconjunto, `Id` ausente ou repetido, caractere recusado). A frase é a mesma nos dois.
+ */
+export type MotivoAssinatura = 'certificado' | 'xml';
+
 export class AssinaturaErro extends Error {
-  constructor() {
+  constructor(readonly motivo: MotivoAssinatura = 'xml') {
     super('O XML não pôde ser assinado.');
     this.name = 'AssinaturaErro';
   }
@@ -107,11 +113,13 @@ const comId = (raiz: ReturnType<typeof lerXml>, id: string): NoXml[] => elemento
 /**
  * Assina o elemento cujo `Id` é `idDoElemento` e devolve o XML com a `Signature` logo depois do `</nome>` que o fecha (Decisão 4),
  * sem reserializar o resto do texto. Recusa (AssinaturaErro): `Id` ausente ou repetido, elemento com descendente de mesmo nome,
- * fora do subconjunto da C14N, chave que não é RSA, U+0085/U+2028/U+2029 literais no texto.
+ * fora do subconjunto da C14N, chave que não é RSA, U+0085/U+2028/U+2029 literais no texto. O `motivo` separa a chave (`certificado`:
+ * não é RSA, ou o `crypto.sign` falhou) do resto (`xml`), sem mudar a frase.
  */
 export function assinarXmlEnveloped(xml: string, idDoElemento: string, cert: CertificadoEmUso): string {
   try {
-    if (!ID_SEGURO.test(idDoElemento) || cert.chavePrivada.asymmetricKeyType !== 'rsa') throw new AssinaturaErro();
+    if (!ID_SEGURO.test(idDoElemento)) throw new AssinaturaErro('xml');
+    if (cert.chavePrivada.asymmetricKeyType !== 'rsa') throw new AssinaturaErro('certificado');
     if (QUEBRA_XML_11.test(xml)) throw new AssinaturaErro(); // antes do lerXml, que os apagaria
 
     const alvos = comId(lerXml(xml), idDoElemento);
@@ -138,10 +146,17 @@ export function assinarXmlEnveloped(xml: string, idDoElemento: string, cert: Cer
       `<Transform Algorithm="${XMLDSIG.c14n}"></Transform></Transforms><DigestMethod Algorithm="${XMLDSIG.sha1}"></DigestMethod>` +
       `<DigestValue>${digest}</DigestValue></Reference>`;
     const signedInfo = `<SignedInfo xmlns="${XMLDSIG.ns}">${corpo}</SignedInfo>`;
-    const valor = sign('RSA-SHA1', Buffer.from(signedInfo, 'utf8'), cert.chavePrivada).toString('base64');
+    let valor: string;
+    let folha: string;
+    try {
+      valor = sign('RSA-SHA1', Buffer.from(signedInfo, 'utf8'), cert.chavePrivada).toString('base64');
+      folha = cert.certificado.raw.toString('base64');
+    } catch {
+      throw new AssinaturaErro('certificado'); // a chave ou o certificado, nunca o documento
+    }
     const assinatura =
       `<Signature xmlns="${XMLDSIG.ns}"><SignedInfo>${corpo}</SignedInfo><SignatureValue>${valor}</SignatureValue>` +
-      `<KeyInfo><X509Data><X509Certificate>${cert.certificado.raw.toString('base64')}</X509Certificate></X509Data></KeyInfo></Signature>`;
+      `<KeyInfo><X509Data><X509Certificate>${folha}</X509Certificate></X509Data></KeyInfo></Signature>`;
     const assinado = xml.slice(0, ponto) + assinatura + xml.slice(ponto);
 
     // a busca no texto tem de concordar com o documento (ex.: `</nome>` dentro de CDATA, `Id` em aspas simples)
@@ -157,7 +172,8 @@ export function assinarXmlEnveloped(xml: string, idDoElemento: string, cert: Cer
       throw new AssinaturaErro();
     }
     return assinado;
-  } catch {
-    throw new AssinaturaErro();
+  } catch (e) {
+    // só a classe atravessa: o motivo da recusa fica; qualquer outra falha conta como do documento
+    throw new AssinaturaErro(e instanceof AssinaturaErro ? e.motivo : 'xml');
   }
 }

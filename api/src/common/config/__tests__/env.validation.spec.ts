@@ -49,6 +49,20 @@ describe('validateEnv: SEFAZ_MANIFESTACAO', () => {
     );
   });
 
+  it.each([
+    ['vazio', ''],
+    ['desligado', 'desligado'],
+  ])('ligada com SEFAZ_DFE_AMBIENTE %s é recusada com a frase', (_caso, ambiente) => {
+    expect(() => validateEnv({ ...base, SEFAZ_DFE_AMBIENTE: ambiente, SEFAZ_MANIFESTACAO: 'ligada' })).toThrow(
+      'SEFAZ_MANIFESTACAO=ligada exige SEFAZ_DFE_AMBIENTE homologacao ou producao.',
+    );
+  });
+
+  it('ligada com producao passa', () => {
+    const env = validateEnv({ ...base, SEFAZ_DFE_AMBIENTE: 'producao', SEFAZ_MANIFESTACAO: 'ligada' });
+    expect([env.SEFAZ_DFE_AMBIENTE, env.SEFAZ_MANIFESTACAO]).toEqual(['producao', 'ligada']);
+  });
+
   it("'sim' é recusado", () => {
     expect(() => validateEnv({ ...base, SEFAZ_MANIFESTACAO: 'sim' })).toThrow(/Configuração de ambiente inválida/);
   });

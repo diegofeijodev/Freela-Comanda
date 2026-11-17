@@ -2,7 +2,7 @@
 // reabrir, "Tentar de novo") e a fila (`RespostasSefazService.processar()`) contra o Postgres do smoke, em `homologacao`, com a porta dos
 // eventos e o certificado FALSOS (o certificado fictício dos testes, `fixtures/tls`). Nenhuma rede: a porta é uma classe daqui que confere a
 // T1 no banco e devolve um retorno montado à mão. Confere a T1 (gravado `enviando` com o XML assinado antes de a porta responder) e a T2,
-// uma parada com o histórico `respostas_paradas`, os CHECKs, as FKs e os dois índices parciais (`sefaz_manifestacoes_evento_ativo` e
+// uma parada com o histórico `respostas_paradas`, os CHECKs, as FKs (e os índices delas) e os dois índices parciais (`sefaz_manifestacoes_evento_ativo` e
 // `sefaz_manifestacoes_uma_final`, inclusive a 2ª resposta final ativa recusada pelo banco, e a rota que esbarra no índice devolve 409),
 // e que o `reabrir` não cancela o que já saiu (nem depois de um "Tentar de novo"). Roda antes de a API do smoke subir e apaga tudo o que
 // criou. Uso (o smoke-capped.sh já chama):
@@ -386,6 +386,13 @@ async function main(): Promise<void> {
       'sefaz_distribuicao_historico_evento',
     );
     await bancoRecusa(db, `update notas_sefaz set motivo_ignorar = 'compra_feita' where id = '${b.id}'`, 'notas_sefaz_motivo');
+    // 9. os índices das duas chaves estrangeiras (migração 20261118120100_notas_sefaz_respostas_indices), aplicados pela sequência
+    const indices = await db.$queryRawUnsafe<{ indexname: string; indexdef: string }[]>(
+      `select indexname, indexdef from pg_indexes where schemaname = 'public' and tablename = 'sefaz_manifestacoes'`,
+    );
+    const def = (nome: string) => indices.find((i) => i.indexname === nome)?.indexdef ?? '';
+    conferir(/USING btree \(nota_sefaz_id\)$/.test(def('sefaz_manifestacoes_nota_sefaz_id_idx')), 'índice de nota_sefaz_id no banco');
+    conferir(/USING btree \(lote_id\)$/.test(def('sefaz_manifestacoes_lote_id_idx')), 'índice de lote_id no banco');
   } finally {
     await limpar(db);
     await db.$disconnect();

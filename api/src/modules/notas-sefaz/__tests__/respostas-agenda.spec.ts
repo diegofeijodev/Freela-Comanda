@@ -66,7 +66,12 @@ const estados = (d: DecisaoLote) => d.eventos.map((x) => [x.estado, x.gastou]);
 const k880Registrada = (d: DecisaoLote) =>
   expect(k880(d)).toEqual({ id: 'ev-k880', estado: 'registrada', gastou: true, cStat: 135, protocolo: PROT15, mensagem: null });
 /** Campos do lote num 128 sem relógio: respondida, sem pausa, falhas zeradas, sem a marca do relógio. */
-const lote128 = (d: DecisaoLote, situacao: DecisaoLote['situacao'] = 'ok', mensagem: string | null = null, cStatParada: number | null = null) =>
+const lote128 = (
+  d: DecisaoLote,
+  situacao: DecisaoLote['situacao'] = 'ok',
+  mensagem: string | null = null,
+  cStatParada: number | null = null,
+) =>
   expect(d).toMatchObject({ resultado: 'respondida', situacao, mensagem, pausaAte: null, falhasSeguidas: 0, relogio: false, cStatParada });
 
 // Frases literais da UX §8 ("Paradas e esperas" e a linha da resposta), com as horas dos vetores: +15 = 14h20, +60 = 15h05, +65 = 15h10.
@@ -247,7 +252,13 @@ describe('decidirLote: tabela "Lote" do desenho', () => {
       ['na_fila', false],
       ['na_fila', false],
     ]);
-    expect(d).toMatchObject({ resultado: 'respondida', situacao: 'parada_certificado', mensagem: F.certificado(403), pausaAte: null, falhasSeguidas: 0 });
+    expect(d).toMatchObject({
+      resultado: 'respondida',
+      situacao: 'parada_certificado',
+      mensagem: F.certificado(403),
+      pausaAte: null,
+      falhasSeguidas: 0,
+    });
   });
   it.each([214, 225, 252, 402, 404, 516, 517, 587, 588])('%i: defeito nosso; voltam sem gastar; param com o código', (c) => {
     const d = decidirLote(entrada(lote(c)));
@@ -284,7 +295,13 @@ describe('decidirLote: tabela "Lote" do desenho', () => {
       ['na_fila', false],
       ['na_fila', false],
     ]);
-    expect(d).toMatchObject({ resultado: 'respondida', situacao: 'parada_configuracao', mensagem: F.outroCodigo(n), pausaAte: null, falhasSeguidas: 0 });
+    expect(d).toMatchObject({
+      resultado: 'respondida',
+      situacao: 'parada_configuracao',
+      mensagem: F.outroCodigo(n),
+      pausaAte: null,
+      falhasSeguidas: 0,
+    });
   });
 });
 
@@ -663,7 +680,13 @@ describe('decidirLote: ajustes do controlador depois da revisão', () => {
     expect(vetor(d)).toEqual({ id: 'ev-vetor', estado: 'na_fila', gastou: false, cStat: 656, protocolo: null, mensagem: null });
     k880Registrada(d);
     expect(d).toMatchObject({
-      resultado: 'respondida', situacao: 'ok', mensagem: F.esperar15h10, pausaAte: min(65), falhasSeguidas: 0, relogio: false, cStatParada: null,
+      resultado: 'respondida',
+      situacao: 'ok',
+      mensagem: F.esperar15h10,
+      pausaAte: min(65),
+      falhasSeguidas: 0,
+      relogio: false,
+      cStatParada: null,
     });
   });
   it('evento 656 com vezes656Em24h = 1: parada_656, e a pausa de +65 continua', () => {
@@ -682,7 +705,13 @@ describe('decidirLote: ajustes do controlador depois da revisão', () => {
     expect(vetor(d)).toEqual({ id: 'ev-vetor', estado: 'na_fila', gastou: false, cStat: c, protocolo: null, mensagem: null });
     k880Registrada(d);
     expect(d).toMatchObject({
-      resultado: 'respondida', situacao: 'ok', mensagem: F.foraDoAr15h05, pausaAte: min(60), falhasSeguidas: 0, relogio: false, cStatParada: null,
+      resultado: 'respondida',
+      situacao: 'ok',
+      mensagem: F.foraDoAr15h05,
+      pausaAte: min(60),
+      falhasSeguidas: 0,
+      relogio: false,
+      cStatParada: null,
     });
   });
   it('evento 656 na 3ª tentativa não vira falhou (não gasta)', () => {
@@ -691,7 +720,10 @@ describe('decidirLote: ajustes do controlador depois da revisão', () => {
   });
   it('pausas juntas no mesmo 128: vale a mais longa, com a frase dela (656 +65 vence o relógio +60)', () => {
     const d = decidirLote(entrada(lote(128, [ret(VETOR, '210210', 577), ret(K880, '210200', 656)])));
-    expect(estados(d)).toEqual([['na_fila', false], ['na_fila', false]]);
+    expect(estados(d)).toEqual([
+      ['na_fila', false],
+      ['na_fila', false],
+    ]);
     expect(d).toMatchObject({ situacao: 'ok', mensagem: F.esperar15h10, pausaAte: min(65), relogio: true, cStatParada: null });
   });
   it('pausas iguais (+60): vale a do 1º evento da entrada', () => {
@@ -707,18 +739,33 @@ describe('decidirLote: ajustes do controlador depois da revisão', () => {
       { id: 'ev-k880', estado: 'na_fila', gastou: true, cStat: 999, protocolo: null, mensagem: null },
     ]);
     expect(d).toMatchObject({
-      resultado: 'respondida', situacao: 'ok', mensagem: F.foraDoAr14h20, pausaAte: min(15), falhasSeguidas: 0, relogio: false, cStatParada: null,
+      resultado: 'respondida',
+      situacao: 'ok',
+      mensagem: F.foraDoAr14h20,
+      pausaAte: min(15),
+      falhasSeguidas: 0,
+      relogio: false,
+      cStatParada: null,
     });
   });
   it('128 com todos 999 na 3ª tentativa: falham, e a pausa continua', () => {
-    const eventos = [{ ...EV_VETOR, tentativas: 3 }, { ...EV_K880, tentativas: 3 }];
+    const eventos = [
+      { ...EV_VETOR, tentativas: 3 },
+      { ...EV_K880, tentativas: 3 },
+    ];
     const d = decidirLote(entrada(lote(128, [ret(VETOR, '210210', 999), ret(K880, '210200', 999)]), { eventos }));
-    expect(estados(d)).toEqual([['falhou', true], ['falhou', true]]);
+    expect(estados(d)).toEqual([
+      ['falhou', true],
+      ['falhou', true],
+    ]);
     expect(d).toMatchObject({ mensagem: F.foraDoAr14h20, pausaAte: min(15) });
   });
   it('999 com outro evento sem retEvento não é "todos 999": sem pausa', () => {
     const d = decidirLote(entrada(lote(128, [ret(VETOR, '210210', 999)])));
-    expect(estados(d)).toEqual([['na_fila', true], ['na_fila', true]]);
+    expect(estados(d)).toEqual([
+      ['na_fila', true],
+      ['na_fila', true],
+    ]);
     expect(d).toMatchObject({ situacao: 'ok', mensagem: null, pausaAte: null });
   });
 
@@ -742,7 +789,8 @@ describe('decidirLote: ajustes do controlador depois da revisão', () => {
   });
   it('cStatParada: a 3ª remessa sem resposta por tempo para sem código (null)', () => {
     expect(decidirLote(entrada(erro('SEFAZ_TEMPO', true), { semRespostaSeguidas: 2 }))).toMatchObject({
-      situacao: 'parada_configuracao', cStatParada: null,
+      situacao: 'parada_configuracao',
+      cStatParada: null,
     });
   });
   it.each([
@@ -765,10 +813,14 @@ describe('decidirLote: ajustes do controlador depois da revisão', () => {
     expect(decidirLote(entrada(lote(128, rets)))).toMatchObject({ situacao: 'parada_configuracao', cStatParada: 250, relogio: true });
     // com ele, as duas param e vale a do 1º evento da entrada
     expect(decidirLote(entrada(lote(128, rets), { relogioNoLoteAnterior: true }))).toMatchObject({
-      situacao: 'parada_relogio', mensagem: F.relogioParou, cStatParada: 577,
+      situacao: 'parada_relogio',
+      mensagem: F.relogioParou,
+      cStatParada: 577,
     });
     expect(decidirLote(entrada(lote(128, rets), { relogioNoLoteAnterior: true, eventos: [EV_K880, EV_VETOR] }))).toMatchObject({
-      situacao: 'parada_configuracao', mensagem: F.outroCodigo(250), cStatParada: 250,
+      situacao: 'parada_configuracao',
+      mensagem: F.outroCodigo(250),
+      cStatParada: 250,
     });
   });
 });

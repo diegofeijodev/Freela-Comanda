@@ -51,7 +51,10 @@ export interface Prazo {
 
 export interface Plano {
   criar: { nota_sefaz_id: string; tp_evento: '210200' | '210210'; origem: 'dar_entrada' | 'ciencia_automatica' }[];
-  /** Ids das notas cujas ciências ainda `na_fila` o serviço cancela. */
+  /**
+   * Ids das notas cujas ciências ainda `na_fila` o serviço cancela: só as que nunca saíram para a SEFAZ (`ja_enviada` falso; no serviço,
+   * `jaEnviada`). A que já saiu fica na fila até o reenvio trazer a resposta.
+   */
   cancelarCiencias: string[];
 }
 

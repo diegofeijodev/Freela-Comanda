@@ -291,6 +291,8 @@ model sefaz_manifestacoes {
   lote sefaz_eventos_lotes? @relation(fields: [lote_id], references: [id], onDelete: Restrict)
 
   @@index([ambiente, cnpj, situacao, enviar_apos])
+  @@index([nota_sefaz_id])
+  @@index([lote_id])
 }
 
 model configuracoes {

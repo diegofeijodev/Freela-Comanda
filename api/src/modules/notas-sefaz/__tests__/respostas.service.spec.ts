@@ -1,4 +1,4 @@
-import { generateKeyPairSync, randomUUID } from 'node:crypto';
+import { createPublicKey, generateKeyPairSync, randomUUID } from 'node:crypto';
 import { Logger } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 import type { notas_sefaz, sefaz_manifestacao } from '@prisma/client';
@@ -479,7 +479,8 @@ describe('RespostasSefazService', () => {
         const depois = evDa(t, n, '210220');
         const loteNovo = t.sefaz_eventos_lotes.find((l) => l.id === depois.lote_id)!;
         expect(loteNovo.resultado).toBe('falha_antes_de_enviar'); // o lote das 999 foi trocado por um que não saiu
-        expect(depois).toMatchObject({ situacao: 'na_fila', tentativas: 0, c_stat: 999 }); // a última resposta da SEFAZ fica
+        // a última resposta da SEFAZ fica (a T1 só limpa a frase fixa da assinatura, não o x_motivo da SEFAZ)
+        expect(depois).toMatchObject({ situacao: 'na_fila', tentativas: 0, c_stat: 999, x_motivo: 'teste' });
 
         await caixa.reabrir(n.id, { id: randomUUID(), nome: 'Ana' }, min(46));
         expect(evDa(t, n, '210220').situacao).toBe('na_fila');
@@ -806,6 +807,45 @@ describe('RespostasSefazService', () => {
         expect(evDa(t, ruim, '210240')).toMatchObject({ situacao: 'na_fila', tentativas: 0, lote_id: null, x_motivo: null });
         expect(linhaDe(t)).toMatchObject({ situacao: 'parada_configuracao', mensagem: FRASE_RESPOSTA.assinaturaConfiguracao });
         expect(t.sefaz_distribuicao_historico).toEqual([expect.objectContaining({ situacao: 'parada_configuracao', c_stat: null })]);
+      });
+
+      it('a frase da assinatura não fica presa: não assinou → "Tentar de novo" → assina e sai 3 vezes sem resposta → falhou sem ela', async () => {
+        const { svc, t, porta, prisma, ciclo, notas, certificados } = montar();
+        const n = nota(VETOR, { ignorada_em: min(-60), ignorada_por_nome: 'Ana', motivo_ignorar: 'nao_reconheco' });
+        t.notas_sefaz.push(n);
+        // como o evento fica quando não assinou e outros do lote assinaram (frase fixa, sem +1, sem lote)
+        t.sefaz_manifestacoes.push(evento(n, { tp_evento: '210220', origem: 'admin', situacao: 'falhou', x_motivo: SEM_ASSINATURA }));
+        const caixa = new CaixaSefazService(prisma, ciclo, notas, certificados, svc);
+        await caixa.responderDeNovo(n.id, { id: randomUUID(), nome: 'Ana' }, AGORA);
+        for (const m of [0, 15, 30]) {
+          porta.proximas.push(sefazErro('SEFAZ_TEMPO', true)); // saiu e não voltou resposta: a T2 mantém o último x_motivo
+          expect(await svc.processar(em(min(m)))).toEqual({ fim: 'feito', enviados: 1 });
+        }
+        expect(evDa(t, n, '210220')).toMatchObject({ situacao: 'falhou', tentativas: 3, x_motivo: null });
+        const linha = (await caixa.listar('todas', 50, min(31))).find((l) => l.id === n.id)!;
+        expect(linha.resposta?.final).toMatchObject({ estado: 'falhou', mensagem: null }); // a tela mostra "depois de 3 tentativas"
+      });
+
+      it('nenhum assina porque a ASSINATURA recusa o documento (montagem passou): parada_configuracao, não parada_certificado', async () => {
+        const { svc, t, porta } = montar();
+        const ruim = nota(VETOR, { motivo_ignorar: 'outro', motivo_texto: 'teste', ignorada_em: min(-3) });
+        t.notas_sefaz.push(ruim);
+        // justificativa normalizada e válida para a montagem, mas com o `Id` do próprio evento no texto: a assinatura a recusa (motivo xml)
+        const xJust = `Id="ID210240${VETOR}01"`;
+        t.sefaz_manifestacoes.push({ ...naoAconteceu(ruim), x_just: xJust });
+        expect(await svc.processar(em(AGORA))).toEqual({ fim: 'parada', enviados: 0 });
+        expect(porta.chamadas).toHaveLength(0);
+        expect(evDa(t, ruim, '210240')).toMatchObject({ situacao: 'na_fila', tentativas: 0, lote_id: null, x_motivo: null });
+        expect(linhaDe(t)).toMatchObject({ situacao: 'parada_configuracao', mensagem: FRASE_RESPOSTA.assinaturaConfiguracao });
+        expect(t.sefaz_distribuicao_historico).toEqual([expect.objectContaining({ situacao: 'parada_configuracao', c_stat: null })]);
+      });
+
+      it('nenhum assina porque o crypto.sign recusa a chave (RSA pública no lugar da privada): parada_certificado', async () => {
+        const { svc, t, porta } = montar({ cert: { chavePrivada: createPublicKey(CERT.chavePrivada) } });
+        t.notas_sefaz.push(nota(VETOR));
+        expect(await svc.processar(em(AGORA))).toEqual({ fim: 'parada', enviados: 0 });
+        expect(porta.chamadas).toHaveLength(0);
+        expect(linhaDe(t)).toMatchObject({ situacao: 'parada_certificado', mensagem: FRASE_RESPOSTA.assinaturaCertificado });
       });
     });
 

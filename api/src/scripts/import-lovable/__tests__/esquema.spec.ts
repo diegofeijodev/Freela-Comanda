@@ -61,6 +61,10 @@ describe('respostas à SEFAZ (migração notas_sefaz_respostas)', () => {
     const m = readFileSync(join(MIGR, '20261118120000_notas_sefaz_respostas', 'migration.sql'), 'utf8');
     expect(m).not.toMatch(/SERIAL|IDENTITY|nextval|CREATE SEQUENCE/i);
   });
+  it('as duas chaves estrangeiras de sefaz_manifestacoes têm índice (nota_sefaz_id e lote_id)', () => {
+    expect(sql).toContain('CREATE INDEX "sefaz_manifestacoes_nota_sefaz_id_idx" ON "sefaz_manifestacoes"("nota_sefaz_id");');
+    expect(sql).toContain('CREATE INDEX "sefaz_manifestacoes_lote_id_idx" ON "sefaz_manifestacoes"("lote_id");');
+  });
 });
 
 describe('conferirEsquemaNosso × COLUNAS_SO_NOSSAS', () => {

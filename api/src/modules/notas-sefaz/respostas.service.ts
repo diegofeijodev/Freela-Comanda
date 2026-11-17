@@ -307,8 +307,8 @@ export class RespostasSefazService {
           );
           assinados.push({ id: e.id, chave: e.chave, tpEvento: e.tp_evento, tentativas: e.tentativas + 1, xml });
         } catch (erro) {
-          // `AssinaturaErro` depois de a montagem passar = a assinatura com o certificado; outro erro = o dado do próprio evento
-          if (erro instanceof AssinaturaErro) certificadoRecusou = true;
+          // Só a recusa da chave (`motivo` certificado) é do certificado; a do documento e a da montagem são do dado do próprio evento
+          if (erro instanceof AssinaturaErro && erro.motivo === 'certificado') certificadoRecusou = true;
           recusados.push(e.id);
         }
       }
@@ -344,6 +344,9 @@ export class RespostasSefazService {
       const lote = await tx.sefaz_eventos_lotes.create({
         data: { ...onde, id_lote: idLote, iniciado_em: agora, eventos: assinados.length },
       });
+      // Assinou agora: a frase fixa de uma tentativa anterior que não assinou sai (senão sobrevive a "Tentar de novo" + lotes sem
+      // resposta, que mantêm o último `x_motivo`). O `x_motivo` vindo da SEFAZ fica.
+      const semAssinaturaAntes = new Set(escolhidos.filter((e) => e.x_motivo === MOTIVO_SEM_ASSINATURA).map((e) => e.id));
       for (const e of assinados) {
         await tx.sefaz_manifestacoes.update({
           where: { id: e.id },
@@ -354,6 +357,7 @@ export class RespostasSefazService {
             impressao_digital: p.cert.impressaoDigital,
             tentativas: e.tentativas,
             lote_id: lote.id,
+            ...(semAssinaturaAntes.has(e.id) ? { x_motivo: null } : {}),
             atualizada_em: agora,
           },
         });
