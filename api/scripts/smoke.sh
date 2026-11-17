@@ -424,6 +424,18 @@ req GET /v1/configuracoes "$LOJA"; check "loja lê config sem certificado" 0 "$(
 # sefaz_consultas só tem a linha semeada (a consulta é gravada ANTES de qualquer pergunta sair).
 SZ=/v1/notas-sefaz
 ZERO=00000000-0000-4000-8000-000000000000
+# Trava de segurança: se o certificado ainda existir ou houver busca ligada, o smoke PARA aqui (exit 1), antes de qualquer
+# passo que possa ligar a busca ou iniciar uma consulta. (O smoke não usa `set -e`: sem isto, um check falho seguiria adiante.)
+trava_sefaz() { # trava_sefaz MOMENTO
+  local certs ligadas
+  certs=$(sql "select count(*) from certificado_digital") || certs=erro
+  ligadas=$(sql "select count(*) from sefaz_distribuicao where busca_ligada") || ligadas=erro
+  if [ "$certs" != 0 ] || [ "$ligadas" != 0 ]; then
+    echo "TRAVA DO SMOKE ($1): certificado_digital=$certs, buscas ligadas=$ligadas. Nada deve existir aqui; smoke interrompido antes de tocar na SEFAZ."
+    exit 1
+  fi
+}
+trava_sefaz "antes do bloco da SEFAZ"
 for r in "GET $SZ/situacao" "GET $SZ" "GET $SZ/$ZERO/xml" "POST $SZ/buscar" "POST $SZ/$ZERO/reabrir"; do
   req "${r%% *}" "${r#* }" "$LOJA"; check "loja barrada em $r" 403 "$CODE"
 done
@@ -436,10 +448,13 @@ check "situação: ambiente" producao "$(j .ambiente)"; check "situação: busca
 check "situação: sem certificado" CERTIFICADO_NAO_CADASTRADO "$(j .certificado.code)"
 check "situação: frase sem certificado" "Envie o certificado digital da empresa no quadro acima para ligar a busca." "$(j .certificado.mensagem)"
 req PUT $SZ/configuracao "$ADM" '{"busca_ligada":true}'; check "ligar sem certificado: 503" 503 "$CODE"
+[ "$CODE" == 503 ] || { echo "TRAVA DO SMOKE: ligar sem certificado não deu 503 (veio $CODE); smoke interrompido antes do POST buscar."; exit 1; }
+trava_sefaz "depois do PUT de ligar"
 check "ligar sem certificado: code" CERTIFICADO_NAO_CADASTRADO "$(j .error.code)"
 check "ligar sem certificado: nada ligado" 0 "$(sql "select count(*) from sefaz_distribuicao where busca_ligada")"
 check "ligar sem certificado: nada gravado" 0 "$(sql "select count(*) from sefaz_distribuicao")"
 req PUT $SZ/configuracao "$ADM" '{"busca_ligada":"sim"}'; check "ligar com valor que não é booleano: 400" 400 "$CODE"
+trava_sefaz "antes do POST buscar"
 req POST $SZ/buscar "$ADM"; check "buscar com a busca desligada: 409" 409 "$CODE"
 check "buscar com a busca desligada: code" SEFAZ_BUSCA_DESLIGADA "$(j .error.code)"
 check "buscar com a busca desligada: frase" "A busca na SEFAZ está desligada. Ligue em Configurações → Notas da SEFAZ." "$(j .error.message)"
