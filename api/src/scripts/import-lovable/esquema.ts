@@ -259,6 +259,9 @@ export const TABELAS_SO_NOSSAS = ['users', '_prisma_migrations', 'ia_chave', 'ce
   'sefaz_lacunas',
   'sefaz_documentos',
   'notas_sefaz',
+  'sefaz_manifestacao',
+  'sefaz_eventos_lotes',
+  'sefaz_manifestacoes',
 ] as const;
 
 /** Colunas nossas em tabela do Lovable: ficam nulas na carga (que só insere `colunas`) e o importador as desconta ao conferir o banco. */

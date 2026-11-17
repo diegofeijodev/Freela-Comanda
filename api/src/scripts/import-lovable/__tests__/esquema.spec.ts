@@ -28,7 +28,7 @@ describe('esquema.ts × migrações', () => {
   it('ordem de carga respeita toda chave estrangeira (mãe antes da filha)', () => {
     const ordem = TABELAS.map((t) => t.nome);
     const fks = [...sql.matchAll(/ALTER TABLE "([a-z_]+)" ADD CONSTRAINT "[a-z_]+" FOREIGN KEY \("[a-z_]+"\) REFERENCES "([a-z_]+)"/g)];
-    expect(fks).toHaveLength(23);
+    expect(fks).toHaveLength(25);
     for (const [, filha, mae] of fks) {
       if (filha === mae) continue; // auto-referência (notas_entrada.repetida_de): sem ordem a respeitar
       if ((TABELAS_SO_NOSSAS as readonly string[]).includes(filha!)) continue; // tabela só nossa (SEFAZ): a carga não toca
@@ -50,6 +50,16 @@ describe('esquema.ts × migrações', () => {
     const achadas = [...sql.matchAll(/ALTER TABLE "([a-z_]+)" ADD COLUMN "([a-z_0-9]+)"/g)].filter((m) => lovable.has(m[1]!));
     expect(achadas.length).toBeGreaterThan(0);
     for (const [, t, c] of achadas) expect([t, COLUNAS_SO_NOSSAS[t!]?.includes(c!)]).toEqual([t, true]);
+  });
+});
+
+describe('respostas à SEFAZ (migração notas_sefaz_respostas)', () => {
+  it('as 3 tabelas novas estão em TABELAS_SO_NOSSAS', () => {
+    for (const t of ['sefaz_manifestacao', 'sefaz_eventos_lotes', 'sefaz_manifestacoes']) expect(TABELAS_SO_NOSSAS).toContain(t);
+  });
+  it('a migração não usa sequence/identity', () => {
+    const m = readFileSync(join(MIGR, '20261118120000_notas_sefaz_respostas', 'migration.sql'), 'utf8');
+    expect(m).not.toMatch(/SERIAL|IDENTITY|nextval|CREATE SEQUENCE/i);
   });
 });
 

@@ -32,3 +32,24 @@ describe('validateEnv: SEFAZ_DFE_AMBIENTE', () => {
     expect(() => validateEnv({ ...base, SEFAZ_DFE_AMBIENTE: 'prod' })).toThrow(/Configuração de ambiente inválida/);
   });
 });
+
+describe('validateEnv: SEFAZ_MANIFESTACAO', () => {
+  it('ausente ou vazia = desligada', () => {
+    expect(validateEnv({ ...base }).SEFAZ_MANIFESTACAO).toBe('desligada');
+    expect(validateEnv({ ...base, SEFAZ_MANIFESTACAO: '' }).SEFAZ_MANIFESTACAO).toBe('desligada');
+  });
+
+  it('ligada com homologacao passa', () => {
+    expect(validateEnv({ ...base, SEFAZ_DFE_AMBIENTE: 'homologacao', SEFAZ_MANIFESTACAO: 'ligada' }).SEFAZ_MANIFESTACAO).toBe('ligada');
+  });
+
+  it('ligada sem SEFAZ_DFE_AMBIENTE é recusada com a frase', () => {
+    expect(() => validateEnv({ ...base, SEFAZ_MANIFESTACAO: 'ligada' })).toThrow(
+      'SEFAZ_MANIFESTACAO=ligada exige SEFAZ_DFE_AMBIENTE homologacao ou producao.',
+    );
+  });
+
+  it("'sim' é recusado", () => {
+    expect(() => validateEnv({ ...base, SEFAZ_MANIFESTACAO: 'sim' })).toThrow(/Configuração de ambiente inválida/);
+  });
+});

@@ -213,10 +213,84 @@ model notas_sefaz {
 
   resumo             sefaz_documentos? @relation("nota_sefaz_resumo", fields: [resumo_id], references: [id], onDelete: Restrict)
   documento_completo sefaz_documentos? @relation("nota_sefaz_completo", fields: [documento_completo_id], references: [id], onDelete: Restrict)
+  manifestacoes      sefaz_manifestacoes[]
 
   @@unique([ambiente, chave])
   @@index([ambiente, emitida_em(sort: Desc)])
   @@index([emitente_cnpj, numero])
+}
+
+/// Respostas à SEFAZ: uma linha por (ambiente, CNPJ) com a chave "Ligar as respostas", a situação e a pausa. Nasce desligada. Só nossa.
+model sefaz_manifestacao {
+  ambiente          String
+  cnpj              String    @db.Char(14)
+  ligada            Boolean   @default(false)
+  situacao          String    @default("ok")
+  mensagem          String?
+  pausa_ate         DateTime? @db.Timestamptz(6)
+  falhas_seguidas   Int       @default(0)
+  ligada_em         DateTime? @db.Timestamptz(6)
+  alterada_por      String?   @db.Uuid
+  alterada_por_nome String?
+  alterada_em       DateTime? @db.Timestamptz(6)
+  criada_em         DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@id([ambiente, cnpj])
+}
+
+/// Diário dos lotes de evento enviados à SEFAZ (aberto antes de enviar, fechado na própria linha). Fora de `sefaz_consultas` de propósito.
+model sefaz_eventos_lotes {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ambiente     String
+  cnpj         String    @db.Char(14)
+  id_lote      BigInt
+  iniciado_em  DateTime  @db.Timestamptz(6)
+  terminado_em DateTime? @db.Timestamptz(6)
+  resultado    String?
+  c_stat       Int?
+  x_motivo     String?
+  eventos      Int?
+  erro_code    String?
+
+  manifestacoes sefaz_manifestacoes[]
+
+  @@index([ambiente, cnpj, iniciado_em(sort: Desc)])
+}
+
+/// Um evento de resposta por linha (a situação muda, o resto não). Os índices únicos parciais (`evento_ativo`, `uma_final`) só existem no SQL.
+/// `xml_evento` traz o certificado público da folha: nunca em log nem em resposta da API.
+model sefaz_manifestacoes {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  nota_sefaz_id     String    @db.Uuid
+  ambiente          String
+  cnpj              String    @db.Char(14)
+  chave             String    @db.VarChar(44)
+  tp_evento         String
+  n_seq             Int       @default(1) @db.SmallInt
+  x_just            String?
+  origem            String
+  pedida_por        String?   @db.Uuid
+  pedida_por_nome   String?
+  pedida_em         DateTime  @default(now()) @db.Timestamptz(6)
+  enviar_apos       DateTime  @db.Timestamptz(6)
+  situacao          String    @default("na_fila")
+  tentativas        Int       @default(0) @db.SmallInt
+  lote_id           String?   @db.Uuid
+  dh_evento         String?
+  c_stat            Int?
+  x_motivo          String?
+  n_prot            String?
+  dh_reg_evento     String?
+  xml_evento        String?
+  xml_retorno       String?
+  impressao_digital String?   @db.Char(64)
+  criada_em         DateTime  @default(now()) @db.Timestamptz(6)
+  atualizada_em     DateTime  @default(now()) @db.Timestamptz(6)
+
+  nota notas_sefaz          @relation(fields: [nota_sefaz_id], references: [id], onDelete: Restrict)
+  lote sefaz_eventos_lotes? @relation(fields: [lote_id], references: [id], onDelete: Restrict)
+
+  @@index([ambiente, cnpj, situacao, enviar_apos])
 }
 
 model configuracoes {
