@@ -4,6 +4,7 @@ import {
   acoesDaNota, contagemAba, precisaConfirmarTroca, emissaoSp, estadoBuscar, linhasHistoricoSefaz, faixaCancelamento, horaSp, linhaEspera, linhaProxima, linhaUltimaBusca, quando, resumoPainel, tagDaNota, TEXTO_MOTIVO,
   semToqueDuplo, toastBuscaFeita, toastBuscaLigada, TEXTO_ACAO,
   aberturaBusca, avisoDoMotivo, faixaPrazo, linhaPrazo, linhaResposta, normalizarJustificativa, resumoRespostas, textoPorQue, toastRespostasLigadas,
+  papelDaCaixaRespostas, toastTentarDeNovo,
 } from "../notas-sefaz";
 
 const AGORA = new Date("2026-11-17T17:05:00Z"); // 14h05 em Brasília
@@ -367,6 +368,11 @@ describe("resumoRespostas", () => {
   it("toast de ligar", () => {
     expect(toastRespostasLigadas()).toBe("Respostas ligadas. As primeiras saem em até 5 minutos.");
   });
+  it("caixa: paradas (vermelha) e esperas (âmbar) em alerta, como a UX §8; a neutra (sem certificado) em status", () => {
+    expect(papelDaCaixaRespostas("bad")).toBe("alert");
+    expect(papelDaCaixaRespostas("warn")).toBe("alert");
+    expect(papelDaCaixaRespostas("neutro")).toBe("status");
+  });
 });
 
 describe("linhaPrazo", () => {
@@ -524,6 +530,10 @@ describe("textos que dependem de as respostas estarem ligadas", () => {
       "O sistema já avisou a SEFAZ que a nota chegou. A nota completa costuma aparecer aqui algumas horas depois (a SEFAZ não fixa o prazo). " +
       "Se tiver pressa, lance pelo XML, pelo PDF ou pela foto.",
     );
+  });
+  it("toast do Tentar de novo: com as respostas desligadas, diz que a resposta só sai quando forem ligadas", () => {
+    expect(toastTentarDeNovo(true)).toBe("Resposta de volta à fila.");
+    expect(toastTentarDeNovo(false)).toBe("Resposta de volta à fila. Ela só sai quando as respostas forem ligadas.");
   });
   it("aberturaBusca", () => {
     const comeco = "Traz para a Entrada de Notas as notas emitidas para a sua empresa, para você ver o que falta lançar e saber se um fornecedor cancelou uma nota. ";

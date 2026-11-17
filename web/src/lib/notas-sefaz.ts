@@ -366,6 +366,16 @@ export function resumoRespostas(s: SituacaoSefazLigada, agora: Date): ResumoResp
 
 export const toastRespostasLigadas = (): string => "Respostas ligadas. As primeiras saem em até 5 minutos.";
 
+/**
+ * Papel da caixa do quadro: paradas (vermelha) e esperas (âmbar) em `alert`, como a UX §8; a neutra (sem certificado) em `status`.
+ * O texto vem do servidor e só muda quando a situação muda: atualizar a tela com o mesmo texto não anuncia de novo.
+ */
+export const papelDaCaixaRespostas = (tom: NonNullable<ResumoRespostas["caixa"]>["tom"]): "alert" | "status" => (tom === "neutro" ? "status" : "alert");
+
+/** Toast do "Tentar de novo" (UX §8): com as respostas desligadas, a resposta só volta à fila; diz que sai quando forem ligadas. */
+export const toastTentarDeNovo = (respostasLigadas: boolean): string =>
+  respostasLigadas ? "Resposta de volta à fila." : "Resposta de volta à fila. Ela só sai quando as respostas forem ligadas.";
+
 /** Dias de calendário (Brasília) de `de` até `ate`; negativo = já passou. */
 function diasAte(ate: Date, de: Date): number {
   const [a, b] = [diaSp(ate), diaSp(de)].map((d) => Date.UTC(+d.slice(0, 4), +d.slice(5, 7) - 1, +d.slice(8, 10)));

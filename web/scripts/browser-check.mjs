@@ -541,7 +541,7 @@ const caixas = await Promise.all(['Substituir certificado', 'Remover'].map((n) =
   est = { ...desligadaComCert, respostas: { ...RESP_ON, ligadas: true, ligadas_por_nome: 'Diego', ligadas_em: new Date().toISOString(), pausa_ate: pausa, mensagem: fraseEspera } };
   await page.reload({ waitUntil: 'networkidle', timeout: 180_000 });
   check('sefaz respostas: tag "Esperando a SEFAZ"', await simQ(quadro.getByText('Esperando a SEFAZ', { exact: true })));
-  check('sefaz respostas: espera em caixa de status com a frase', (await quadro.locator('[role="status"]').getByText(fraseEspera, { exact: true }).count()) === 1);
+  check('sefaz respostas: espera em caixa de alerta com a frase (UX §8)', (await quadro.locator('[role="alert"]').getByText(fraseEspera, { exact: true }).count()) === 1);
   // Paradas: caixa vermelha (alerta) e "Ligar as respostas de novo".
   const fraseParada = 'A SEFAZ bloqueou as respostas duas vezes em 24 horas. Por segurança, elas foram desligadas. Fale com o suporte do Freela Comanda antes de ligar de novo.';
   est = { ...desligadaComCert, respostas: { ...RESP_ON, situacao: 'parada_656', mensagem: fraseParada } };

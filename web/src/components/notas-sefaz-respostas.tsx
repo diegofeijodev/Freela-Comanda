@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { errMsg } from "@/lib/db";
 import { SITUACAO_SEFAZ_KEY } from "@/hooks/use-notas-sefaz";
-import { ABERTURA_RESPOSTAS, FRASE_RESPOSTAS_INDISPONIVEIS, resumoRespostas, semToqueDuplo, toastRespostasLigadas } from "@/lib/notas-sefaz";
+import { ABERTURA_RESPOSTAS, FRASE_RESPOSTAS_INDISPONIVEIS, papelDaCaixaRespostas, resumoRespostas, semToqueDuplo, toastRespostasLigadas } from "@/lib/notas-sefaz";
 
 const CAIXA: Record<"neutro" | "warn" | "bad", string> = {
   neutro: "border-border bg-muted/40",
@@ -110,7 +110,7 @@ export function NotasSefazRespostas({ data }: { data: SituacaoBuscaSefaz }) {
       )}
 
       {resumo.caixa && (
-        <div role={resumo.caixa.tom === "bad" ? "alert" : "status"} className={`flex min-w-0 items-start gap-2 rounded-lg border p-3 text-sm ${CAIXA[resumo.caixa.tom]}`}>
+        <div role={papelDaCaixaRespostas(resumo.caixa.tom)} className={`flex min-w-0 items-start gap-2 rounded-lg border p-3 text-sm ${CAIXA[resumo.caixa.tom]}`}>
           <CircleAlert className={`mt-0.5 h-4 w-4 shrink-0 ${ICONE[resumo.caixa.tom]}`} aria-hidden />
           <div className="min-w-0 space-y-2">
             <p className="break-words">{resumo.caixa.texto}</p>

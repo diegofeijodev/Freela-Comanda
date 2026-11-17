@@ -14,7 +14,7 @@ import { brl } from '@/lib/format';
 import { formatarCnpj } from '@/lib/certificado';
 import {
   acoesDaNota, emissaoSp, estadoBuscar, linhaEspera, linhaPrazo, linhaProxima, linhaResposta, linhaUltimaBusca, tagDaNota, TEXTO_ACAO,
-  textoPorQue, toastBuscaFeita, type AcaoNota, type TagNota,
+  textoPorQue, toastBuscaFeita, toastTentarDeNovo, type AcaoNota, type TagNota,
 } from '@/lib/notas-sefaz';
 import { SITUACAO_SEFAZ_KEY } from '@/hooks/use-notas-sefaz';
 import { Tag } from '@/components/ui-kit';
@@ -264,7 +264,7 @@ export function NotasSefazAba({ situacao, focarId, onConferir, onLancarPorArquiv
   }
 
   const tentarDeNovo = (n: NotaSefaz) =>
-    void executar(n, async () => { await responderDeNovoSefaz(n.id); await recarregar(); toast.success('Resposta de volta à fila.'); });
+    void executar(n, async () => { await responderDeNovoSefaz(n.id); await recarregar(); toast.success(toastTentarDeNovo(respostasLigadas)); });
 
   function abrirPorQue() {
     setPorQueAberto(true);
