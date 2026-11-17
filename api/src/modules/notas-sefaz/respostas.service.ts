@@ -23,21 +23,23 @@ import {
 import { NotasService } from '../notas/notas.service';
 import type { AmbienteSefaz } from '../sefaz/distribuicao.port';
 import { SEFAZ_EVENTOS, type RespostaLoteEventos, type RetornoEvento, type SefazEventosPort, type TipoEvento } from '../sefaz/eventos.port';
+import { AssinaturaErro } from '../sefaz/assinatura-xml';
 import { dhSefaz, eventoAssinado } from '../sefaz/eventos-xml';
 import { SefazErro, type CodigoFault, type PassoLeitura } from '../sefaz/sefaz-erro';
 import { EM_ANDAMENTO_MAX_MS } from './agenda';
 import { CicloSefazService, descreverErro, motivoDoErro } from './ciclo.service';
 import type { SituacaoSefaz } from './classificacao';
+import { FRASE_RESPOSTA } from './frases';
 import {
   decidirLote,
   derivaRelogio,
   DERIVA_MAX_MS,
   LOTE_MAX,
-  TENTATIVAS_MAX,
   type ChamadaLote,
   type DecisaoLote,
   type EntradaLote,
   type EstadoEvento,
+  type SituacaoRespostas,
 } from './respostas-agenda';
 import { ordemDeEnvio, planejar, PRAZO_FINAL_DIAS, type EventoExistente, type NotaParaPlano, type OrigemEvento } from './respostas-plano';
 import { lancamentosDaNota, situacaoDaNota, type MotivoIgnorar } from './situacao-nota';
@@ -56,10 +58,16 @@ export type ResumoRespostas = { fim: FimRespostas; enviados: number };
 export const ERRO_RELOGIO = 'RELOGIO';
 /** `erro_code` do lote que não saiu por erro que não é `SefazErro` (ex.: a montagem do corpo recusou o lote): falha ANTES de enviar. */
 export const ERRO_LOCAL = 'ERRO_LOCAL';
+/** `x_motivo` (frase fixa, nunca o detalhe) do evento que não pôde ser montado ou assinado: ele vira `falhou` e não sai. */
+export const MOTIVO_SEM_ASSINATURA = 'O XML não pôde ser assinado.';
 
 const DIA_MS = 24 * 60 * 60_000;
 /** Lotes em que o pedido pode ter chegado à SEFAZ (`falha_antes_de_enviar` nunca saiu). */
 const LOTE_SAIU: ReadonlySet<string> = new Set(['respondida', 'sem_resposta', 'interrompida']);
+/** Lotes que contam na sequência "sem resposta útil" (o 3º seguido para): a queda (`interrompida`) conta como o tempo esgotado. */
+const SEM_RESPOSTA: ReadonlySet<string> = new Set(['sem_resposta', 'interrompida']);
+/** O lote interrompido é decidido como "enviado sem resposta útil" (desenho: "queda" → gasta, +15, conta na sequência). */
+const QUEDA: ChamadaLote = { tipo: 'erro', code: 'SEFAZ_REDE', enviado: true };
 /** Sem `ligada_em` não há base para a confirmação automática: nenhuma nota é "lançada depois de ligar". */
 const NUNCA = new Date(8.64e15);
 const TX1 = { maxWait: 5_000, timeout: 15_000 };
@@ -79,6 +87,18 @@ type Montado = {
 };
 
 const recusou = <T extends object>(x: T | Recusa): x is Recusa => 'fim' in x;
+type Situacao = Pick<DecisaoLote, 'situacao' | 'mensagem' | 'falhasSeguidas' | 'pausaAte'>;
+
+/** Lotes fechados mais recentes seguidos sem resposta útil (os abertos, `resultado` nulo, não contam). */
+function seguidasSemResposta(lotes: sefaz_eventos_lotes[]): number {
+  let n = 0;
+  for (const l of lotes) {
+    if (l.resultado === null) continue;
+    if (!SEM_RESPOSTA.has(l.resultado)) break;
+    n++;
+  }
+  return n;
+}
 
 /** Linha das respostas: ligada, `ok` e fora da pausa; senão o motivo. */
 function conferirLinha(l: sefaz_manifestacao | null, agora: Date): Recusa | null {
@@ -124,6 +144,11 @@ export class RespostasSefazService {
         JSON.stringify({ evento: 'sefaz.eventos', ambiente: p.ambiente, alerta: 'lote_interrompido', eventos: m.interrompidos }),
       );
     }
+    if (m.naoAssinados > 0) {
+      this.logger.warn(
+        JSON.stringify({ evento: 'sefaz.eventos', ambiente: p.ambiente, alerta: 'assinatura_recusada', eventos: m.naoAssinados }),
+      );
+    }
     if (recusou(m.lote)) return { fim: m.lote.fim, enviados: 0 };
     await this.enviar(p, m.lote, relogio);
     return { fim: 'feito', enviados: m.lote.eventos.length };
@@ -164,10 +189,11 @@ export class RespostasSefazService {
   }
 
   /** T1: trava tentada, confere a linha de novo, fecha o lote aberto, planeja, escolhe até 20, assina e grava `enviando`. */
-  private montar(p: Preparo, agora: Date): Promise<{ lote: Montado | Recusa; interrompidos: number }> {
+  private montar(p: Preparo, agora: Date): Promise<{ lote: Montado | Recusa; interrompidos: number; naoAssinados: number }> {
     return this.prisma.$transaction(async (tx) => {
       let interrompidos = 0;
-      const fim = (r: Recusa) => ({ lote: r, interrompidos });
+      let naoAssinados = 0;
+      const fim = (r: Recusa) => ({ lote: r, interrompidos, naoAssinados });
       const [trava] = await tentarTrava(tx);
       if (!trava?.ok) return fim({ fim: 'ocupada' });
       const onde = { ambiente: p.ambiente, cnpj: p.cnpj };
@@ -175,19 +201,36 @@ export class RespostasSefazService {
       const parada = conferirLinha(linha, agora);
       if (parada || !linha) return fim(parada ?? { fim: 'nao_ligadas' });
 
-      // Lote aberto há pouco = outro processo no meio do envio (a T2 dele ainda vem): não mexe. Mais velho = a API caiu entre a T1 e a
-      // T2: o lote vira `interrompida` e os eventos voltam à fila com a tentativa mantida (pode ter chegado à SEFAZ; o reenvio volta 573).
+      // Lote aberto há pouco = outro processo no meio do envio (a T2 dele ainda vem): não mexe. Mais velho = a API ou a T2 caiu depois
+      // de o lote sair: vira `interrompida`, os eventos voltam à fila com a tentativa mantida (pode ter chegado à SEFAZ; o reenvio volta
+      // 573), e a queda é decidida como "enviado sem resposta útil": +15 min a partir daqui e conta na sequência (a 3ª seguida para).
+      // Nada sai neste tique: a resposta perdida podia ser um 656 ou um 108.
       const abertos = await tx.sefaz_eventos_lotes.findMany({ where: { ...onde, resultado: null } });
       if (abertos.some((l) => agora.getTime() - l.iniciado_em.getTime() <= EM_ANDAMENTO_MAX_MS)) return fim({ fim: 'ocupada' });
-      for (const l of abertos) interrompidos += await this.interromper(tx, l, agora);
-
-      // Contexto da decisão do lote, lido depois de fechar os abertos.
       const recentes = await tx.sefaz_eventos_lotes.findMany({ where: onde, orderBy: { iniciado_em: 'desc' }, take: 10 });
-      let semRespostaSeguidas = 0;
-      for (const l of recentes) {
-        if (l.resultado !== 'sem_resposta') break;
-        semRespostaSeguidas++;
+      if (abertos.length > 0) {
+        const devolvidos: EntradaLote['eventos'] = [];
+        for (const l of abertos) devolvidos.push(...(await this.interromper(tx, l, agora)));
+        interrompidos = devolvidos.length;
+        const d = decidirLote({
+          agora,
+          eventos: devolvidos,
+          falhasSeguidas: linha.falhas_seguidas,
+          semRespostaSeguidas: seguidasSemResposta(recentes),
+          vezes656Em24h: 0,
+          relogioNoLoteAnterior: false,
+          chamada: QUEDA,
+        });
+        for (const de of d.eventos) {
+          // gastou (a tentativa da T1 fica); na 3ª, `falhou`: o CHECK de `tentativas` é 0–3
+          await tx.sefaz_manifestacoes.update({ where: { id: de.id }, data: { situacao: de.estado, atualizada_em: agora } });
+        }
+        await this.gravarSituacao(tx, onde, d, null, agora);
+        return fim({ fim: d.situacao === 'ok' ? 'pausa' : 'parada' });
       }
+
+      // Contexto da decisão do lote.
+      const semRespostaSeguidas = seguidasSemResposta(recentes);
       const vezes656Em24h = await tx.sefaz_eventos_lotes.count({
         where: { ...onde, c_stat: 656, iniciado_em: { gte: new Date(agora.getTime() - DIA_MS) } },
       });
@@ -212,46 +255,101 @@ export class RespostasSefazService {
       ).slice(0, LOTE_MAX);
       if (escolhidos.length === 0) return fim({ fim: 'vazia' });
 
+      // Monta e assina cada um, sem gravar ainda. O que não pode ser montado (dado fora do padrão, ex.: justificativa não normalizada) ou
+      // assinado vira `falhou` com a frase fixa (sem +1, sem lote), e os outros seguem: um evento com defeito nunca prende a fila.
+      const dhEvento = dhSefaz(agora);
+      const assinados: EventoDoLote[] = [];
+      let certificadoRecusou = false;
+      for (const e of escolhidos) {
+        try {
+          const xml = eventoAssinado(
+            { ambiente: p.ambiente, cnpjAutor: p.cnpj, chave: e.chave, tpEvento: e.tp_evento, dhEvento, xJust: e.x_just },
+            p.cert,
+          );
+          assinados.push({ id: e.id, chave: e.chave, tpEvento: e.tp_evento, tentativas: e.tentativas + 1, xml });
+        } catch (erro) {
+          // `AssinaturaErro` depois de a montagem passar = a assinatura com o certificado; outro erro = o dado do próprio evento
+          if (erro instanceof AssinaturaErro) certificadoRecusou = true;
+          naoAssinados++;
+          await tx.sefaz_manifestacoes.update({
+            where: { id: e.id },
+            data: { situacao: 'falhou', x_motivo: MOTIVO_SEM_ASSINATURA, atualizada_em: agora },
+          });
+        }
+      }
+      if (assinados.length === 0) {
+        // Nenhum assinou: nada sai, e as respostas param com frase e histórico (senão o defeito se repetiria calado a cada tique).
+        const situacao: SituacaoRespostas = certificadoRecusou ? 'parada_certificado' : 'parada_configuracao';
+        await this.gravarSituacao(
+          tx,
+          onde,
+          {
+            situacao,
+            mensagem: certificadoRecusou ? FRASE_RESPOSTA.assinaturaCertificado : FRASE_RESPOSTA.assinaturaConfiguracao,
+            falhasSeguidas: linha.falhas_seguidas,
+            pausaAte: null,
+          },
+          null,
+          agora,
+        );
+        return fim({ fim: 'parada' });
+      }
+
       // O lote antes dos eventos (a chave estrangeira `lote_id` é imediata). idLote = milissegundos do relógio (13 dígitos).
       const idLote = BigInt(agora.getTime());
       const lote = await tx.sefaz_eventos_lotes.create({
-        data: { ...onde, id_lote: idLote, iniciado_em: agora, eventos: escolhidos.length },
+        data: { ...onde, id_lote: idLote, iniciado_em: agora, eventos: assinados.length },
       });
-      const dhEvento = dhSefaz(agora);
-      const eventos: EventoDoLote[] = [];
-      for (const e of escolhidos) {
-        const xml = eventoAssinado(
-          { ambiente: p.ambiente, cnpjAutor: p.cnpj, chave: e.chave, tpEvento: e.tp_evento, dhEvento, xJust: e.x_just },
-          p.cert,
-        );
-        const tentativas = e.tentativas + 1;
+      for (const e of assinados) {
         await tx.sefaz_manifestacoes.update({
           where: { id: e.id },
           data: {
             situacao: 'enviando',
             dh_evento: dhEvento,
-            xml_evento: xml,
+            xml_evento: e.xml,
             impressao_digital: p.cert.impressaoDigital,
-            tentativas,
+            tentativas: e.tentativas,
             lote_id: lote.id,
             atualizada_em: agora,
           },
         });
-        eventos.push({ id: e.id, chave: e.chave, tpEvento: e.tp_evento, tentativas, xml });
       }
-      return { lote: { loteId: lote.id, idLote, eventos, contexto }, interrompidos };
+      return { lote: { loteId: lote.id, idLote, eventos: assinados, contexto }, interrompidos, naoAssinados };
     }, TX1);
   }
 
-  /** Fecha o lote como `interrompida`; os eventos dele voltam à fila com a tentativa mantida (na 3ª, `falhou`: o CHECK é 0–3). */
-  private async interromper(tx: Prisma.TransactionClient, l: sefaz_eventos_lotes, agora: Date): Promise<number> {
+  /**
+   * A linha do (ambiente, CNPJ) com a decisão: situação, frase, falhas seguidas e, quando não for nula, a pausa; numa parada, o
+   * histórico `respostas_paradas`. `ligada` e `ligada_em` nunca mudam aqui (parada = `situacao`; ligar de novo é do admin).
+   */
+  private async gravarSituacao(
+    tx: Prisma.TransactionClient,
+    onde: { ambiente: AmbienteSefaz; cnpj: string },
+    d: Situacao,
+    cStatHistorico: number | null,
+    agora: Date,
+  ): Promise<void> {
+    await tx.sefaz_manifestacao.update({
+      where: { ambiente_cnpj: onde },
+      data: {
+        situacao: d.situacao,
+        mensagem: d.mensagem,
+        falhas_seguidas: d.falhasSeguidas,
+        ...(d.pausaAte !== null ? { pausa_ate: d.pausaAte } : {}),
+      },
+    });
+    if (d.situacao !== 'ok') {
+      await tx.sefaz_distribuicao_historico.create({
+        data: { ...onde, evento: 'respostas_paradas', situacao: d.situacao, c_stat: cStatHistorico, mensagem: d.mensagem, feito_em: agora },
+      });
+    }
+  }
+
+  /** Fecha o lote como `interrompida` e devolve os eventos `enviando` dele (com a tentativa da T1), para a decisão da queda. */
+  private async interromper(tx: Prisma.TransactionClient, l: sefaz_eventos_lotes, agora: Date): Promise<EntradaLote['eventos']> {
     await tx.sefaz_eventos_lotes.update({ where: { id: l.id }, data: { resultado: 'interrompida', terminado_em: agora } });
     const presos = await tx.sefaz_manifestacoes.findMany({ where: { lote_id: l.id, situacao: 'enviando' } });
-    for (const e of presos) {
-      const situacao: EstadoEvento = e.tentativas >= TENTATIVAS_MAX ? 'falhou' : 'na_fila';
-      await tx.sefaz_manifestacoes.update({ where: { id: e.id }, data: { situacao, atualizada_em: agora } });
-    }
-    return presos.length;
+    return presos.map((e) => ({ id: e.id, chave: e.chave, tpEvento: e.tp_evento as TipoEvento, tentativas: e.tentativas }));
   }
 
   /**
@@ -430,29 +528,9 @@ export class RespostasSefazService {
           erro_code: erroCode ?? (d.relogio ? ERRO_RELOGIO : null),
         },
       });
-      // A linha do PRÓPRIO lote; `ligada` e `ligada_em` nunca mudam aqui (parada = `situacao`, e ligar de novo é do admin).
-      await tx.sefaz_manifestacao.update({
-        where: { ambiente_cnpj: onde },
-        data: {
-          situacao: d.situacao,
-          mensagem: d.mensagem,
-          falhas_seguidas: d.falhasSeguidas,
-          ...(d.pausaAte !== null ? { pausa_ate: d.pausaAte } : {}),
-        },
-      });
-      if (d.situacao !== 'ok') {
-        await tx.sefaz_distribuicao_historico.create({
-          data: {
-            ...onde,
-            evento: 'respostas_paradas',
-            situacao: d.situacao,
-            // O código só quando a parada veio de um retorno da SEFAZ; por HTTP/transporte, null (o status vai na frase).
-            c_stat: chamada.tipo === 'retorno' ? d.cStatParada : null,
-            mensagem: d.mensagem,
-            feito_em: agora,
-          },
-        });
-      }
+      // A linha do PRÓPRIO lote. No histórico, o código só quando a parada veio de um retorno da SEFAZ; por HTTP/transporte, null
+      // (o status vai na frase).
+      await this.gravarSituacao(tx, onde, d, chamada.tipo === 'retorno' ? d.cStatParada : null, agora);
     }, TX2);
 
     this.registrar(p, m, d, { resp, erro, erroCode, causa, diagnostico, duracaoMs });

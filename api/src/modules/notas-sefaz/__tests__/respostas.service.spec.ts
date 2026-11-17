@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { generateKeyPairSync, randomUUID } from 'node:crypto';
 import { Logger } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 import type { notas_sefaz, sefaz_manifestacao } from '@prisma/client';
@@ -38,6 +38,7 @@ function montar(
     linha?: Partial<sefaz_manifestacao> | null;
     certErro?: CertificadoErro;
     certCnpj?: string;
+    cert?: Partial<CertificadoEmUso>;
     cnpjEmpresa?: string;
   } = {},
 ) {
@@ -52,7 +53,7 @@ function montar(
   const certificados = {
     emUso: jest.fn(async (): Promise<CertificadoEmUso> => {
       if (o.certErro) throw o.certErro;
-      return { ...CERT, cnpj: o.certCnpj ?? NOSSO };
+      return { ...CERT, cnpj: o.certCnpj ?? NOSSO, ...o.cert };
     }),
   };
   const ciclo = new CicloSefazService(prisma, config, certificados, new SefazDfeFalso());
@@ -61,7 +62,7 @@ function montar(
   portas.push(porta);
   /** Outro processo da API no mesmo banco (ex.: depois de um reinício), com a sua porta. */
   const api = (p: SefazEventosPort) => new RespostasSefazService(prisma, config, ciclo, certificados, p, notas);
-  return { svc: api(porta), api, t, porta, trava, travaEventos, chavesUsadas, certificados };
+  return { svc: api(porta), api, t, porta, trava, travaEventos, chavesUsadas, certificados, prisma };
 }
 
 const nota = (chave: string, x: Partial<notas_sefaz> = {}) =>
@@ -115,6 +116,19 @@ function responder(porta: SefazEventosFalso, cStat = 135, extra: Partial<Retorno
 }
 
 const linhaDe = (t: TabelasSefaz) => t.sefaz_manifestacao.find((l) => l.ambiente === 'producao' && l.cnpj === NOSSO)!;
+/** Um processo da API manda o lote e morre com ele no ar (a resposta nunca chega); volta quando a porta foi chamada (a T1 já gravou). */
+async function morrerNaRede(api: (p: SefazEventosPort) => RespostasSefazService, quando: Date): Promise<void> {
+  let chamou: () => void = () => undefined;
+  const naRede = new Promise<void>((r) => (chamou = r));
+  const morta: SefazEventosPort = {
+    enviarLote: () => {
+      chamou();
+      return new Promise<never>(() => undefined);
+    },
+  };
+  void api(morta).processar(em(quando));
+  await naRede;
+}
 const evDa = (t: TabelasSefaz, n: notas_sefaz, tp = '210210') =>
   t.sefaz_manifestacoes.find((e) => e.nota_sefaz_id === n.id && e.tp_evento === tp)!;
 
@@ -472,20 +486,11 @@ describe('RespostasSefazService', () => {
       });
     });
 
-    it('queda entre T1 e T2 (a API morreu com o lote no ar): aberto há 1 min = ocupada; depois, interrompida e reenvio com a tentativa mantida', async () => {
+    it('queda entre T1 e T2 (a API morreu com o lote no ar): aberto há 1 min = ocupada; depois, interrompida + pausa de 15 min, e o reenvio sai na pausa com a tentativa mantida', async () => {
       const { svc, api, t, porta } = montar();
       const n = nota(VETOR);
       t.notas_sefaz.push(n);
-      let chamou: () => void = () => undefined;
-      const naRede = new Promise<void>((r) => (chamou = r));
-      const morta: SefazEventosPort = {
-        enviarLote: () => {
-          chamou();
-          return new Promise<never>(() => undefined); // a resposta nunca chega: o processo morreu
-        },
-      };
-      void api(morta).processar(em(AGORA));
-      await naRede;
+      await morrerNaRede(api, AGORA);
       expect(evDa(t, n)).toMatchObject({ situacao: 'enviando', tentativas: 1 });
       const caido = t.sefaz_eventos_lotes[0];
       expect(caido.resultado).toBeNull();
@@ -504,14 +509,91 @@ describe('RespostasSefazService', () => {
           noNovo: ev.lote_id !== caido.id,
         };
       });
-      expect(await svc.processar(em(min(5)))).toEqual({ fim: 'feito', enviados: 1 });
+      // aos 5 min: o lote vira `interrompida`, o evento volta com a tentativa mantida, e a queda conta como "sem resposta": +15, sem envio
+      expect(await svc.processar(em(min(5)))).toEqual({ fim: 'pausa', enviados: 0 });
+      expect(porta.chamadas).toHaveLength(0);
+      expect(t.sefaz_eventos_lotes.find((l) => l.id === caido.id)).toMatchObject({ resultado: 'interrompida', terminado_em: min(5) });
+      expect(evDa(t, n)).toMatchObject({ situacao: 'na_fila', tentativas: 1 });
+      expect(linhaDe(t)).toMatchObject({
+        situacao: 'ok',
+        pausa_ate: min(20),
+        falhas_seguidas: 1,
+        mensagem: FRASE_RESPOSTA.semContato('14h25'),
+      });
+      expect(logs.some((l) => l.includes('lote_interrompido'))).toBe(true);
+      expect(await svc.processar(em(min(19)))).toEqual({ fim: 'pausa', enviados: 0 });
+
+      expect(await svc.processar(em(min(20)))).toEqual({ fim: 'feito', enviados: 1 });
       expect(naChamada).toEqual({ antigo: 'interrompida', situacao: 'enviando', tentativas: 2, noNovo: true });
       expect(evDa(t, n)).toMatchObject({ situacao: 'registrada', c_stat: 573, n_prot: null, tentativas: 2 });
       expect(t.sefaz_eventos_lotes.map((l) => [l.resultado, l.terminado_em])).toEqual([
         ['interrompida', min(5)],
-        ['respondida', min(5)],
+        ['respondida', min(20)],
       ]);
-      expect(logs.some((l) => l.includes('lote_interrompido'))).toBe(true);
+      expect(linhaDe(t)).toMatchObject({ situacao: 'ok', falhas_seguidas: 0, mensagem: null });
+    });
+
+    it('a T2 cai depois de a SEFAZ responder 656: o lote fica aberto, e o tique de +5 min não chama a porta (pausa de 15 min)', async () => {
+      const { svc, t, porta, prisma } = montar();
+      const n = nota(VETOR);
+      t.notas_sefaz.push(n);
+      porta.proximas.push(retornoLote(656, []));
+      const lotes = prisma.sefaz_eventos_lotes as unknown as { update: (a: unknown) => Promise<unknown> };
+      jest.spyOn(lotes, 'update').mockImplementationOnce(async () => {
+        throw new Error('queda simulada no meio da T2');
+      });
+      await expect(svc.processar(em(AGORA))).rejects.toThrow('queda simulada no meio da T2');
+      expect(evDa(t, n)).toMatchObject({ situacao: 'enviando', tentativas: 1 });
+      expect(t.sefaz_eventos_lotes[0].resultado).toBeNull();
+
+      expect(await svc.processar(em(min(5)))).toEqual({ fim: 'pausa', enviados: 0 });
+      expect(porta.chamadas).toHaveLength(1);
+      expect(linhaDe(t).pausa_ate).toEqual(min(20));
+      expect(await svc.processar(em(min(10)))).toEqual({ fim: 'pausa', enviados: 0 });
+      expect(porta.chamadas).toHaveLength(1);
+    });
+
+    it('3 quedas seguidas param as respostas (parada_configuracao, 3 sem resposta), e o evento falha na 3ª', async () => {
+      const { svc, api, t, porta } = montar();
+      const n = nota(VETOR);
+      t.notas_sefaz.push(n);
+
+      await morrerNaRede(api, AGORA);
+      expect(await svc.processar(em(min(5)))).toEqual({ fim: 'pausa', enviados: 0 });
+      expect(linhaDe(t)).toMatchObject({ pausa_ate: min(20), falhas_seguidas: 1 });
+
+      await morrerNaRede(api, min(20));
+      expect(await svc.processar(em(min(25)))).toEqual({ fim: 'pausa', enviados: 0 });
+      expect(evDa(t, n)).toMatchObject({ situacao: 'na_fila', tentativas: 2 });
+      expect(linhaDe(t)).toMatchObject({ situacao: 'ok', pausa_ate: min(40), falhas_seguidas: 2 });
+
+      await morrerNaRede(api, min(40));
+      expect(await svc.processar(em(min(45)))).toEqual({ fim: 'parada', enviados: 0 });
+      expect(evDa(t, n)).toMatchObject({ situacao: 'falhou', tentativas: 3 });
+      expect(linhaDe(t)).toMatchObject({ situacao: 'parada_configuracao', mensagem: FRASE_RESPOSTA.tresIlegiveis, ligada: true });
+      expect(t.sefaz_distribuicao_historico).toEqual([
+        expect.objectContaining({ evento: 'respostas_paradas', situacao: 'parada_configuracao', c_stat: null, feito_em: min(45) }),
+      ]);
+      expect(t.sefaz_eventos_lotes.map((l) => l.resultado)).toEqual(['interrompida', 'interrompida', 'interrompida']);
+      expect(await svc.processar(em(min(120)))).toEqual({ fim: 'parada', enviados: 0 });
+      expect(porta.chamadas).toHaveLength(0);
+    });
+
+    it('lote interrompido conta como sem resposta na sequência: queda + 2 TEMPO = o 3º para', async () => {
+      const { svc, api, t, porta } = montar();
+      const n = nota(VETOR);
+      t.notas_sefaz.push(n);
+      await morrerNaRede(api, AGORA);
+      expect((await svc.processar(em(min(5)))).fim).toBe('pausa');
+
+      porta.proximas.push(sefazErro('SEFAZ_TEMPO', true));
+      await svc.processar(em(min(20)));
+      expect(linhaDe(t)).toMatchObject({ situacao: 'ok', pausa_ate: min(35) });
+
+      porta.proximas.push(sefazErro('SEFAZ_TEMPO', true));
+      await svc.processar(em(min(35)));
+      expect(linhaDe(t)).toMatchObject({ situacao: 'parada_configuracao', mensagem: FRASE_RESPOSTA.tresIlegiveis });
+      expect(evDa(t, n)).toMatchObject({ situacao: 'falhou', tentativas: 3 });
     });
 
     it('lote interrompido com o evento na 3ª tentativa: falhou (nunca uma 4ª), sem chamada', async () => {
@@ -527,9 +609,10 @@ describe('RespostasSefazService', () => {
       });
       t.sefaz_eventos_lotes.push(aberto);
       t.sefaz_manifestacoes.push(evento(n, { situacao: 'enviando', tentativas: 3, lote_id: aberto.id }));
-      expect(await svc.processar(em(AGORA))).toEqual({ fim: 'vazia', enviados: 0 });
+      expect(await svc.processar(em(AGORA))).toEqual({ fim: 'pausa', enviados: 0 });
       expect(evDa(t, n)).toMatchObject({ situacao: 'falhou', tentativas: 3 });
       expect(t.sefaz_eventos_lotes[0]).toMatchObject({ resultado: 'interrompida', terminado_em: AGORA });
+      expect(linhaDe(t).pausa_ate).toEqual(min(15));
       expect(porta.chamadas).toHaveLength(0);
     });
 
@@ -608,6 +691,79 @@ describe('RespostasSefazService', () => {
       expect(evDa(t, a)).toMatchObject({ situacao: 'recusada', c_stat: null, tentativas: 1 });
       porta.aoChamar = undefined;
       expect(await svc.processar(em(min(5)))).toEqual({ fim: 'vazia', enviados: 0 });
+    });
+
+    describe('evento que não pode ser assinado (correção 1, I2)', () => {
+      const SEM_ASSINATURA = 'O XML não pôde ser assinado.';
+      /** 210240 com a justificativa gravada sem a normalização (espaço repetido): a montagem do evento a recusa. */
+      const naoAconteceu = (n: notas_sefaz) =>
+        evento(n, {
+          tp_evento: '210240',
+          origem: 'admin',
+          x_just: 'pedido  cancelado pelo fornecedor',
+          pedida_em: min(-3),
+          enviar_apos: min(-2),
+        });
+
+      it('1 de 3 não assina: ele vira falhou (motivo fixo, sem +1 e sem lote) e os outros 2 saem no lote', async () => {
+        const { svc, t, porta } = montar();
+        const ruim = nota(VETOR, { motivo_ignorar: 'outro', motivo_texto: 'teste', ignorada_em: min(-3) });
+        const a = nota(K880, { autorizada_em: dias(3), emitida_em: dias(3) });
+        const b = nota(chaveN(1));
+        t.notas_sefaz.push(ruim, a, b);
+        t.sefaz_manifestacoes.push(naoAconteceu(ruim));
+        responder(porta);
+        expect(await svc.processar(em(AGORA))).toEqual({ fim: 'feito', enviados: 2 });
+        expect(porta.chamadas[0].eventos.map(chaveDo)).toEqual([K880, chaveN(1)]);
+        expect(evDa(t, ruim, '210240')).toMatchObject({
+          situacao: 'falhou',
+          x_motivo: SEM_ASSINATURA,
+          tentativas: 0,
+          lote_id: null,
+          xml_evento: null,
+          atualizada_em: AGORA,
+        });
+        expect(evDa(t, a).situacao).toBe('registrada');
+        expect(evDa(t, b).situacao).toBe('registrada');
+        expect(t.sefaz_eventos_lotes).toEqual([expect.objectContaining({ eventos: 2, resultado: 'respondida' })]);
+        expect(linhaDe(t).situacao).toBe('ok');
+        const alerta = logs.find((l) => l.includes('assinatura_recusada'))!;
+        expect(JSON.parse(alerta)).toMatchObject({ evento: 'sefaz.eventos', alerta: 'assinatura_recusada', eventos: 1 });
+      });
+
+      it('nenhum assina por defeito do certificado: parada_certificado com histórico, zero chamadas, nenhum lote', async () => {
+        const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' }); // chave que a assinatura RSA-SHA1 recusa
+        const { svc, t, porta } = montar({ cert: { chavePrivada: privateKey } });
+        const a = nota(VETOR);
+        const b = nota(K880, { autorizada_em: dias(3), emitida_em: dias(3) });
+        t.notas_sefaz.push(a, b);
+        expect(await svc.processar(em(AGORA))).toEqual({ fim: 'parada', enviados: 0 });
+        expect(porta.chamadas).toHaveLength(0);
+        expect(t.sefaz_eventos_lotes).toHaveLength(0);
+        expect(linhaDe(t)).toMatchObject({
+          situacao: 'parada_certificado',
+          mensagem: FRASE_RESPOSTA.assinaturaCertificado,
+          ligada: true,
+          ligada_em: LIGADA_EM,
+        });
+        expect(t.sefaz_distribuicao_historico).toEqual([
+          expect.objectContaining({ evento: 'respostas_paradas', situacao: 'parada_certificado', c_stat: null, feito_em: AGORA }),
+        ]);
+        for (const n of [a, b]) expect(evDa(t, n)).toMatchObject({ situacao: 'falhou', x_motivo: SEM_ASSINATURA, tentativas: 0 });
+        expect(await svc.processar(em(min(5)))).toEqual({ fim: 'parada', enviados: 0 });
+      });
+
+      it('nenhum assina por defeito do evento (só o 210240 na fila): parada_configuracao com histórico', async () => {
+        const { svc, t, porta } = montar();
+        const ruim = nota(VETOR, { motivo_ignorar: 'outro', motivo_texto: 'teste', ignorada_em: min(-3) });
+        t.notas_sefaz.push(ruim);
+        t.sefaz_manifestacoes.push(naoAconteceu(ruim));
+        expect(await svc.processar(em(AGORA))).toEqual({ fim: 'parada', enviados: 0 });
+        expect(porta.chamadas).toHaveLength(0);
+        expect(evDa(t, ruim, '210240')).toMatchObject({ situacao: 'falhou', x_motivo: SEM_ASSINATURA });
+        expect(linhaDe(t)).toMatchObject({ situacao: 'parada_configuracao', mensagem: FRASE_RESPOSTA.assinaturaConfiguracao });
+        expect(t.sefaz_distribuicao_historico).toEqual([expect.objectContaining({ situacao: 'parada_configuracao', c_stat: null })]);
+      });
     });
 
     it('o logger nunca recebe `<`, a chave nem o n_prot; 135 sem protocolo vira alerta só com a contagem', async () => {
