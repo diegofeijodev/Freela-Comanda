@@ -480,7 +480,7 @@ describe('CicloSefazService', () => {
         busca_ligada: false,
         situacao: 'parada_conflito',
         ult_nsu: 130n,
-        primeira_consulta_em: AGORA,
+        primeira_consulta_em: null, // 656 não é a 1ª busca feita (só 137/138)
         ultima_consulta_em: null,
       });
       expect(t.sefaz_lacunas).toHaveLength(0);
@@ -718,6 +718,19 @@ describe('CicloSefazService', () => {
       expect(t.sefaz_consultas[0]).toMatchObject({ resultado: 'falha_antes_de_enviar', erro_code: 'SEFAZ_TLS', c_stat: null });
     });
 
+    it('1ª tentativa que falha no TLS não grava primeira_consulta_em; a 1ª respondida (137) grava, e as seguintes não mudam', async () => {
+      const { svc, t, sefaz } = montar({
+        linha: { ult_nsu: 0n, ultima_consulta_em: null, primeira_consulta_em: null, proxima_consulta_em: null },
+      });
+      sefaz.responder(sefazErro('SEFAZ_TLS', false), resposta(137, { ultNsu: 0n, maxNsu: 0n }), resposta(137, { ultNsu: 0n, maxNsu: 0n }));
+      await svc.ciclo('agendada', null, em(AGORA));
+      expect(linhaDe(t)).toMatchObject({ primeira_consulta_em: null, ultima_consulta_em: null, proxima_consulta_em: min(15) });
+      await svc.ciclo('agendada', null, em(min(15)));
+      expect(linhaDe(t)).toMatchObject({ primeira_consulta_em: min(15), ultima_consulta_em: min(15) });
+      await svc.ciclo('agendada', null, em(min(80)));
+      expect(linhaDe(t)).toMatchObject({ primeira_consulta_em: min(15), ultima_consulta_em: min(80) });
+    });
+
     it('a causa técnica do TLS vai só para a linha de log da consulta (nem banco nem agenda)', async () => {
       const { svc, t, sefaz } = montar();
       sefaz.responder(sefazErro('SEFAZ_TLS', false, undefined, 'CERT_HAS_EXPIRED'));
@@ -849,7 +862,7 @@ describe('CicloSefazService', () => {
       await svc.ciclo('agendada', null, em(AGORA));
       expect(linhaDe(t)).toMatchObject({
         ultima_consulta_em: null,
-        primeira_consulta_em: AGORA,
+        primeira_consulta_em: null, // a 1ª tentativa falhou: o painel não diz "Primeira busca feita"
         proxima_consulta_em: MAIS65,
         mensagem: FRASE.foraDoAr('15h10'),
       });
@@ -860,7 +873,7 @@ describe('CicloSefazService', () => {
         aviso: FRASE.indicioD1,
         ultima_consulta_em: MAIS65,
         ult_nsu: 40n,
-        primeira_consulta_em: AGORA,
+        primeira_consulta_em: MAIS65, // a 1ª respondida
         situacao: 'ok',
         mensagem: null,
       });

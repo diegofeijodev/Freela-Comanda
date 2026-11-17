@@ -300,7 +300,7 @@ export class CicloSefazService {
       const reservaAte = new Date(agora.getTime() + ESPERA_MS);
       await tx.sefaz_distribuicao.update({
         where: chave,
-        data: { em_andamento_desde: agora, proxima_consulta_em: reservaAte, primeira_consulta_em: linha.primeira_consulta_em ?? agora },
+        data: { em_andamento_desde: agora, proxima_consulta_em: reservaAte },
       });
       return {
         consultaId: consulta.id,
@@ -415,6 +415,8 @@ export class CicloSefazService {
           ...(acao.bloqueadoAte !== null ? { bloqueado_ate: acao.bloqueadoAte } : {}),
           ...(acao.aviso !== null ? { aviso: acao.aviso } : {}),
           ...(respondeu ? { ultima_consulta_em: agora } : {}),
+          // "Primeira busca feita" (painel) só depois da 1ª resposta 137/138, nunca de uma tentativa que falhou
+          ...(respondeu && r.contexto.primeiraConsulta ? { primeira_consulta_em: agora } : {}),
           ...(parada ? { busca_ligada: false } : {}),
         },
       });
