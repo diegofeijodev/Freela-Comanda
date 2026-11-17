@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # api/scripts/gerar-certificados-teste.sh <pasta>: .pfx de TESTE (ACs falsas, CNPJs fictícios com DV válido)
 # api/scripts/gerar-certificados-teste.sh --tls <pasta>: só os PEM do servidor HTTPS LOCAL do teste do transporte da SEFAZ
-#   (ac-teste assina servidor e cliente; ac-estranha assina servidor-estranho, que fica fora da confiança). Tudo fictício.
+#   (ac-teste assina servidor, cliente e servidor-outro-nome, este emitido só para outro nome; ac-estranha assina servidor-estranho,
+#   que fica fora da confiança). Tudo fictício.
 set -euo pipefail
 if [ "${1:-}" = "--tls" ]; then
   mkdir -p "${2:?pasta de saída}"; OUT=$(cd "$2" && pwd)
@@ -25,7 +26,10 @@ if [ "${1:-}" = "--tls" ]; then
   folha servidor localhost serverAuth ac-teste "$SAN_LOCAL"
   folha cliente cliente-teste clientAuth ac-teste
   folha servidor-estranho localhost serverAuth ac-estranha "$SAN_LOCAL"
-  cp ac-teste.pem servidor.pem servidor.key cliente.pem cliente.key ac-estranha.pem servidor-estranho.pem servidor-estranho.key "$OUT/"
+  # cadeia confiável, mas o nome não é o do endereço chamado (127.0.0.1): prova que o transporte confere o nome do servidor
+  folha servidor-outro-nome outro-nome.teste serverAuth ac-teste DNS:outro-nome.teste
+  cp ac-teste.pem servidor.pem servidor.key cliente.pem cliente.key ac-estranha.pem servidor-estranho.pem servidor-estranho.key \
+    servidor-outro-nome.pem servidor-outro-nome.key "$OUT/"
   ls "$OUT"
   exit 0
 fi

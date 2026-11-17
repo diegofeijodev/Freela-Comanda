@@ -30,8 +30,8 @@ const CLIENTE: CertificadoEmUso = {
 type Handler = (req: IncomingMessage, res: ServerResponse) => void;
 let servidor: https.Server | undefined;
 
-async function subir(handler: Handler, estranho = false): Promise<string> {
-  const nome = estranho ? 'servidor-estranho' : 'servidor';
+/** `servidor-estranho` = cadeia fora da confiança; `servidor-outro-nome` = cadeia confiável, emitido só para `outro-nome.teste`. */
+async function subir(handler: Handler, nome: 'servidor' | 'servidor-estranho' | 'servidor-outro-nome' = 'servidor'): Promise<string> {
   servidor = https.createServer(
     { key: tls(`${nome}.key`), cert: tls(`${nome}.pem`), ca: [AC_TESTE], requestCert: true, rejectUnauthorized: true },
     handler,
@@ -122,7 +122,7 @@ describe('chamarSoap12 (servidor HTTPS local)', () => {
 
   it('servidor fora da confiança: SEFAZ_TLS sem envio, e o handler não é chamado', async () => {
     const handler = jest.fn((_req: IncomingMessage, res: ServerResponse) => res.end('<ok/>'));
-    const url = await subir(handler, true);
+    const url = await subir(handler, 'servidor-estranho');
 
     const e = await falha(chamarSoap12(chamada(url)));
     expect(e).toMatchObject({ code: 'SEFAZ_TLS', enviado: false });
@@ -130,12 +130,22 @@ describe('chamarSoap12 (servidor HTTPS local)', () => {
   });
 
   it('servidor fora da confiança: a causa técnica guarda só o code do Node (para o log)', async () => {
-    const url = await subir(() => undefined, true);
+    const url = await subir(() => undefined, 'servidor-estranho');
 
     const e = await falha(chamarSoap12(chamada(url)));
     expect(e).toMatchObject({ code: 'SEFAZ_TLS', enviado: false, causa: 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' });
     expect(e.message).toBe('A conexão segura com a SEFAZ não foi aceita.');
     expect(inspect(e)).not.toContain('unable to verify'); // a mensagem do Node não vem junto, só o code
+    expect(inspect(e)).not.toContain('BEGIN');
+  });
+
+  it('certificado confiável emitido para OUTRO nome: SEFAZ_TLS sem envio (ERR_TLS_CERT_ALTNAME_INVALID), e o handler não é chamado', async () => {
+    const handler = jest.fn((_req: IncomingMessage, res: ServerResponse) => res.end('<ok/>'));
+    const url = await subir(handler, 'servidor-outro-nome'); // a cadeia passa (ac-teste); o nome (outro-nome.teste) não é 127.0.0.1
+
+    const e = await falha(chamarSoap12(chamada(url)));
+    expect(e).toMatchObject({ code: 'SEFAZ_TLS', enviado: false, causa: 'ERR_TLS_CERT_ALTNAME_INVALID' });
+    expect(handler).not.toHaveBeenCalled();
     expect(inspect(e)).not.toContain('BEGIN');
   });
 
