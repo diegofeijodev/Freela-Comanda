@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { createPrivateKey, X509Certificate } from 'node:crypto';
+import { X509Certificate } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import * as https from 'node:https';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -9,24 +9,15 @@ import type { TLSSocket } from 'node:tls';
 import { inspect } from 'node:util';
 // o objeto do próprio módulo (não a cópia do `import * as`), para o jest.spyOn alcançar o que o transporte chama
 import tlsDoNode = require('node:tls');
-import type { CertificadoEmUso } from '../../certificado-digital/certificado-digital.port';
 import { SefazErro } from '../sefaz-erro';
 import { chamarSoap12, envelopeSoap12, faultDoCorpo, TETO_CORPO_ERRO_BYTES, type ChamadaSoap12 } from '../transporte-soap12';
+import { CLIENTE } from './certificado-teste';
 import { faultSoap11, faultSoap12, SENTINELA_FAULT } from './retorno-falso';
 
 // Só servidor HTTPS LOCAL (127.0.0.1, porta aleatória) com certificados fictícios de fixtures/tls
 // (api/scripts/gerar-certificados-teste.sh --tls). Nenhum teste fala com a SEFAZ nem com a rede de fora.
 const tls = (nome: string): string => readFileSync(join(__dirname, 'fixtures', 'tls', nome), 'utf8');
 const AC_TESTE = tls('ac-teste.pem');
-
-const CLIENTE: CertificadoEmUso = {
-  chavePrivada: createPrivateKey(tls('cliente.key')),
-  certificado: new X509Certificate(tls('cliente.pem')),
-  cadeia: [],
-  cnpj: '12345678000195',
-  validoAte: new Date('2046-01-01T00:00:00Z'),
-  impressaoDigital: 'FICTICIO',
-};
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => void;
 let servidor: https.Server | undefined;
