@@ -194,6 +194,20 @@ export type Nota = {
   valor_total: number;
   forma_pagamento: string;
   origem: string;
+  serie: string | null;
+  repetida_de: string | null;
+};
+/** Nota já lançada que parece a mesma (igual à `NotaParecida` da API). */
+export type NotaParecida = {
+  id: string;
+  numero: string | null;
+  serie: string | null;
+  fornecedor_nome: string;
+  data_emissao: string;
+  data_entrada: string;
+  valor_total: number;
+  origem: string;
+  created_at: string;
 };
 export type Vinculo = { codigo_fornecedor: string; item_estoque_id: string; fator: number };
 export type Conta = {
@@ -363,7 +377,9 @@ export const receberLista = (id: string, atualizar_preco: boolean) => post<Lista
 
 // ---------- notas
 export const notasRecentes = (limite = 30) => get<Nota[]>('/v1/notas', { limite });
-export const notaExiste = async (chave: string) => (await get<{ existe: boolean }>('/v1/notas/existe', { chave })).existe;
+export const notaPelaChave = async (chave: string) => (await get<{ existe: boolean; nota: NotaParecida | null }>('/v1/notas/existe', { chave })).nota;
+export const notasRepetidas = (p: { cnpj: string; numero: string; serie: string | null }) =>
+  get<NotaParecida[]>('/v1/notas/repetidas', { cnpj: p.cnpj, numero: p.numero, serie: p.serie ?? undefined });
 export const vinculos = (cnpj: string) => get<Vinculo[]>('/v1/vinculos', { cnpj });
 export const lancarNota = (n: unknown) => post<{ id: string; contas: number; a_vista: boolean; insumos_criados: number }>('/v1/notas', n);
 const enviarPdf = async <T>(url: string, f: File) => {

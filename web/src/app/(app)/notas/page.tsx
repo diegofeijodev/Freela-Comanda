@@ -2,10 +2,10 @@
 
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { CircleAlert, Plus, Trash2 } from "lucide-react";
-import { lancarNota, lerFotoNota, lerPdfNota, listarItensEstoque, listarSubgrupos, notaExiste, notasRecentes, vinculos } from "@/lib/erp-api";
+import { lancarNota, lerFotoNota, lerPdfNota, listarItensEstoque, listarSubgrupos, notaPelaChave, notasRecentes, notasRepetidas, vinculos, type NotaParecida } from "@/lib/erp-api";
 import { MAX_FOTOS, pareceImagem, reduzirImagem } from "@/lib/imagem";
 import { PageHeader, Panel, Tag } from "@/components/ui-kit";
 import { Button } from "@/components/ui/button";
@@ -15,8 +15,10 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { A_VISTA, FORMAS, parseNFeXML, sugerirInsumo, type FormaPgto, type NotaLida, type Parcela } from "@/lib/nfe";
 
 import { brl, dataBR, isoDate, num, parseNum } from "@/lib/format";
-import { errMsg } from "@/lib/db";
+import { errCode, errMsg } from "@/lib/db";
 import { documentoConfere, normalizarCnpj } from "@/lib/fiscal";
+import { chaveDaConsulta, fraseNotaRepetida } from "@/lib/nota-repetida";
+import { NotaRepetidaDialogo, NotaRepetidaFaixa, type EstadoRepetida } from "@/components/nota-repetida-faixa";
 
 
 type NovoInsumo = { nome: string; unidade: string; subgrupo: string };
@@ -40,10 +42,46 @@ export default function Notas() {
   const [atualizarPreco, setAtualizarPreco] = useState(true);
   const [lendo, setLendo] = useState(false);
   const [busy, setBusy] = useState(false);
+  // Nota repetida: a consulta prévia vale para o trio CNPJ/número/série da última leitura ou saída de campo (nunca a cada tecla).
+  const [consulta, setConsulta] = useState<{ chave: string; cnpj: string; numero: string; serie: string | null } | null>(null);
+  const [confirmadaPara, setConfirmadaPara] = useState<string | null>(null);
+  const [chaveIgual, setChaveIgual] = useState<NotaParecida | null>(null);
+  const [fraseDialogo, setFraseDialogo] = useState<string | null>(null);
+  const [tocou, setTocou] = useState(false);
+  const arquivoRef = useRef<HTMLInputElement>(null);
+  const chaveConsulta = consulta?.chave ?? null;
 
   const { data: insumos } = useQuery({ queryKey: ["insumos-ativos"], queryFn: async () => (await listarItensEstoque({ ativo: true })) as Insumo[] });
   const { data: subgrupos } = useQuery({ queryKey: ["subgrupos"], queryFn: listarSubgrupos });
   const { data: notas, refetch } = useQuery({ queryKey: ["notas-entrada"], queryFn: () => notasRecentes(30) });
+
+  const { data: parecidas } = useQuery({
+    queryKey: ["notas-repetidas", chaveConsulta],
+    queryFn: () => notasRepetidas({ cnpj: consulta!.cnpj, numero: consulta!.numero, serie: consulta!.serie }),
+    enabled: !!consulta && !chaveIgual, retry: false, refetchOnWindowFocus: false, gcTime: 0,
+  });
+  const confirmada = confirmadaPara !== null && confirmadaPara === chaveConsulta;
+  const estadoRepetida: EstadoRepetida | null = chaveIgual ? { tipo: "chave_igual", nota: chaveIgual }
+    : parecidas?.length ? { tipo: "parecida", parecidas, confirmada } : null;
+
+  function definirConsulta(cnpj: string | null, numero: string | null, serie: string | null) {
+    const chave = chaveDaConsulta(cnpj, numero, serie);
+    setConfirmadaPara(null);
+    setConsulta(chave ? { chave, cnpj: normalizarCnpj(cnpj ?? ""), numero: numero ?? "", serie } : null);
+  }
+  // Saída de campo: só consulta de novo se o trio mudou; mudou, a confirmação anterior cai.
+  function consultar(cnpj: string | null, numero: string | null, serie: string | null) {
+    if (chaveDaConsulta(cnpj, numero, serie) !== chaveConsulta) definirConsulta(cnpj, numero, serie);
+  }
+  function limpar() {
+    setNota(null); setLinhas([]); setParcelas([]);
+    setConsulta(null); setConfirmadaPara(null); setChaveIgual(null); setFraseDialogo(null); setTocou(false);
+  }
+  function naoLancar() {
+    limpar();
+    toast("Nota descartada. Nada foi lançado.");
+    arquivoRef.current?.focus();
+  }
 
   async function carregar(arquivos: File[]) {
     if (!arquivos.length) return;
@@ -57,7 +95,7 @@ export default function Notas() {
       const lida = fotos ? await lerFotoNota<NotaLida>(await Promise.all(arquivos.map(reduzirImagem)))
         : isPdf ? await lerPdfNota<NotaLida>(f) : parseNFeXML(await f.text());
       if (!lida.itens?.length) throw new Error("Nenhum item encontrado na nota");
-      if (lida.chave && (await notaExiste(lida.chave))) throw new Error("Esta nota já foi lançada");
+      const jaLancada = lida.chave ? await notaPelaChave(lida.chave) : null;
       const cnpj = lida.emitente_cnpj ?? "";
       const vinc = await vinculos(cnpj);
       const vm = new Map(vinc.map((v) => [v.codigo_fornecedor, v]));
@@ -83,7 +121,10 @@ export default function Notas() {
       setParcelas(lida.parcelas?.length ? lida.parcelas : A_VISTA.includes(forma) ? [] : [{ numero: "1", vencimento: somaDias(diaValido(lida.data_emissao) ? lida.data_emissao : entrada, 30), valor: lida.valor_total }]);
       setNota({ ...lida, forma_pagamento: forma });
       setOrigem(fotos ? "foto" : isPdf ? "pdf" : "xml");
-      toast.success(`${lida.itens.length} itens lidos`);
+      setTocou(false); setConfirmadaPara(null); setFraseDialogo(null);
+      setChaveIgual(jaLancada);
+      if (jaLancada) setConsulta(null); else definirConsulta(lida.emitente_cnpj, lida.numero, lida.serie);
+      if (!jaLancada) toast.success(`${lida.itens.length} itens lidos`);
     } catch (e) { toast.error(errMsg(e)); } finally { setLendo(false); }
   }
 
@@ -101,10 +142,11 @@ export default function Notas() {
   const semVinculo = linhas.filter((l) => !l.item_estoque_id && !l.novo).length;
   const novos = linhas.filter((l) => l.novo).length;
 
-  async function darEntrada() {
-    if (!nota) return;
+  async function darEntrada(confirmar = false) {
+    if (!nota || chaveIgual) return;
     if (!aVista && (!parcelas.length || parcelas.some((p) => !p.vencimento))) return toast.error("Informe o vencimento de cada parcela");
     if (linhas.some((l) => l.novo && !l.novo.nome.trim())) return toast.error("Informe o nome do insumo novo");
+    if (!confirmar && estadoRepetida?.tipo === "parecida" && !estadoRepetida.confirmada) return setFraseDialogo(fraseNotaRepetida(estadoRepetida.parecidas));
     setBusy(true);
     try {
       // Uma chamada só: nota + itens + estoque (lancar_nota) + contas a pagar + fornecedor novo, numa transação na API.
@@ -112,6 +154,7 @@ export default function Notas() {
         chave: nota.chave, numero: nota.numero, serie: nota.serie, fornecedor_nome: nota.emitente_nome, fornecedor_cnpj: nota.emitente_cnpj,
         data_emissao: nota.data_emissao || entrada, data_entrada: entrada, valor_total: nota.valor_total || totalItens,
         forma_pagamento: nota.forma_pagamento, origem, atualizar_preco: atualizarPreco,
+        ...(confirmar || confirmada ? { confirmar_repetida: true } : {}),
         itens: linhas.map((l) => ({
           codigo: l.codigo, descricao: l.descricao, unidade: l.unidade, quantidade: parseNum(l.quantidade) ?? 0, valor_unitario: parseNum(l.valor_unitario) ?? 0,
           fator: parseNum(l.fator) || 1,
@@ -122,9 +165,11 @@ export default function Notas() {
         parcelas: aVista ? [] : parcelas.map((p) => ({ vencimento: p.vencimento, valor: Number(p.valor) || 0 })),
       });
       toast.success("Entrada lançada no estoque" + (aVista ? "" : ` e ${parcelas.length} conta(s) a pagar`) + (r.insumos_criados > 0 ? ` · ${r.insumos_criados} insumo(s) cadastrado(s)` : ""));
-      setNota(null); setLinhas([]); setParcelas([]);
+      limpar();
       refetch(); qc.invalidateQueries({ queryKey: ["insumos-ativos"] }); qc.invalidateQueries({ queryKey: ["subgrupos"] }); qc.invalidateQueries();
-    } catch (e) { toast.error(errMsg(e)); } finally { setBusy(false); }
+    } catch (e) {
+      if (errCode(e) === "NOTA_REPETIDA") setFraseDialogo(errMsg(e)); else toast.error(errMsg(e));
+    } finally { setBusy(false); }
   }
 
   return (
@@ -132,21 +177,25 @@ export default function Notas() {
       <PageHeader title="Entrada de Notas" sub="NF-e ou cupom fiscal: envie o XML, o PDF ou a foto e confira antes de dar entrada" actions={<Button asChild variant="outline"><Link href="/contas">Contas a pagar</Link></Button>
 } />
       <Panel title="1. Arquivo da nota">
-        <Input type="file" multiple accept=".xml,.pdf,text/xml,application/pdf,image/jpeg,image/png,image/webp" className="max-w-sm" disabled={lendo} onChange={(e) => { const fs = Array.from(e.target.files ?? []); if (fs.length) carregar(fs); e.target.value = ""; }} />
+        <Input type="file" multiple accept=".xml,.pdf,text/xml,application/pdf,image/jpeg,image/png,image/webp" className="max-w-sm" disabled={lendo} ref={arquivoRef} onChange={(e) => { const fs = Array.from(e.target.files ?? []); if (fs.length) carregar(fs); e.target.value = ""; }} />
         <p className="mt-2 text-xs text-muted-foreground">{lendo ? "Lendo a nota…" : "XML é lido na hora e com exatidão. PDF e foto são lidos por inteligência artificial — confira os valores."}</p>
         {!lendo && <p className="text-xs text-muted-foreground">Nota comprida? Tire mais de uma foto (até 4).</p>}
       </Panel>
 
       {nota && (
-        <>
+        <div className="space-y-5" onInputCapture={() => { if (!tocou) setTocou(true); }}>
+          {estadoRepetida && (
+            <NotaRepetidaFaixa estado={estadoRepetida} focar={!tocou} onNaoLancar={naoLancar}
+              onConfirmar={() => setConfirmadaPara(chaveConsulta)} onVoltarAtras={() => setConfirmadaPara(null)} />
+          )}
           <Panel title="2. Dados da nota">
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <div><Label>Fornecedor</Label><Input value={nota.emitente_nome} onChange={(e) => setNota({ ...nota, emitente_nome: e.target.value })} /></div>
-              <div><Label>CNPJ</Label><Input autoCapitalize="characters" autoComplete="off" spellCheck={false} className="uppercase" value={nota.emitente_cnpj ?? ""} onChange={(e) => setNota({ ...nota, emitente_cnpj: normalizarCnpj(e.target.value) || null })} />
+              <div><Label>CNPJ</Label><Input autoCapitalize="characters" autoComplete="off" spellCheck={false} className="uppercase" value={nota.emitente_cnpj ?? ""} onChange={(e) => setNota({ ...nota, emitente_cnpj: normalizarCnpj(e.target.value) || null })} onBlur={() => consultar(nota.emitente_cnpj, nota.numero, nota.serie)} />
                 {!documentoConfere(nota.emitente_cnpj) && <p className="mt-1 flex items-center gap-1 text-xs text-warning"><CircleAlert className="h-3.5 w-3.5 shrink-0" aria-hidden />CNPJ/CPF não confere</p>}</div>
               <div><Label>Número / série</Label><div className="flex gap-2">
-                <Input aria-label="Número" placeholder="Número" value={nota.numero ?? ""} onChange={(e) => setNota({ ...nota, numero: e.target.value })} />
-                <Input aria-label="Série" placeholder="Série" className="w-20 shrink-0" value={nota.serie ?? ""} onChange={(e) => setNota({ ...nota, serie: e.target.value || null })} />
+                <Input aria-label="Número" placeholder="Número" value={nota.numero ?? ""} onChange={(e) => setNota({ ...nota, numero: e.target.value })} onBlur={() => consultar(nota.emitente_cnpj, nota.numero, nota.serie)} />
+                <Input aria-label="Série" placeholder="Série" className="w-20 shrink-0" value={nota.serie ?? ""} onChange={(e) => setNota({ ...nota, serie: e.target.value || null })} onBlur={() => consultar(nota.emitente_cnpj, nota.numero, nota.serie)} />
               </div></div>
               <div><Label>Emissão</Label><Input type="date" value={nota.data_emissao ?? ""} onChange={(e) => setNota({ ...nota, data_emissao: e.target.value })} /></div>
               <div><Label>Data de entrada</Label><Input type="date" value={entrada} onChange={(e) => setEntrada(e.target.value)} /></div>
@@ -216,18 +265,21 @@ export default function Notas() {
               </div>
             )}
             <div className="mt-4 flex gap-2">
-              <Button disabled={busy} onClick={darEntrada}>{busy ? "Lançando…" : "Dar entrada"}</Button>
-              <Button variant="ghost" onClick={() => { setNota(null); setLinhas([]); }}>Cancelar</Button>
+              <Button disabled={busy || !!chaveIgual} onClick={() => darEntrada()}>{busy ? "Lançando…" : "Dar entrada"}</Button>
+              <Button variant="ghost" onClick={limpar}>Cancelar</Button>
             </div>
           </Panel>
-        </>
+        </div>
       )}
+
+      <NotaRepetidaDialogo frase={fraseDialogo} onNaoLancar={() => setFraseDialogo(null)}
+        onLancar={() => { setFraseDialogo(null); setConfirmadaPara(chaveConsulta); darEntrada(true); }} />
 
       <Panel title="Notas lançadas">
         <div className="overflow-x-auto"><table className="w-full text-sm"><tbody>{(notas ?? []).map((n) => (
           <tr key={n.id} className="border-t">
             <td className="py-1.5">{dataBR(n.data_entrada)}</td><td>NF {n.numero ?? "—"}</td><td>{n.fornecedor_nome}</td>
-            <td>{FORMAS[n.forma_pagamento as FormaPgto] ?? n.forma_pagamento}</td><td><Tag>{n.origem.toUpperCase()}</Tag></td>
+            <td>{FORMAS[n.forma_pagamento as FormaPgto] ?? n.forma_pagamento}</td><td><Tag>{n.origem.toUpperCase()}</Tag>{n.repetida_de && <> <Tag tone="warn">confirmada como outra nota</Tag></>}</td>
             <td className="text-right">{brl(n.valor_total)}</td>
           </tr>
         ))}{!notas?.length && <tr><td className="py-3 text-muted-foreground">Nenhuma nota lançada ainda.</td></tr>}</tbody></table></div>

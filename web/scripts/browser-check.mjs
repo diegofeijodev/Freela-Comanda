@@ -298,6 +298,86 @@ const caixas = await Promise.all(['Substituir certificado', 'Remover'].map((n) =
   await ctx.close();
 }
 
+// ---------------- ADMIN: nota repetida na Entrada de Notas (celular 360x800)
+{
+  // Mesma nota (CNPJ, número 1234, série 1) com outra chave de acesso (DV conferido): "parece repetida", mas não é a mesma chave.
+  const XML2 = XML.replace('Id="NFe35261012345678000199550010000012341000012340"', 'Id="NFe35261012345678000199550010000012341000012390"');
+  const xml2Path = join(tmpdir(), 'nfe-teste-erp-2.xml');
+  writeFileSync(xml2Path, XML2);
+  const hoje = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }).split('-').reverse().join('/');
+  const { ctx, page, erros } = await sessao('admin@erpfreela.local', { width: 360, height: 800 });
+  const faixa = page.locator('main [role="alert"]');
+  const darEntrada = page.getByRole('button', { name: 'Dar entrada' });
+  await page.goto(`${BASE}/notas`, { waitUntil: 'networkidle', timeout: 180_000 });
+
+  // Chave igual: caixa vermelha dentro da tela, sem opção de lançar.
+  await page.setInputFiles('input[type=file]', xmlPath);
+  await page.getByText('2. Dados da nota').waitFor();
+  const vermelha = faixa.filter({ hasText: 'Esta nota já foi lançada' });
+  check('repetida: chave igual mostra a caixa vermelha com a data de hoje', await vermelha.getByText(`A chave de acesso é a mesma de NF 1234 (FRIGORIFICO SA), de ${hoje}. Não dá para lançar duas vezes.`).waitFor({ timeout: 30_000 }).then(() => true, () => false));
+  check('repetida: chave igual desabilita "Dar entrada"', await darEntrada.isDisabled());
+  check('repetida: chave igual só tem "Não lançar esta nota"', (await vermelha.getByRole('button').count()) === 1 && (await page.getByRole('button', { name: 'É outra nota, lançar mesmo assim' }).count()) === 0);
+  const largura1 = await quemPassaDaBorda(page, 360);
+  check('repetida: caixa vermelha sem rolagem lateral em 360', largura1.scroll <= 360, JSON.stringify(largura1));
+  await page.screenshot({ path: join(SHOTS, 'admin-nota-chave-igual-360.png'), fullPage: true });
+  await vermelha.getByRole('button', { name: 'Não lançar esta nota' }).click();
+  check('repetida: "Não lançar esta nota" mostra o toast', await page.getByText('Nota descartada. Nada foi lançado.').first().waitFor({ timeout: 10_000 }).then(() => true, () => false));
+  check('repetida: a tela de conferência some', (await page.getByText('2. Dados da nota').count()) === 0);
+  check('repetida: foco vai para o campo de arquivo', await page.evaluate(() => document.activeElement?.matches('input[type=file]') === true));
+
+  // Nota parecida (outra chave): faixa âmbar com foco.
+  await page.setInputFiles('input[type=file]', xml2Path);
+  await page.getByText('2. Dados da nota').waitFor();
+  const ambar = faixa.filter({ hasText: 'Parece que esta nota já foi lançada' });
+  check('repetida: nota parecida mostra a faixa âmbar', await ambar.waitFor({ timeout: 30_000 }).then(() => true, () => false));
+  check('repetida: a faixa traz as linhas da nota mais nova', (await ambar.innerText()).includes('NF 1234 · série 1 · R$ 701,95') && (await ambar.innerText()).includes(`Entrou em ${hoje} por XML`));
+  check('repetida: a faixa recebe o foco (role=alert)', await page.waitForFunction(() => document.activeElement?.getAttribute('role') === 'alert', null, { timeout: 10_000 }).then(() => true, () => false));
+  const bots = await Promise.all(['Não lançar esta nota', 'É outra nota, lançar mesmo assim'].map((n) => ambar.getByRole('button', { name: n }).boundingBox()));
+  check('repetida: botões empilhados, dentro de 360 px e com 44 px', bots.every((c) => c && c.x >= 0 && c.x + c.width <= 360 && c.height >= 44) && bots[1].y > bots[0].y, JSON.stringify(bots));
+  const largura2 = await quemPassaDaBorda(page, 360);
+  check('repetida: faixa âmbar sem rolagem lateral em 360', largura2.scroll <= 360, JSON.stringify(largura2));
+  await page.screenshot({ path: join(SHOTS, 'admin-nota-parecida-360.png'), fullPage: true });
+
+  // "Dar entrada" sem confirmar: diálogo, foco em "Não lançar", Esc fecha.
+  await darEntrada.click();
+  const dialogo = page.getByRole('alertdialog');
+  await dialogo.waitFor({ timeout: 10_000 });
+  check('repetida: diálogo com o título exato', await dialogo.getByText('Esta nota parece já lançada', { exact: true }).isVisible());
+  check('repetida: diálogo com a frase e o aviso do dobro', (await dialogo.innerText()).includes('Já existe a NF 1234 série 1 de FRIGORIFICO SA') && (await dialogo.innerText()).includes('Se for a mesma nota, o estoque e as contas a pagar ficam em dobro.'));
+  check('repetida: foco inicial em "Não lançar"', (await page.evaluate(() => document.activeElement?.textContent)) === 'Não lançar');
+  await page.screenshot({ path: join(SHOTS, 'admin-nota-dialogo-360.png') });
+  await page.keyboard.press('Escape');
+  check('repetida: Esc fecha o diálogo', await dialogo.waitFor({ state: 'hidden', timeout: 10_000 }).then(() => true, () => false));
+  check('repetida: a nota segue na tela depois do Esc', await page.getByText('2. Dados da nota').isVisible());
+
+  // "É outra nota": confirmação na faixa.
+  await ambar.getByRole('button', { name: 'É outra nota, lançar mesmo assim' }).click();
+  const confirmacao = 'Você confirmou que esta é outra nota. Ao dar entrada, ela fica marcada como possível repetição.';
+  check('repetida: a faixa mostra o texto de confirmação', await page.getByText(confirmacao).waitFor({ timeout: 10_000 }).then(() => true, () => false));
+  check('repetida: o foco fica na faixa depois de confirmar', await page.evaluate(() => document.activeElement?.getAttribute('role') === 'status'));
+
+  // Mudar a série derruba a faixa e a confirmação; voltar traz a faixa sem confirmação.
+  const serie = page.getByLabel('Série', { exact: true });
+  await serie.fill('2');
+  await serie.blur();
+  check('repetida: série 2 + sair do campo some a faixa', await page.getByText(confirmacao).waitFor({ state: 'hidden', timeout: 20_000 }).then(() => true, () => false) && (await ambar.count()) === 0);
+  await serie.fill('1');
+  await serie.blur();
+  check('repetida: série 1 + sair do campo traz a faixa âmbar sem confirmação', await ambar.getByRole('button', { name: 'É outra nota, lançar mesmo assim' }).waitFor({ timeout: 20_000 }).then(() => true, () => false) && (await page.getByText(confirmacao).count()) === 0);
+
+  // Confirmar e dar entrada: lança e marca a nota na lista.
+  await ambar.getByRole('button', { name: 'É outra nota, lançar mesmo assim' }).click();
+  await page.getByText(confirmacao).waitFor({ timeout: 10_000 });
+  await darEntrada.click();
+  check('repetida: confirmada, "Dar entrada" lança sem diálogo', await page.getByText('Entrada lançada no estoque').first().waitFor({ timeout: 30_000 }).then(() => true, () => false) && (await page.getByRole('alertdialog').count()) === 0);
+  check('repetida: a lista marca "confirmada como outra nota"', await page.getByText('confirmada como outra nota').first().waitFor({ timeout: 20_000 }).then(() => true, () => false));
+  const largura3 = await quemPassaDaBorda(page, 360);
+  check('repetida: tela sem rolagem lateral em 360 no fim', largura3.scroll <= 360, JSON.stringify(largura3));
+  const reais = erros.filter((e) => !/Failed to load resource/.test(e));
+  check('repetida: sem erro de console', reais.length === 0, reais.join(' | '));
+  await ctx.close();
+}
+
 // ---------------- LOJA (celular)
 {
   const { ctx, page, erros } = await sessao('loja@erpfreela.local', { width: 390, height: 844 });
