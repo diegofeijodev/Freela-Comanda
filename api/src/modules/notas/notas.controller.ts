@@ -23,6 +23,12 @@ export class NotasController {
     return this.svc.existe(String(chave ?? ''));
   }
 
+  @Get('notas/repetidas')
+  async repetidas(@Query('cnpj') cnpj?: string, @Query('numero') numero?: string, @Query('serie') serie?: string) {
+    const p = await this.svc.parecidas({ cnpj: cnpj ?? null, numero: numero ?? null, serie: serie ?? null });
+    return p.slice(0, 5);
+  }
+
   @Get('vinculos')
   vinculos(@Query('cnpj') cnpj?: string) {
     return this.svc.vinculos(String(cnpj ?? ''));

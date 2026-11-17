@@ -335,10 +335,15 @@ model notas_entrada {
   status          String   @default("rascunho")
   observacao      String?
   usuario_id      String?  @db.Uuid
+  repetida_de     String?  @db.Uuid
   created_at      DateTime @default(now()) @db.Timestamptz(6)
 
+  nota_original       notas_entrada?  @relation("nota_repetida", fields: [repetida_de], references: [id], onDelete: SetNull)
+  repeticoes          notas_entrada[] @relation("nota_repetida")
   notas_entrada_itens notas_entrada_itens[]
   contas_pagar        contas_pagar[]
+
+  @@index([fornecedor_cnpj])
 }
 
 model notas_entrada_itens {

@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { mesmoDecimal } from './decimal';
 import { EsquemaNosso, Linha } from './exportacao';
-import { COLUNAS_USERS, GATILHOS, SEED_SAZONALIDADE, SEED_SUBGRUPOS, TABELAS, TABELAS_COM_SEED, TABELAS_SO_NOSSAS } from './esquema';
+import { COLUNAS_SO_NOSSAS, COLUNAS_USERS, GATILHOS, SEED_SAZONALIDADE, SEED_SUBGRUPOS, TABELAS, TABELAS_COM_SEED, TABELAS_SO_NOSSAS } from './esquema';
 
 export type Db = Pick<Prisma.TransactionClient, '$queryRawUnsafe' | '$executeRawUnsafe'>;
 
@@ -39,7 +39,8 @@ export async function conferirEsquemaNosso(db: Db, esquema: EsquemaNosso): Promi
       erros.push(`tabela "${t}" no banco que o importador não conhece`);
   }
   for (const [t, cols] of esperadas) {
-    const reais = (esquema.get(t) ?? []).map((c) => c.nome);
+    const nossas = COLUNAS_SO_NOSSAS[t] ?? [];
+    const reais = (esquema.get(t) ?? []).map((c) => c.nome).filter((c) => !nossas.includes(c));
     if (!reais.length) {
       erros.push(`falta a tabela "${t}" no banco (as migrações rodaram?)`);
       continue;

@@ -52,6 +52,7 @@ export class LancarNotaDto {
   @IsIn([...FORMAS_PGTO]) forma_pagamento!: (typeof FORMAS_PGTO)[number];
   @IsIn(['xml', 'pdf', 'foto']) origem!: 'xml' | 'pdf' | 'foto';
   @IsBoolean() atualizar_preco!: boolean;
+  @IsOptional() @IsBoolean() confirmar_repetida?: boolean;
 
   @IsArray()
   @ArrayMinSize(1, { message: 'Nenhum item encontrado na nota' })

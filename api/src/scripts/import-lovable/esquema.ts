@@ -254,6 +254,9 @@ export const COLUNAS_USERS = ['id', 'email', 'nome', 'password_hash', 'perfil', 
 /** Tabelas que só existem no nosso banco (fora da comparação com o Lovable). `ia_chave` = chave de IA da tela de Configurações (12/11); `certificado_digital*` = certificado A1 (16/11). */
 export const TABELAS_SO_NOSSAS = ['users', '_prisma_migrations', 'ia_chave', 'certificado_digital', 'certificado_digital_historico'] as const;
 
+/** Colunas nossas em tabela do Lovable: ficam nulas na carga (que só insere `colunas`) e o importador as desconta ao conferir o banco. */
+export const COLUNAS_SO_NOSSAS: Readonly<Record<string, readonly string[]>> = { notas_entrada: ['repetida_de'] };
+
 /** A migração `regras` semeia estas três; a carga aceita exatamente esses seeds e os SUBSTITUI pelos do Lovable. */
 export const TABELAS_COM_SEED = ['configuracoes', 'sazonalidade', 'subgrupos'] as const;
 export const SEED_SAZONALIDADE: readonly [number, string][] = Array.from({ length: 12 }, (_, i) => [

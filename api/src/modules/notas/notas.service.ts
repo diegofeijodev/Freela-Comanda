@@ -1,14 +1,41 @@
 import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { chaveValida, normalizarChave } from '../../common/fiscal/chave-acesso';
+import { chaveValida, normalizarChave, normalizarNumeroSerie } from '../../common/fiscal/chave-acesso';
 import { normalizarCnpj } from '../../common/fiscal/cnpj';
+import { fraseNotaRepetida, pareceRepetida, type NotaParecida, type RefNota } from '../../common/fiscal/nota-repetida';
 import { normalizaNome } from '../../common/parse/normaliza';
 import { PrismaService } from '../../common/database/prisma.service';
-import { dayToDb } from '../../common/time/dates';
+import { dateToString, dayToDb } from '../../common/time/dates';
 import type { LancarNotaDto } from './dto/notas.dto';
 
 /** Formas pagas no ato: viram conta já quitada (A_VISTA do protótipo, src/lib/nfe.ts). */
 export const A_VISTA = ['pix', 'dinheiro', 'cartao_debito', 'transferencia'];
+
+type LinhaNota = {
+  id: string;
+  numero: string | null;
+  serie: string | null;
+  fornecedor_nome: string;
+  data_emissao: Date;
+  data_entrada: Date;
+  valor_total: Prisma.Decimal | number;
+  origem: string;
+  created_at: Date;
+};
+
+function paraParecida(n: LinhaNota): NotaParecida {
+  return {
+    id: n.id,
+    numero: n.numero,
+    serie: n.serie,
+    fornecedor_nome: n.fornecedor_nome,
+    data_emissao: dateToString(n.data_emissao),
+    data_entrada: dateToString(n.data_entrada),
+    valor_total: Number(n.valor_total),
+    origem: n.origem,
+    created_at: n.created_at.toISOString(),
+  };
+}
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -20,9 +47,19 @@ export class NotasService {
     return this.prisma.notas_entrada.findMany({ orderBy: { created_at: 'desc' }, take: Math.min(Math.max(limite, 1), 200) });
   }
 
-  async existe(chave: string) {
-    const c = normalizarChave(chave);
-    return { existe: !!(await this.prisma.notas_entrada.findUnique({ where: { chave: c }, select: { id: true } })) };
+  async existe(chave: string): Promise<{ existe: boolean; nota: NotaParecida | null }> {
+    const n = await this.prisma.notas_entrada.findUnique({ where: { chave: normalizarChave(chave) } });
+    return { existe: !!n, nota: n ? paraParecida(n) : null };
+  }
+
+  /** Notas já lançadas que parecem a mesma (mais nova primeiro). `numero` é gravado cru, então o filtro final é em memória. */
+  async parecidas(ref: RefNota): Promise<NotaParecida[]> {
+    const cnpj = normalizarCnpj(ref.cnpj ?? '');
+    if (!cnpj || !normalizarNumeroSerie(ref.numero)) return [];
+    const linhas = await this.prisma.notas_entrada.findMany({ where: { fornecedor_cnpj: cnpj }, orderBy: { created_at: 'desc' } });
+    return linhas
+      .filter((n) => pareceRepetida({ cnpj, numero: ref.numero, serie: ref.serie }, { cnpj: n.fornecedor_cnpj, numero: n.numero, serie: n.serie }))
+      .map(paraParecida);
   }
 
   /** Vínculos produto do fornecedor → insumo salvos por lancar_nota (para pré-preencher a próxima nota). */
@@ -55,6 +92,10 @@ export class NotasService {
     const totalItens = dto.itens.reduce((s, i) => s + i.quantidade * i.valor_unitario, 0);
     const valorNota = dto.valor_total || totalItens;
     const cnpj = normalizarCnpj(dto.fornecedor_cnpj ?? '') || null;
+    const parecidas = await this.parecidas({ cnpj, numero: dto.numero ?? null, serie: dto.serie ?? null });
+    if (parecidas.length && dto.confirmar_repetida !== true) {
+      throw new ConflictException({ code: 'NOTA_REPETIDA', message: fraseNotaRepetida(parecidas) });
+    }
 
     return this.prisma.$transaction(
       async (tx) => {
@@ -70,6 +111,7 @@ export class NotasService {
             valor_total: valorNota,
             forma_pagamento: dto.forma_pagamento,
             origem: dto.origem,
+            repetida_de: parecidas[0]?.id ?? null,
             usuario_id: usuarioId,
           },
           select: { id: true },

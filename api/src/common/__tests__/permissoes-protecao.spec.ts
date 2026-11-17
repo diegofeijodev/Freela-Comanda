@@ -94,6 +94,10 @@ describe('proteção das rotas (substitui as políticas RLS do Supabase)', () =>
     ]);
   });
 
+  it('a consulta de nota repetida é só do admin', () => {
+    expect(todas.filter((r) => r.rota.includes('/notas/repetidas'))).toEqual([{ rota: 'GET /v1/notas/repetidas', marca: 'admin' }]);
+  });
+
   it('só estas rotas são públicas', () => {
     expect(todas.filter((r) => r.marca === 'public').map((r) => r.rota).sort()).toEqual(
       ['GET /health', 'GET /v1/auth/existe-admin', 'POST /v1/auth/login', 'POST /v1/auth/primeiro-acesso'].sort(),

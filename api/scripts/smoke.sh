@@ -269,6 +269,28 @@ sql "$(cat prisma/migrations/20261116140000_cnpj_alfanumerico/migration.sql)" >/
 check "migração idempotente: fornecedor" 98ABC76543DE21 "$(sql "select cnpj from fornecedores where nome='Forn Migra Smoke'")"
 check "migração idempotente: nota" 98765432000110 "$(sql "select fornecedor_cnpj from notas_entrada where fornecedor_nome='Forn Migra Smoke'")"
 
+# ---------- nota repetida (mesmo CNPJ + mesmo número; a nota de 4411 acima é o vetor)
+HOJE_BR=$(TZ=America/Sao_Paulo date +%d/%m/%Y)
+K1=35261112ABC34501DE35550010000044111000044124
+K2=35261112ABC34501DE35550010000044111000044132
+K3=35261112ABC34501DE35550010000044111000044140
+K4=35261112ABC34501DE35550010000044111000044159
+req GET "/v1/notas/repetidas?cnpj=12.abc.345/01de-35&numero=000.004.411&serie=001" "$ADM"
+check "consulta prévia: 200" 200 "$CODE"; check "consulta prévia: 1 nota" 1 "$(j 'length')"
+check "consulta prévia: fornecedor" "Atacadão Smoke" "$(j '.[0].fornecedor_nome')"; check "consulta prévia: origem" xml "$(j '.[0].origem')"
+req POST /v1/notas "$ADM" "$(nota_cnpj $K1 000.004.411 001)"; check "repetida sem confirmação: 409" 409 "$CODE"
+check "repetida sem confirmação: code" NOTA_REPETIDA "$(j .error.code)"
+check "repetida sem confirmação: frase" "Já existe a NF 4411 série 1 de Atacadão Smoke, lançada em $HOJE_BR por XML, de R$ 1.234,56. Se for outra nota, confirme para lançar mesmo assim." "$(j .error.message)"
+check "repetida sem confirmação: nada gravado" 0 "$(sql "select count(*) from notas_entrada where chave='$K1'")"
+req POST /v1/notas "$ADM" "$(nota_cnpj $K1 000.004.411 001 true)"; check "repetida confirmada: 201" 201 "$CODE"
+check "repetida confirmada: repetida_de é a nota do vetor" "$(sql "select id from notas_entrada where chave='$VETOR'")" "$(sql "select repetida_de from notas_entrada where chave='$K1'")"
+req POST /v1/notas "$ADM" "$(nota_cnpj $K2 4411 1)"; check "duas parecidas: 409" 409 "$CODE"
+check "duas parecidas: frase" "Já existe a NF 000.004.411 série 001 de Atacadão Smoke, lançada em $HOJE_BR por XML, de R$ 1.234,56 (e mais 1 parecida). Se for outra nota, confirme para lançar mesmo assim." "$(j .error.message)"
+req POST /v1/notas "$ADM" "$(nota_cnpj $K3 4411 2)"; check "série 2: 201 sem confirmar" 201 "$CODE"
+req POST /v1/notas "$ADM" "$(nota_cnpj $K4 4411 '')"; check "série vazia: 409" 409 "$CODE"
+req GET "/v1/notas/repetidas?cnpj=12ABC34501DE35&numero=4411" "$LOJA"; check "repetidas como loja: 403" 403 "$CODE"
+req GET "/v1/notas/existe?chave=$VETOR" "$ADM"; check "existe com detalhes: número" 4411 "$(j .nota.numero)"
+
 # ---------- importações
 req POST /v1/importacoes/insumos "$ADM" '{"arquivo":"insumos.csv","modo":"acrescentar","linhas":[{"codigo":"S01","nome":"Smoke Cebola","unidade":"kg","preco_unitario":"4,50","consumo_semanal_base":"1,5"}]}'
 check "importa insumo" 1 "$(j .importados)"

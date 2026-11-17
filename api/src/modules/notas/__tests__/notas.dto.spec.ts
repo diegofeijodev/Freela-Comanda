@@ -30,4 +30,8 @@ describe('LancarNotaDto', () => {
   it('origem inválida falha', () => {
     expect(erros({ ...base, origem: 'x' }).length).toBeGreaterThan(0);
   });
+  it('confirmar_repetida booleano passa; texto falha', () => {
+    expect(erros({ ...base, confirmar_repetida: true })).toHaveLength(0);
+    expect(erros({ ...base, confirmar_repetida: 'sim' }).length).toBeGreaterThan(0);
+  });
 });
