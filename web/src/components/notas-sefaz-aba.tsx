@@ -210,11 +210,13 @@ export function NotasSefazAba({ situacao, focarId, onConferir, onLancarPorArquiv
   }
 
   // `avisou`: o Ignorar pediu uma resposta à SEFAZ. O servidor espera 60 s antes de enviar e o "Desfazer" a cancela; se ela já saiu (raro),
-  // a nota volta para a lista mas a resposta continua (a nota devolvida ainda tem a resposta final): o toast diz isso.
+  // a nota volta para a lista mas a resposta continua (a nota devolvida ainda tem a resposta final do admin, ativa): o toast diz isso. Uma
+  // final mais antiga recusada ou que falhou (outro tipo) reaparece depois do cancelamento e não conta.
   function desfazer(id: string, avisou: boolean) {
     reabrirNotaSefaz(id).then((n) => {
       const f = n.resposta?.final;
-      if (avisou && f && f.estado !== 'cancelada') toast.warning('A resposta já tinha ido para a SEFAZ e não dá para desfazer aqui. A nota voltou para a lista.', { duration: 8000 });
+      const saiu = !!f && f.origem === 'admin' && (f.estado === 'na_fila' || f.estado === 'enviando' || f.estado === 'registrada');
+      if (avisou && saiu) toast.warning('A resposta já tinha ido para a SEFAZ e não dá para desfazer aqui. A nota voltou para a lista.', { duration: 8000 });
       return recarregar();
     }, (e) => setErroAcao(errMsg(e)));
   }
