@@ -7,9 +7,12 @@ import { AdminOnly } from '../../common/decorators/permissao.decorator';
 import { ParseUuidPipe } from '../../common/ids/parse-uuid.pipe';
 import { CaixaSefazService } from './caixa.service';
 import { CicloSefazService } from './ciclo.service';
-import { ConfigurarBuscaDto, IgnorarNotaSefazDto } from './notas-sefaz.dto';
+import { ConfigurarBuscaDto, ConfigurarRespostasDto, IgnorarNotaSefazDto } from './notas-sefaz.dto';
 
-/** Notas da SEFAZ (etapa 1, só leitura): caixa, situação da busca, ligar/desligar, "Buscar agora" e conferência do XML. Só admin. */
+/**
+ * Notas da SEFAZ: caixa, situação da busca e das respostas, ligar/desligar cada uma, "Buscar agora", conferência do XML, Ignorar (que pode
+ * avisar a SEFAZ), reabrir e "Tentar de novo". Só admin. Nenhuma rota fala com a SEFAZ: as respostas só saem pelo tique do agendador.
+ */
 @ApiTags('Notas da SEFAZ')
 @ApiBearerAuth()
 @AdminOnly()
@@ -28,6 +31,12 @@ export class NotasSefazController {
   @Put('configuracao')
   configurar(@CurrentUser() eu: AuthUser, @Body() dto: ConfigurarBuscaDto) {
     return this.caixa.configurar(dto.busca_ligada, { id: eu.id, nome: eu.nome });
+  }
+
+  /** "Ligar as respostas" / "Desligar as respostas" → a situação. 503 sem `SEFAZ_MANIFESTACAO=ligada`; ligar confere como a busca. */
+  @Put('respostas')
+  configurarRespostas(@CurrentUser() eu: AuthUser, @Body() dto: ConfigurarRespostasDto) {
+    return this.caixa.configurarRespostas(dto.ligadas, { id: eu.id, nome: eu.nome });
   }
 
   /** Confere e reserva síncrono (recusa = 409/422/503); a consulta à SEFAZ roda em segundo plano. */
@@ -60,12 +69,19 @@ export class NotasSefazController {
   @Post(':id/ignorar')
   @HttpCode(200)
   ignorar(@CurrentUser() eu: AuthUser, @Param('id', ParseUuidPipe) id: string, @Body() dto: IgnorarNotaSefazDto) {
-    return this.caixa.ignorar(id, dto.motivo, dto.texto ?? null, { id: eu.id, nome: eu.nome });
+    return this.caixa.ignorar(id, dto.motivo, dto.texto ?? null, { id: eu.id, nome: eu.nome }, new Date(), dto.avisar_sefaz === true);
   }
 
   @Post(':id/reabrir')
   @HttpCode(200)
   reabrir(@CurrentUser() eu: AuthUser, @Param('id', ParseUuidPipe) id: string) {
     return this.caixa.reabrir(id, { id: eu.id, nome: eu.nome });
+  }
+
+  /** "Tentar de novo": a resposta que falhou volta à fila (409 SEFAZ_NADA_A_REENVIAR sem nenhuma). */
+  @Post(':id/responder-de-novo')
+  @HttpCode(200)
+  responderDeNovo(@CurrentUser() eu: AuthUser, @Param('id', ParseUuidPipe) id: string) {
+    return this.caixa.responderDeNovo(id, { id: eu.id, nome: eu.nome });
   }
 }

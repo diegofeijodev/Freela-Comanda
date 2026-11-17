@@ -1,12 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { HttpException, Logger } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
-import type { sefaz_distribuicao } from '@prisma/client';
+import { Prisma, type sefaz_distribuicao, type sefaz_manifestacao } from '@prisma/client';
 import { CertificadoErro, MSG_USO, type CertificadoEmUso } from '../../certificado-digital/certificado-digital.port';
 import type { NotaLancada, NotasService } from '../../notas/notas.service';
 import { SefazDfeFalso } from '../../sefaz/__tests__/sefaz-dfe.falso';
+import { SefazEventosFalso } from '../../sefaz/__tests__/sefaz-eventos.falso';
 import { CaixaSefazService } from '../caixa.service';
-import { CicloSefazService } from '../ciclo.service';
+import { CHAVE_TRAVA_SEFAZ, CicloSefazService } from '../ciclo.service';
+import { CHAVE_TRAVA_SEFAZ_EVENTOS, MOTIVO_SEM_ASSINATURA, RespostasSefazService } from '../respostas.service';
 import { linhaCom, montarPrismaSefaz, type TabelasSefaz } from './prisma-sefaz.falso';
 
 const AGORA = new Date('2026-11-17T17:05:00Z'); // 14h05 em Brasília
@@ -41,6 +43,10 @@ const lancada = (x: Partial<NotaLancada>): NotaLancada => ({
 
 type Opcoes = {
   ambiente?: string;
+  /** `SEFAZ_MANIFESTACAO` (ausente = desligada). */
+  manifestacao?: string;
+  /** Linha das respostas (`sefaz_manifestacao`) do (ambiente, CNPJ); ausente = nenhuma. */
+  respostas?: Partial<sefaz_manifestacao>;
   cnpjEmpresa?: string;
   certErro?: CertificadoErro;
   certCnpj?: string;
@@ -50,12 +56,16 @@ type Opcoes = {
   semear?: boolean;
 };
 
+/** As portas dos eventos de cada `montar`: nenhuma rota da caixa chama a SEFAZ (conferido no afterEach). */
+let portas: SefazEventosFalso[] = [];
+
 function montar(o: Opcoes = {}) {
   const ambiente = o.ambiente ?? 'producao';
-  const { prisma, t } = montarPrismaSefaz({ cnpjEmpresa: o.cnpjEmpresa });
+  const { prisma, t, chavesUsadas } = montarPrismaSefaz({ cnpjEmpresa: o.cnpjEmpresa });
   if (o.linha !== null && o.linha !== undefined) {
     t.sefaz_distribuicao.push(linhaCom('sefaz_distribuicao', { ambiente, cnpj: NOSSO, busca_ligada: true, ult_nsu: 100n, ...o.linha }));
   }
+  if (o.respostas) t.sefaz_manifestacao.push(linhaCom('sefaz_manifestacao', { ambiente, cnpj: NOSSO, ...o.respostas }));
   const certificados = {
     emUso: jest.fn(async () => {
       if (o.certErro) throw o.certErro;
@@ -68,13 +78,17 @@ function montar(o: Opcoes = {}) {
     }),
   };
   const env: Record<string, string> = ambiente === 'desligado' ? {} : { SEFAZ_DFE_AMBIENTE: ambiente };
+  if (o.manifestacao !== undefined) env.SEFAZ_MANIFESTACAO = o.manifestacao;
   const config = { get: (k: string) => env[k] } as unknown as ConfigService;
   const ciclo = new CicloSefazService(prisma, config, certificados, new SefazDfeFalso());
   const lancadas = o.lancadas ?? [];
   const notas = { notasLancadas: jest.fn(async () => lancadas) } as unknown as NotasService;
-  const svc = new CaixaSefazService(prisma, ciclo, notas, certificados);
+  const porta = new SefazEventosFalso();
+  portas.push(porta);
+  const respostas = new RespostasSefazService(prisma, config, ciclo, certificados, porta, notas);
+  const svc = new CaixaSefazService(prisma, ciclo, notas, certificados, respostas);
   if (o.semear) semear(t, ambiente);
-  return { svc, t, certificados, notas: notas as unknown as { notasLancadas: jest.Mock }, ciclo };
+  return { svc, t, certificados, notas: notas as unknown as { notasLancadas: jest.Mock }, ciclo, prisma, chavesUsadas };
 }
 
 const ids = { a: randomUUID(), b: randomUUID(), c: randomUUID(), d: randomUUID(), e: randomUUID(), doc: randomUUID() };
@@ -133,11 +147,16 @@ describe('CaixaSefazService', () => {
   let logs: string[];
   beforeEach(() => {
     logs = [];
+    portas = [];
     for (const m of ['log', 'warn', 'error'] as const) {
       jest.spyOn(Logger.prototype, m).mockImplementation((...a: unknown[]) => void logs.push(a.map(String).join(' ')));
     }
   });
-  afterEach(() => jest.restoreAllMocks());
+  afterEach(() => {
+    jest.restoreAllMocks();
+    // nenhuma rota da caixa fala com a SEFAZ: os eventos só saem pelo tique
+    expect(portas.flatMap((p) => p.chamadas)).toEqual([]);
+  });
 
   describe('servidor desligado', () => {
     it('situação devolve só { ambiente: "desligado" } e as outras 5 operações dão 503 SEFAZ_DESLIGADA', async () => {
@@ -530,6 +549,850 @@ describe('CaixaSefazService', () => {
       expect(await recusa(svc.reabrir(ids.e, QUEM))).toMatchObject({ status: 404, code: 'NOT_FOUND' });
       expect(await recusa(svc.ignorar(ID_FORA, 'nao_e_compra', null, QUEM, AGORA))).toMatchObject({ status: 404 });
       expect(t.notas_sefaz.find((n) => n.id === ids.e)!.motivo_ignorar).toBeNull();
+    });
+  });
+
+  // ------------------------------------------------------------------------------------------------- respostas à SEFAZ
+
+  describe('respostas à SEFAZ', () => {
+    const D = 86_400_000;
+    const diasAtras = (n: number) => new Date(AGORA.getTime() - n * D);
+    const MAIS60S = new Date(AGORA.getTime() + 60_000);
+    /** Chave fictícia no formato do esquema (o DV não é conferido aqui). */
+    const chaveN = (i: number) => `3526111122233300018155001${String(i).padStart(9, '0')}1000000071`;
+    const NOMES = ['ok', 'saida', 'cancelada', 'denegada', 'velha', 'perto', 'perto2', 'semBase', 'semTpNf'] as const;
+    type Nome = (typeof NOMES)[number];
+    const N = Object.fromEntries(NOMES.map((k) => [k, randomUUID()])) as Record<Nome, string>;
+    const CH = Object.fromEntries(NOMES.map((k, i) => [k, chaveN(i + 1)])) as Record<Nome, string>;
+    const NPROT = '135260000000001';
+    const FRASE_DESLIGADAS = 'As respostas à SEFAZ não estão ativadas neste servidor.';
+
+    /** Variável ligada, respostas ligadas há 7 dias e as notas: respondível, saída, cancelada, denegada, 91 dias, 85 e 82 dias, sem data, sem tipo. */
+    function montarR(o: Opcoes = {}) {
+      const m = montar({ manifestacao: 'ligada', respostas: { ligada: true, ligada_em: diasAtras(7) }, linha: null, ...o });
+      const nota = (k: Nome, x: Record<string, unknown> = {}) =>
+        m.t.notas_sefaz.push(
+          linhaCom('notas_sefaz', {
+            id: N[k],
+            ambiente: 'producao',
+            cnpj_destinatario: NOSSO,
+            chave: CH[k],
+            emitente_cnpj: FORN,
+            emitente_nome: `Forn ${k}`,
+            numero: String(NOMES.indexOf(k) + 101),
+            serie: '1',
+            situacao_sefaz: 'autorizada',
+            tp_nf: 1,
+            fin_nfe: 1,
+            emitida_em: diasAtras(2),
+            autorizada_em: diasAtras(2),
+            criada_em: AGORA,
+            ...x,
+          }),
+        );
+      nota('ok');
+      nota('saida', { tp_nf: 0 });
+      nota('cancelada', { situacao_sefaz: 'cancelada', cancelada_em: diasAtras(1) });
+      nota('denegada', { situacao_sefaz: 'denegada' });
+      nota('velha', { emitida_em: diasAtras(91), autorizada_em: diasAtras(91) });
+      nota('perto', { emitida_em: diasAtras(85), autorizada_em: diasAtras(85) });
+      nota('perto2', { emitida_em: diasAtras(82), autorizada_em: diasAtras(82) });
+      nota('semBase', { emitida_em: null, autorizada_em: null });
+      nota('semTpNf', { tp_nf: null });
+      return m;
+    }
+    const evento = (k: Nome, tp: string, x: Record<string, unknown> = {}) =>
+      linhaCom('sefaz_manifestacoes', {
+        nota_sefaz_id: N[k],
+        ambiente: 'producao',
+        cnpj: NOSSO,
+        chave: CH[k],
+        tp_evento: tp,
+        origem: tp === '210210' ? 'ciencia_automatica' : 'admin',
+        pedida_em: diasAtras(1),
+        enviar_apos: diasAtras(1),
+        criada_em: diasAtras(1),
+        atualizada_em: diasAtras(1),
+        ...x,
+      });
+    const lote = (resultado: string | null) =>
+      linhaCom('sefaz_eventos_lotes', { ambiente: 'producao', cnpj: NOSSO, id_lote: 1n, iniciado_em: diasAtras(1), resultado });
+    const ign = (svc: CaixaSefazService, k: Nome, motivo: string, texto: string | null = null, avisar = true) =>
+      svc.ignorar(N[k], motivo as never, texto, QUEM, AGORA, avisar);
+    const notaDe = (t: TabelasSefaz, k: Nome) => t.notas_sefaz.find((n) => n.id === N[k])!;
+    /** Nada gravado: nem a nota ignorada, nem evento novo. */
+    const nadaMudou = (t: TabelasSefaz, k: Nome, eventos = 0) => {
+      expect(notaDe(t, k).motivo_ignorar).toBeNull();
+      expect(t.sefaz_manifestacoes).toHaveLength(eventos);
+    };
+    const linhaDaLista = async (svc: CaixaSefazService, k: Nome) => (await svc.listar('todas', 500, AGORA)).find((l) => l.id === N[k])!;
+
+    describe('ignorar avisando a SEFAZ: as regras, nesta ordem', () => {
+      it('1. variável desligada (ausente ou "desligada"): 503 SEFAZ_RESPOSTAS_DESLIGADAS, e nada muda', async () => {
+        for (const manifestacao of [undefined, 'desligada']) {
+          const { svc, t } = montarR({ manifestacao });
+          expect(await recusa(ign(svc, 'ok', 'nao_reconheco'))).toEqual({
+            status: 503,
+            code: 'SEFAZ_RESPOSTAS_DESLIGADAS',
+            message: FRASE_DESLIGADAS,
+          });
+          nadaMudou(t, 'ok');
+        }
+      });
+
+      it('2. respostas não ligadas (sem linha, ou desligadas): 409 SEFAZ_RESPOSTAS_NAO_LIGADAS', async () => {
+        for (const respostas of [undefined, { ligada: false }]) {
+          const { svc, t } = montarR({ respostas });
+          expect(await recusa(ign(svc, 'ok', 'nao_reconheco'))).toEqual({
+            status: 409,
+            code: 'SEFAZ_RESPOSTAS_NAO_LIGADAS',
+            message: 'As respostas à SEFAZ estão desligadas. Ligue em Configurações → Notas da SEFAZ.',
+          });
+          nadaMudou(t, 'ok');
+        }
+      });
+
+      it('3. "Outro motivo" e o "Ciente" do cancelamento não avisam: 400 VALIDATION_ERROR', async () => {
+        for (const [motivo, texto] of [
+          ['outro', 'Nota de outra filial'],
+          ['cancelamento_conferido', null],
+        ] as const) {
+          const { svc, t } = montarR();
+          expect(await recusa(ign(svc, 'ok', motivo, texto))).toEqual({
+            status: 400,
+            code: 'VALIDATION_ERROR',
+            message: 'Este motivo não avisa a SEFAZ.',
+          });
+          nadaMudou(t, 'ok');
+        }
+      });
+
+      it('4. nota de saída, cancelada, denegada, sem data ou sem tipo: 409 SEFAZ_NAO_RESPONDIVEL', async () => {
+        for (const k of ['saida', 'cancelada', 'denegada', 'semBase', 'semTpNf'] as const) {
+          const { svc, t } = montarR();
+          expect(await recusa(ign(svc, k, 'lancada_de_outro_jeito'))).toEqual({
+            status: 409,
+            code: 'SEFAZ_NAO_RESPONDIVEL',
+            message: 'Esta nota não aceita resposta à SEFAZ.',
+          });
+          nadaMudou(t, k);
+        }
+      });
+
+      it('5. passou o prazo de 90 dias da autorização: 409 SEFAZ_PRAZO_PASSOU (no 90º dia exato já passou; 1 s antes, não)', async () => {
+        const { svc, t } = montarR();
+        expect(await recusa(ign(svc, 'velha', 'nao_reconheco'))).toEqual({
+          status: 409,
+          code: 'SEFAZ_PRAZO_PASSOU',
+          message: 'Passou o prazo de 90 dias para responder à SEFAZ sobre esta nota.',
+        });
+        nadaMudou(t, 'velha');
+        const base = notaDe(t, 'ok').autorizada_em!.getTime();
+        expect(await recusa(svc.ignorar(N.ok, 'nao_reconheco', null, QUEM, new Date(base + 90 * D), true))).toMatchObject({
+          status: 409,
+          code: 'SEFAZ_PRAZO_PASSOU',
+        });
+        await svc.ignorar(N.ok, 'nao_reconheco', null, QUEM, new Date(base + 90 * D - 1000), true);
+        expect(t.sefaz_manifestacoes).toHaveLength(1);
+      });
+
+      it('6. resposta final ativa (na fila, enviando, registrada ou falhou): 409 SEFAZ_JA_RESPONDIDA', async () => {
+        for (const situacao of ['na_fila', 'enviando', 'registrada', 'falhou']) {
+          const { svc, t } = montarR();
+          t.sefaz_manifestacoes.push(evento('ok', '210200', { situacao, origem: 'dar_entrada' }));
+          expect(await recusa(ign(svc, 'ok', 'nao_reconheco'))).toEqual({
+            status: 409,
+            code: 'SEFAZ_JA_RESPONDIDA',
+            message: 'Esta nota já tem resposta final na SEFAZ.',
+          });
+          nadaMudou(t, 'ok', 1);
+        }
+      });
+
+      it('7. a justificativa da "compra não aconteceu": 400 com as três frases', async () => {
+        const casos: [string | null, string][] = [
+          ['Pedido cancela', 'Conte o que houve com pelo menos 15 letras.'], // 14
+          [null, 'Conte o que houve com pelo menos 15 letras.'],
+          ['   \n  ', 'Conte o que houve com pelo menos 15 letras.'],
+          ['a'.repeat(256), 'Use no máximo 255 letras.'],
+          ['Devolvido 🍅 inteiro', 'Use só letras, números e pontuação comum (sem emoji).'],
+        ];
+        for (const [texto, message] of casos) {
+          const { svc, t } = montarR();
+          expect(await recusa(ign(svc, 'ok', 'compra_nao_aconteceu', texto))).toEqual({ status: 400, code: 'VALIDATION_ERROR', message });
+          nadaMudou(t, 'ok');
+        }
+        const { svc, t } = montarR();
+        await ign(svc, 'ok', 'compra_nao_aconteceu', 'Pedido cancelad'); // 15
+        expect(t.sefaz_manifestacoes[0]).toMatchObject({ tp_evento: '210240', x_just: 'Pedido cancelad' });
+      });
+
+      it('"A compra não aconteceu" sem avisar a SEFAZ: 400 "Este motivo sempre avisa a SEFAZ.", mesmo com as respostas desligadas', async () => {
+        for (const o of [{}, { manifestacao: undefined }]) {
+          const { svc, t } = montarR(o);
+          expect(await recusa(ign(svc, 'ok', 'compra_nao_aconteceu', 'Pedido cancelado pelo fornecedor', false))).toEqual({
+            status: 400,
+            code: 'VALIDATION_ERROR',
+            message: 'Este motivo sempre avisa a SEFAZ.',
+          });
+          nadaMudou(t, 'ok');
+        }
+      });
+
+      it('a ordem: cada regra vem antes das seguintes', async () => {
+        // 1 antes de 3
+        expect(await recusa(ign(montarR({ manifestacao: undefined }).svc, 'saida', 'outro', 'x'))).toMatchObject({
+          code: 'SEFAZ_RESPOSTAS_DESLIGADAS',
+        });
+        // 2 antes de 3 e 4
+        expect(await recusa(ign(montarR({ respostas: { ligada: false } }).svc, 'saida', 'outro', 'x'))).toMatchObject({
+          code: 'SEFAZ_RESPOSTAS_NAO_LIGADAS',
+        });
+        // 3 antes de 4
+        expect(await recusa(ign(montarR().svc, 'saida', 'outro', 'x'))).toMatchObject({ status: 400, code: 'VALIDATION_ERROR' });
+        // 4 antes de 5: cancelada e velha
+        const a = montarR();
+        notaDe(a.t, 'velha').situacao_sefaz = 'cancelada';
+        expect(await recusa(ign(a.svc, 'velha', 'nao_reconheco'))).toMatchObject({ code: 'SEFAZ_NAO_RESPONDIVEL' });
+        // 5 antes de 6: velha com resposta final ativa
+        const b = montarR();
+        b.t.sefaz_manifestacoes.push(evento('velha', '210200', { situacao: 'na_fila' }));
+        expect(await recusa(ign(b.svc, 'velha', 'nao_reconheco'))).toMatchObject({ code: 'SEFAZ_PRAZO_PASSOU' });
+        // 6 antes de 7: resposta final ativa e justificativa curta
+        const c = montarR();
+        c.t.sefaz_manifestacoes.push(evento('ok', '210220', { situacao: 'registrada' }));
+        expect(await recusa(ign(c.svc, 'ok', 'compra_nao_aconteceu', 'curta'))).toMatchObject({ code: 'SEFAZ_JA_RESPONDIDA' });
+      });
+    });
+
+    describe('ignorar avisando a SEFAZ: o evento', () => {
+      it('cada motivo pede o evento certo; sem a caixa marcada, nenhum (o Ignorar da entrega 2)', async () => {
+        const casos = [
+          ['lancada_de_outro_jeito', null, '210200', 'confirmacao'],
+          ['nao_e_compra', null, '210200', 'confirmacao'],
+          ['nao_reconheco', null, '210220', 'nao_reconheco'],
+          ['compra_nao_aconteceu', 'Pedido cancelado pelo fornecedor', '210240', 'nao_aconteceu'],
+        ] as const;
+        for (const [motivo, texto, tp, tipo] of casos) {
+          const { svc, t } = montarR();
+          const r = await ign(svc, 'ok', motivo, texto);
+          expect(t.sefaz_manifestacoes).toHaveLength(1);
+          expect(t.sefaz_manifestacoes[0]).toMatchObject({ tp_evento: tp, x_just: tp === '210240' ? texto : null });
+          expect(r).toMatchObject({ situacao: 'ignorada', ignorada: { motivo } });
+          expect(r.resposta?.final).toMatchObject({ estado: 'na_fila', tipo, origem: 'admin', protocolo: null, mensagem: null });
+          expect(r.resposta?.pode_responder).toBe(false);
+        }
+        for (const motivo of ['lancada_de_outro_jeito', 'nao_e_compra', 'nao_reconheco']) {
+          const { svc, t } = montarR();
+          const r = await ign(svc, 'ok', motivo, null, false);
+          expect(r).toMatchObject({ situacao: 'ignorada', ignorada: { motivo } });
+          expect(t.sefaz_manifestacoes).toHaveLength(0);
+        }
+      });
+
+      it('o evento do admin: na fila, 60 s de espera, autoria, sem tentativas; a nota ignorada junto, sob a trava das respostas', async () => {
+        const { svc, t, chavesUsadas } = montarR();
+        await ign(svc, 'ok', 'nao_reconheco', '  não conheço  ');
+        expect(t.sefaz_manifestacoes).toHaveLength(1);
+        expect(t.sefaz_manifestacoes[0]).toMatchObject({
+          nota_sefaz_id: N.ok,
+          ambiente: 'producao',
+          cnpj: NOSSO,
+          chave: CH.ok,
+          tp_evento: '210220',
+          n_seq: 1,
+          x_just: null,
+          origem: 'admin',
+          pedida_por: QUEM.id,
+          pedida_por_nome: 'Ana',
+          pedida_em: AGORA,
+          enviar_apos: MAIS60S,
+          situacao: 'na_fila',
+          tentativas: 0,
+          lote_id: null,
+          xml_evento: null,
+        });
+        expect(notaDe(t, 'ok')).toMatchObject({
+          ignorada_em: AGORA,
+          ignorada_por: QUEM.id,
+          ignorada_por_nome: 'Ana',
+          motivo_ignorar: 'nao_reconheco',
+          motivo_texto: 'não conheço',
+        });
+        expect(chavesUsadas).toEqual([CHAVE_TRAVA_SEFAZ_EVENTOS]);
+        expect(JSON.parse(logs.find((l) => l.includes('"acao":"ignorar"'))!)).toEqual({
+          evento: 'sefaz.caixa',
+          acao: 'ignorar',
+          id: N.ok,
+          motivo: 'nao_reconheco',
+          tp_evento: '210220',
+          usuario_id: QUEM.id,
+        });
+      });
+
+      it('a ciência na fila que nunca saiu vira cancelada; a que já saiu (tentativa ou lote que chegou lá) e a registrada ficam', async () => {
+        const casos: [Record<string, unknown>, string | null, string][] = [
+          [{ situacao: 'na_fila' }, null, 'cancelada'],
+          [{ situacao: 'na_fila' }, 'falha_antes_de_enviar', 'cancelada'],
+          [{ situacao: 'na_fila', tentativas: 1 }, null, 'na_fila'],
+          [{ situacao: 'na_fila' }, 'respondida', 'na_fila'],
+          [{ situacao: 'na_fila' }, 'interrompida', 'na_fila'],
+          [{ situacao: 'registrada', n_prot: NPROT, c_stat: 135 }, null, 'registrada'],
+        ];
+        for (const [x, resultado, fica] of casos) {
+          const { svc, t } = montarR();
+          const l = resultado ? lote(resultado) : null;
+          if (l) t.sefaz_eventos_lotes.push(l);
+          t.sefaz_manifestacoes.push(evento('ok', '210210', { ...x, lote_id: l?.id ?? null }));
+          await ign(svc, 'ok', 'lancada_de_outro_jeito');
+          expect([t.sefaz_manifestacoes[0]!.tp_evento, t.sefaz_manifestacoes[0]!.situacao]).toEqual(['210210', fica]);
+          expect(t.sefaz_manifestacoes[1]).toMatchObject({ tp_evento: '210200', situacao: 'na_fila' });
+        }
+      });
+
+      it('Review Focus 3: o 2º ignorar com aviso (outra aba) é 409 SEFAZ_JA_RESPONDIDA e não cria outro evento', async () => {
+        const { svc, t } = montarR();
+        await ign(svc, 'ok', 'nao_reconheco');
+        expect(await recusa(ign(svc, 'ok', 'lancada_de_outro_jeito'))).toEqual({
+          status: 409,
+          code: 'SEFAZ_JA_RESPONDIDA',
+          message: 'Esta nota já tem resposta final na SEFAZ.',
+        });
+        expect(t.sefaz_manifestacoes).toHaveLength(1);
+        expect(notaDe(t, 'ok').motivo_ignorar).toBe('nao_reconheco');
+      });
+
+      it('nota e evento juntos: o INSERT do evento falha → a nota não fica ignorada e a ciência continua na fila', async () => {
+        const { svc, t, prisma } = montarR();
+        t.sefaz_manifestacoes.push(evento('ok', '210210', { situacao: 'na_fila' }));
+        jest.spyOn(prisma.sefaz_manifestacoes, 'create').mockRejectedValueOnce(new Error('falha no banco'));
+        await expect(ign(svc, 'ok', 'nao_reconheco')).rejects.toThrow('falha no banco');
+        expect(notaDe(t, 'ok')).toMatchObject({ ignorada_em: null, motivo_ignorar: null });
+        expect(t.sefaz_manifestacoes.map((e) => [e.tp_evento, e.situacao])).toEqual([['210210', 'na_fila']]);
+      });
+
+      it('o índice de uma resposta final por chave recusa (corrida entre duas abas): 409 SEFAZ_JA_RESPONDIDA, nada gravado', async () => {
+        const { svc, t, prisma } = montarR();
+        jest
+          .spyOn(prisma.sefaz_manifestacoes, 'create')
+          .mockRejectedValueOnce(
+            new Prisma.PrismaClientKnownRequestError('sefaz_manifestacoes_uma_final', { code: 'P2002', clientVersion: 'x' }),
+          );
+        expect(await recusa(ign(svc, 'ok', 'nao_reconheco'))).toEqual({
+          status: 409,
+          code: 'SEFAZ_JA_RESPONDIDA',
+          message: 'Esta nota já tem resposta final na SEFAZ.',
+        });
+        nadaMudou(t, 'ok');
+      });
+
+      it('resposta do mesmo tipo recusada pela SEFAZ ainda ocupa a vaga do evento: 409 SEFAZ_NAO_RESPONDIVEL; outro tipo segue', async () => {
+        const { svc, t } = montarR();
+        t.sefaz_manifestacoes.push(evento('ok', '210220', { situacao: 'recusada', c_stat: 1234 }));
+        expect(await recusa(ign(svc, 'ok', 'nao_reconheco'))).toEqual({
+          status: 409,
+          code: 'SEFAZ_NAO_RESPONDIVEL',
+          message: 'Esta nota não aceita resposta à SEFAZ.',
+        });
+        nadaMudou(t, 'ok', 1);
+        await ign(svc, 'ok', 'lancada_de_outro_jeito');
+        expect(t.sefaz_manifestacoes.map((e) => [e.tp_evento, e.situacao])).toEqual([
+          ['210220', 'recusada'],
+          ['210200', 'na_fila'],
+        ]);
+      });
+
+      it('Review Focus 4: a justificativa digitada no celular é gravada normalizada, no evento e na nota', async () => {
+        const casos = [
+          ['Mercadoria devolvida — “recusada” na porta’', 'Mercadoria devolvida - "recusada" na porta\''],
+          ['  pedido\ncancelado pelo fornecedor  ', 'pedido cancelado pelo fornecedor'],
+          ['pedido\u0085cancelado pelo fornecedor', 'pedido cancelado pelo fornecedor'],
+        ];
+        for (const [digitado, gravado] of casos) {
+          const { svc, t } = montarR();
+          const r = await ign(svc, 'ok', 'compra_nao_aconteceu', digitado);
+          expect(t.sefaz_manifestacoes[0]!.x_just).toBe(gravado);
+          expect(notaDe(t, 'ok').motivo_texto).toBe(gravado);
+          expect(r.ignorada?.texto).toBe(gravado);
+        }
+      });
+    });
+
+    describe('reabrir', () => {
+      it('Review Focus 2: cancela o evento do admin ainda na fila; o enviando e o registrado ficam; sob a trava das respostas', async () => {
+        const { svc, t, chavesUsadas } = montarR();
+        const l = lote(null);
+        t.sefaz_eventos_lotes.push(l);
+        t.sefaz_manifestacoes.push(
+          evento('ok', '210220', { situacao: 'na_fila', enviar_apos: MAIS60S }),
+          evento('perto', '210220', { situacao: 'enviando', tentativas: 1, lote_id: l.id }),
+          evento('perto2', '210220', { situacao: 'registrada', n_prot: NPROT, c_stat: 135 }),
+        );
+        for (const k of ['ok', 'perto', 'perto2'] as const) {
+          notaDe(t, k).ignorada_em = AGORA;
+          notaDe(t, k).motivo_ignorar = 'nao_reconheco';
+        }
+        const r = await svc.reabrir(N.ok, QUEM, AGORA);
+        expect(r).toMatchObject({ situacao: 'falta_lancar', ignorada: null, resposta: { final: null, pode_responder: true } });
+        await svc.reabrir(N.perto, QUEM, AGORA);
+        await svc.reabrir(N.perto2, QUEM, AGORA);
+        expect(t.sefaz_manifestacoes.map((e) => e.situacao)).toEqual(['cancelada', 'enviando', 'registrada']);
+        expect(t.sefaz_manifestacoes[0]!.atualizada_em).toEqual(AGORA);
+        expect(notaDe(t, 'perto').motivo_ignorar).toBeNull();
+        expect(chavesUsadas).toEqual([CHAVE_TRAVA_SEFAZ_EVENTOS, CHAVE_TRAVA_SEFAZ_EVENTOS, CHAVE_TRAVA_SEFAZ_EVENTOS]);
+      });
+
+      it('não cancela o que já saiu nem o automático: evento do admin de volta à fila depois de enviado, confirmação do "Dar entrada" e ciência', async () => {
+        const casos: [string, Record<string, unknown>][] = [
+          ['210220', { situacao: 'na_fila', tentativas: 1 }],
+          ['210200', { situacao: 'na_fila', origem: 'dar_entrada' }],
+          ['210210', { situacao: 'na_fila' }],
+        ];
+        for (const [tp, x] of casos) {
+          const { svc, t } = montarR();
+          t.sefaz_manifestacoes.push(evento('ok', tp, x));
+          await svc.reabrir(N.ok, QUEM, AGORA);
+          expect(t.sefaz_manifestacoes[0]!.situacao).toBe('na_fila');
+        }
+      });
+
+      it('ignorar avisando, reabrir (Desfazer) e ignorar de novo: o evento cancelado não ocupa a vaga', async () => {
+        const { svc, t } = montarR();
+        await ign(svc, 'ok', 'nao_reconheco');
+        await svc.reabrir(N.ok, QUEM, AGORA);
+        const r = await ign(svc, 'ok', 'compra_nao_aconteceu', 'Pedido cancelado pelo fornecedor');
+        expect(t.sefaz_manifestacoes.map((e) => [e.tp_evento, e.situacao])).toEqual([
+          ['210220', 'cancelada'],
+          ['210240', 'na_fila'],
+        ]);
+        expect(r.resposta?.final).toMatchObject({ tipo: 'nao_aconteceu', estado: 'na_fila' });
+      });
+    });
+
+    describe('responder de novo', () => {
+      it('o evento que falhou mais recente volta à fila com 0 tentativas e sai já; o outro fica; sob a trava das respostas', async () => {
+        const { svc, t, chavesUsadas } = montarR();
+        t.sefaz_manifestacoes.push(
+          evento('ok', '210210', { situacao: 'falhou', tentativas: 3, atualizada_em: diasAtras(3) }),
+          evento('ok', '210220', { situacao: 'falhou', tentativas: 3, atualizada_em: diasAtras(1), x_motivo: MOTIVO_SEM_ASSINATURA }),
+        );
+        const r = await svc.responderDeNovo(N.ok, QUEM, AGORA);
+        expect(t.sefaz_manifestacoes[1]).toMatchObject({ situacao: 'na_fila', tentativas: 0, enviar_apos: AGORA, atualizada_em: AGORA });
+        expect(t.sefaz_manifestacoes[0]).toMatchObject({ situacao: 'falhou', tentativas: 3 });
+        expect(r.resposta?.final).toMatchObject({ tipo: 'nao_reconheco', estado: 'na_fila', mensagem: null });
+        expect(chavesUsadas).toEqual([CHAVE_TRAVA_SEFAZ_EVENTOS]);
+        expect(JSON.parse(logs.find((l) => l.includes('"acao":"responder_de_novo"'))!)).toMatchObject({ id: N.ok, usuario_id: QUEM.id });
+      });
+
+      it('sem evento que falhou: 409 SEFAZ_NADA_A_REENVIAR, e nada muda', async () => {
+        const { svc, t } = montarR();
+        t.sefaz_manifestacoes.push(
+          evento('ok', '210210', { situacao: 'registrada', n_prot: NPROT, c_stat: 135 }),
+          evento('ok', '210220', { situacao: 'recusada', c_stat: 650 }),
+        );
+        const antes = t.sefaz_manifestacoes.map((e) => ({ ...e }));
+        expect(await recusa(svc.responderDeNovo(N.ok, QUEM, AGORA))).toEqual({
+          status: 409,
+          code: 'SEFAZ_NADA_A_REENVIAR',
+          message: 'Não há resposta para enviar de novo nesta nota.',
+        });
+        expect(t.sefaz_manifestacoes).toEqual(antes);
+      });
+
+      it('id desconhecido ou de outro CNPJ: 404; servidor sem a busca: 503 SEFAZ_DESLIGADA', async () => {
+        const { svc, t } = montarR();
+        expect(await recusa(svc.responderDeNovo(ID_FORA, QUEM, AGORA))).toMatchObject({ status: 404, code: 'NOT_FOUND' });
+        notaDe(t, 'ok').cnpj_destinatario = '99888777000100';
+        expect(await recusa(svc.responderDeNovo(N.ok, QUEM, AGORA))).toMatchObject({ status: 404 });
+        expect(await recusa(montar({ ambiente: 'desligado' }).svc.responderDeNovo(N.ok, QUEM, AGORA))).toMatchObject({
+          status: 503,
+          code: 'SEFAZ_DESLIGADA',
+        });
+      });
+    });
+
+    describe('ligar e desligar as respostas', () => {
+      it('variável desligada (ou a busca desligada no servidor): 503 SEFAZ_RESPOSTAS_DESLIGADAS, e nada gravado', async () => {
+        for (const o of [{ manifestacao: undefined }, { ambiente: 'desligado' }]) {
+          const { svc, t } = montar({ ...o, linha: null });
+          for (const ligar of [true, false]) {
+            expect(await recusa(svc.configurarRespostas(ligar, QUEM, AGORA))).toEqual({
+              status: 503,
+              code: 'SEFAZ_RESPOSTAS_DESLIGADAS',
+              message: FRASE_DESLIGADAS,
+            });
+          }
+          expect(t.sefaz_manifestacao).toHaveLength(0);
+          expect(t.sefaz_distribuicao_historico).toHaveLength(0);
+        }
+      });
+
+      it('as conferências e as frases de "Ligar a busca": sem certificado, sem CNPJ, outra raiz; nada gravado', async () => {
+        const casos: [Opcoes, { status: number; code: string }][] = [
+          [
+            { certErro: new CertificadoErro(MSG_USO.naoCadastrado, 503, 'CERTIFICADO_NAO_CADASTRADO') },
+            { status: 503, code: 'CERTIFICADO_NAO_CADASTRADO' },
+          ],
+          [{ cnpjEmpresa: '' }, { status: 422, code: 'SEFAZ_SEM_CNPJ' }],
+          [{ certCnpj: '99888777000100' }, { status: 422, code: 'SEFAZ_CERTIFICADO_OUTRA_EMPRESA' }],
+        ];
+        for (const [o, esperado] of casos) {
+          const { svc, t } = montar({ manifestacao: 'ligada', linha: null, ...o });
+          expect(await recusa(svc.configurarRespostas(true, QUEM, AGORA))).toMatchObject(esperado);
+          expect(t.sefaz_manifestacao).toHaveLength(0);
+          expect(t.sefaz_distribuicao_historico).toHaveLength(0);
+        }
+        const { svc } = montar({
+          manifestacao: 'ligada',
+          linha: null,
+          certErro: new CertificadoErro(MSG_USO.naoCadastrado, 503, 'CERTIFICADO_NAO_CADASTRADO'),
+        });
+        expect((await recusa(svc.configurarRespostas(true, QUEM, AGORA))).message).toBe(MSG_USO.naoCadastrado);
+      });
+
+      it('ligar: linha ligada, ok, sem frase, falhas zeradas, ligada_em e autoria; histórico respostas_ligadas; só a trava das respostas', async () => {
+        const { svc, t, chavesUsadas } = montar({ manifestacao: 'ligada', linha: null });
+        const s = await svc.configurarRespostas(true, QUEM, AGORA);
+        expect(t.sefaz_manifestacao).toHaveLength(1);
+        expect(t.sefaz_manifestacao[0]).toMatchObject({
+          ambiente: 'producao',
+          cnpj: NOSSO,
+          ligada: true,
+          situacao: 'ok',
+          mensagem: null,
+          falhas_seguidas: 0,
+          pausa_ate: null,
+          ligada_em: AGORA,
+          alterada_por: QUEM.id,
+          alterada_por_nome: 'Ana',
+          alterada_em: AGORA,
+        });
+        expect(t.sefaz_distribuicao_historico).toHaveLength(1);
+        expect(t.sefaz_distribuicao_historico[0]).toMatchObject({
+          ambiente: 'producao',
+          cnpj: NOSSO,
+          evento: 'respostas_ligadas',
+          situacao: 'ok',
+          feito_por: QUEM.id,
+          feito_por_nome: 'Ana',
+          feito_em: AGORA,
+        });
+        expect(chavesUsadas).toEqual([CHAVE_TRAVA_SEFAZ_EVENTOS]);
+        expect(chavesUsadas).not.toContain(CHAVE_TRAVA_SEFAZ);
+        if (s.ambiente === 'desligado') throw new Error('desligado');
+        expect(s.respostas).toMatchObject({
+          disponivel: true,
+          ligadas: true,
+          situacao: 'ok',
+          ligadas_por_nome: 'Ana',
+          ligadas_em: AGORA.toISOString(),
+        });
+        expect(s.busca_ligada).toBe(false);
+        expect(s.historico).toEqual([]); // o histórico da busca não mostra as respostas
+        expect(JSON.parse(logs.find((l) => l.includes('"acao":"ligar_respostas"'))!)).toEqual({
+          evento: 'sefaz.caixa',
+          acao: 'ligar_respostas',
+          usuario_id: QUEM.id,
+        });
+      });
+
+      it('ligar de novo depois de uma parada: volta ok e zera as falhas, sem reescrever ligada_em nem a pausa; aparece quem religou', async () => {
+        const antes = {
+          ligada: true,
+          ligada_em: diasAtras(7),
+          situacao: 'parada_656',
+          mensagem: 'A SEFAZ bloqueou as respostas duas vezes em 24 horas.',
+          falhas_seguidas: 2,
+          pausa_ate: MAIS65,
+          alterada_por: '0b8f5c2e-1111-4000-8000-000000000002',
+          alterada_por_nome: 'Diego',
+          alterada_em: diasAtras(7),
+        };
+        const { svc, t } = montar({ manifestacao: 'ligada', linha: null, respostas: antes });
+        const s = await svc.configurarRespostas(true, QUEM, AGORA);
+        expect(t.sefaz_manifestacao[0]).toMatchObject({
+          ligada: true,
+          situacao: 'ok',
+          mensagem: null,
+          falhas_seguidas: 0,
+          ligada_em: diasAtras(7),
+          pausa_ate: MAIS65,
+          alterada_por_nome: 'Ana',
+          alterada_em: AGORA,
+        });
+        if (s.ambiente === 'desligado') throw new Error('desligado');
+        expect(s.respostas).toMatchObject({
+          ligadas: true,
+          situacao: 'ok',
+          mensagem: null,
+          ligadas_por_nome: 'Ana',
+          ligadas_em: AGORA.toISOString(),
+        });
+        expect(s.respostas.pausa_ate).toBe(MAIS65.toISOString());
+      });
+
+      it('ligar depois de desligadas grava ligada_em de novo (as notas lançadas enquanto desligadas não são confirmadas)', async () => {
+        const { svc, t } = montar({ manifestacao: 'ligada', linha: null, respostas: { ligada: false, ligada_em: diasAtras(7) } });
+        await svc.configurarRespostas(true, QUEM, AGORA);
+        expect(t.sefaz_manifestacao[0]).toMatchObject({ ligada: true, ligada_em: AGORA });
+      });
+
+      it('desligar: só ligada = false, autoria e o histórico; pausa, falhas, ligada_em, situação e a fila ficam', async () => {
+        const m = montarR({
+          respostas: {
+            ligada: true,
+            ligada_em: diasAtras(7),
+            situacao: 'parada_relogio',
+            mensagem: 'x',
+            falhas_seguidas: 1,
+            pausa_ate: MAIS65,
+          },
+        });
+        m.t.sefaz_manifestacoes.push(
+          evento('ok', '210210', { situacao: 'na_fila' }),
+          evento('perto', '210220', { situacao: 'na_fila', enviar_apos: MAIS60S }),
+        );
+        const fila = m.t.sefaz_manifestacoes.map((e) => ({ ...e }));
+        const s = await m.svc.configurarRespostas(false, QUEM, AGORA);
+        expect(m.t.sefaz_manifestacao[0]).toMatchObject({
+          ligada: false,
+          ligada_em: diasAtras(7),
+          situacao: 'parada_relogio',
+          mensagem: 'x',
+          falhas_seguidas: 1,
+          pausa_ate: MAIS65,
+          alterada_por_nome: 'Ana',
+          alterada_em: AGORA,
+        });
+        expect(m.t.sefaz_manifestacoes).toEqual(fila);
+        expect(m.t.sefaz_distribuicao_historico.map((h) => [h.evento, h.situacao, h.feito_por_nome])).toEqual([
+          ['respostas_desligadas', 'parada_relogio', 'Ana'],
+        ]);
+        expect(m.chavesUsadas).toEqual([CHAVE_TRAVA_SEFAZ_EVENTOS]);
+        if (s.ambiente === 'desligado') throw new Error('desligado');
+        expect(s.respostas).toMatchObject({ ligadas: false, ligadas_por_nome: null, ligadas_em: null, na_fila: 2 });
+        // ligar de novo também não mexe na fila nem na pausa
+        await m.svc.configurarRespostas(true, QUEM, new Date(AGORA.getTime() + 1000));
+        expect(m.t.sefaz_manifestacoes).toEqual(fila);
+        expect(m.t.sefaz_manifestacao[0]!.pausa_ate).toEqual(MAIS65);
+      });
+
+      it('desligar sem linha (ou sem CNPJ) não grava nada', async () => {
+        for (const o of [{}, { cnpjEmpresa: '' }]) {
+          const { svc, t } = montar({ manifestacao: 'ligada', linha: null, ...o });
+          await svc.configurarRespostas(false, QUEM, AGORA);
+          expect(t.sefaz_manifestacao).toHaveLength(0);
+          expect(t.sefaz_distribuicao_historico).toHaveLength(0);
+        }
+      });
+    });
+
+    describe('situação e caixa com as respostas', () => {
+      it('variável desligada: respostas.disponivel = false (o resto vazio) e cada linha com resposta null', async () => {
+        const { svc } = montar({ semear: true, respostas: { ligada: true } });
+        const s = await aberta(svc);
+        expect(s.respostas).toEqual({
+          disponivel: false,
+          ligadas: false,
+          situacao: 'ok',
+          mensagem: null,
+          pausa_ate: null,
+          ligadas_por_nome: null,
+          ligadas_em: null,
+          na_fila: 0,
+          falharam: 0,
+          prazos_perto: [],
+        });
+        const r = await svc.listar('todas', 100, AGORA);
+        expect(r).toHaveLength(5);
+        expect(r.every((l) => l.resposta === null)).toBe(true);
+      });
+
+      it('empresa sem CNPJ: respostas disponíveis e desligadas', async () => {
+        const { svc } = montar({ manifestacao: 'ligada', cnpjEmpresa: '', linha: null });
+        expect((await aberta(svc)).respostas).toMatchObject({ disponivel: true, ligadas: false, na_fila: 0, prazos_perto: [] });
+      });
+
+      it('quadro das respostas: a linha, a fila, as que falharam e as notas perto do prazo (a que vence primeiro antes)', async () => {
+        const m = montarR({
+          respostas: {
+            ligada: true,
+            ligada_em: diasAtras(7),
+            situacao: 'ok',
+            mensagem: 'A SEFAZ pediu para esperar. As respostas saem de novo às 15h10.',
+            pausa_ate: MAIS65,
+            alterada_por_nome: 'Diego',
+            alterada_em: diasAtras(7),
+          },
+        });
+        m.t.sefaz_manifestacoes.push(
+          evento('ok', '210210', { situacao: 'na_fila' }),
+          evento('saida', '210220', { situacao: 'na_fila' }),
+          evento('semTpNf', '210220', { situacao: 'falhou', tentativas: 3 }),
+          evento('perto2', '210210', { situacao: 'registrada', n_prot: NPROT, c_stat: 135 }),
+          evento('perto', '210210', { situacao: 'registrada', n_prot: NPROT, c_stat: 135 }),
+          evento('cancelada', '210220', { situacao: 'enviando', tentativas: 1 }),
+          // de outro CNPJ: não conta
+          linhaCom('sefaz_manifestacoes', {
+            nota_sefaz_id: randomUUID(),
+            ambiente: 'producao',
+            cnpj: '99888777000100',
+            chave: chaveN(99),
+            tp_evento: '210210',
+            origem: 'ciencia_automatica',
+            enviar_apos: AGORA,
+            situacao: 'na_fila',
+          }),
+        );
+        const s = await aberta(m.svc);
+        expect(s.respostas).toEqual({
+          disponivel: true,
+          ligadas: true,
+          situacao: 'ok',
+          mensagem: 'A SEFAZ pediu para esperar. As respostas saem de novo às 15h10.',
+          pausa_ate: MAIS65.toISOString(),
+          ligadas_por_nome: 'Diego',
+          ligadas_em: diasAtras(7).toISOString(),
+          na_fila: 2,
+          falharam: 1,
+          prazos_perto: [
+            {
+              id: N.perto,
+              numero: '106',
+              serie: '1',
+              emitente_nome: 'Forn perto',
+              prazo_final: new Date(diasAtras(85).getTime() + 90 * D).toISOString(),
+            },
+            {
+              id: N.perto2,
+              numero: '107',
+              serie: '1',
+              emitente_nome: 'Forn perto2',
+              prazo_final: new Date(diasAtras(82).getTime() + 90 * D).toISOString(),
+            },
+          ],
+        });
+      });
+
+      it('linha da caixa: ciência e resposta final (a mais recente fora as canceladas), prazo em ISO e pode_responder', async () => {
+        const m = montarR();
+        m.t.sefaz_manifestacoes.push(
+          evento('ok', '210210', {
+            situacao: 'registrada',
+            n_prot: NPROT,
+            c_stat: 135,
+            criada_em: diasAtras(2),
+            atualizada_em: diasAtras(1),
+          }),
+          evento('ok', '210210', { situacao: 'cancelada', n_seq: 1, criada_em: AGORA, atualizada_em: AGORA }),
+          evento('ok', '210220', { situacao: 'recusada', c_stat: 650, criada_em: diasAtras(2), atualizada_em: diasAtras(2) }),
+          evento('ok', '210200', {
+            situacao: 'registrada',
+            origem: 'dar_entrada',
+            n_prot: '13526000000000123',
+            c_stat: 135,
+            criada_em: diasAtras(1),
+            atualizada_em: AGORA,
+          }),
+          evento('perto', '210210', { situacao: 'registrada', n_prot: NPROT, c_stat: 135 }),
+          evento('perto2', '210210', { situacao: 'na_fila' }), // nunca saiu: não acende o aviso
+        );
+        const ok = await linhaDaLista(m.svc, 'ok');
+        expect(ok.resposta).toEqual({
+          ciencia: { estado: 'registrada', em: diasAtras(1).toISOString(), protocolo: NPROT, c_stat: 135, mensagem: null },
+          final: {
+            estado: 'registrada',
+            em: AGORA.toISOString(),
+            protocolo: '13526000000000123',
+            c_stat: 135,
+            mensagem: null,
+            tipo: 'confirmacao',
+            origem: 'dar_entrada',
+          },
+          prazo_final: new Date(diasAtras(2).getTime() + 90 * D).toISOString(),
+          prazo_perto: false,
+          prazo_passou: false,
+          pode_responder: false,
+        });
+        expect((await linhaDaLista(m.svc, 'perto')).resposta).toMatchObject({
+          prazo_perto: true,
+          prazo_passou: false,
+          pode_responder: true,
+          final: null,
+        });
+        expect((await linhaDaLista(m.svc, 'perto2')).resposta).toMatchObject({ prazo_perto: false, pode_responder: true });
+        expect((await linhaDaLista(m.svc, 'velha')).resposta).toMatchObject({
+          ciencia: null,
+          final: null,
+          prazo_passou: true,
+          pode_responder: false,
+        });
+        expect((await linhaDaLista(m.svc, 'semBase')).resposta).toEqual({
+          ciencia: null,
+          final: null,
+          prazo_final: null,
+          prazo_perto: false,
+          prazo_passou: false,
+          pode_responder: false,
+        });
+        for (const k of ['saida', 'cancelada', 'denegada', 'semTpNf'] as const) {
+          expect((await linhaDaLista(m.svc, k)).resposta?.pode_responder).toBe(false);
+        }
+      });
+
+      it('pode_responder não depende de as respostas estarem ligadas (o painel diz se estão)', async () => {
+        const { svc } = montarR({ respostas: { ligada: false } });
+        expect((await linhaDaLista(svc, 'ok')).resposta?.pode_responder).toBe(true);
+      });
+
+      it('mensagem: a frase da recusa pelo código; "O XML não pôde ser assinado."; nunca o texto da SEFAZ', async () => {
+        const m = montarR();
+        m.t.sefaz_manifestacoes.push(
+          evento('ok', '210220', { situacao: 'recusada', c_stat: 650, x_motivo: 'Rejeicao: NF-e cancelada' }),
+          evento('perto', '210210', { situacao: 'recusada', c_stat: 655, x_motivo: 'Rejeicao: ja existe evento' }),
+          evento('perto', '210240', {
+            situacao: 'recusada',
+            c_stat: 1234,
+            x_just: 'Pedido cancelado pelo fornecedor',
+            x_motivo: 'Rejeicao: x',
+          }),
+          evento('perto2', '210210', { situacao: 'falhou', tentativas: 0, x_motivo: MOTIVO_SEM_ASSINATURA }),
+          evento('perto2', '210220', { situacao: 'falhou', tentativas: 3, c_stat: 999, x_motivo: 'Rejeicao: erro nao catalogado' }),
+          evento('semTpNf', '210210', { situacao: 'na_fila', c_stat: 656, x_motivo: 'Rejeicao: consumo indevido' }),
+        );
+        const ok = (await linhaDaLista(m.svc, 'ok')).resposta!;
+        expect(ok.final?.mensagem).toBe('A SEFAZ não aceitou a resposta: a nota foi cancelada ou recusada.');
+        const perto = (await linhaDaLista(m.svc, 'perto')).resposta!;
+        expect(perto.ciencia?.mensagem).toBe('Esta nota já tinha resposta à SEFAZ, dada por outro sistema ou pelo portal.');
+        expect(perto.final).toMatchObject({
+          tipo: 'nao_aconteceu',
+          mensagem: 'A SEFAZ não aceitou a resposta (código 1234). Fale com o seu contador.',
+        });
+        const perto2 = (await linhaDaLista(m.svc, 'perto2')).resposta!;
+        expect(perto2.ciencia).toMatchObject({ estado: 'falhou', mensagem: 'O XML não pôde ser assinado.' });
+        expect(perto2.final).toMatchObject({ estado: 'falhou', c_stat: 999, mensagem: null });
+        expect((await linhaDaLista(m.svc, 'semTpNf')).resposta?.ciencia).toMatchObject({ estado: 'na_fila', c_stat: 656, mensagem: null });
+        expect(JSON.stringify(await m.svc.listar('todas', 500, AGORA))).not.toContain('Rejeicao');
+      });
+
+      it('o histórico da busca só mostra ligada, desligada e parada automática (os 5 mais recentes delas)', async () => {
+        const { svc, t } = montar({ manifestacao: 'ligada' });
+        const h = (evento: string, minutos: number) =>
+          linhaCom('sefaz_distribuicao_historico', {
+            ambiente: 'producao',
+            cnpj: NOSSO,
+            evento,
+            situacao: 'ok',
+            feito_em: new Date(AGORA.getTime() - minutos * 60_000),
+          });
+        t.sefaz_distribuicao_historico.push(
+          h('ligada', 60),
+          h('desligada', 50),
+          ...[1, 2, 3, 4, 5, 6].map((i) => h(i % 2 ? 'respostas_ligadas' : 'respostas_paradas', i)),
+          h('respostas_desligadas', 7),
+        );
+        expect((await aberta(svc)).historico.map((x) => x.evento)).toEqual(['desligada', 'ligada']);
+      });
     });
   });
 });

@@ -424,22 +424,25 @@ req GET /v1/configuracoes "$LOJA"; check "loja lê config sem certificado" 0 "$(
 # sefaz_consultas só tem a linha semeada (a consulta é gravada ANTES de qualquer pergunta sair).
 SZ=/v1/notas-sefaz
 ZERO=00000000-0000-4000-8000-000000000000
-# Trava de segurança: se o certificado ainda existir ou houver busca ligada, o smoke PARA aqui (exit 1), antes de qualquer
-# passo que possa ligar a busca ou iniciar uma consulta. (O smoke não usa `set -e`: sem isto, um check falho seguiria adiante.)
+# Trava de segurança: se o certificado ainda existir, ou houver busca ou respostas ligadas, o smoke PARA aqui (exit 1), antes de
+# qualquer passo que possa ligar a busca, iniciar uma consulta ou mandar uma resposta. (O smoke não usa `set -e`: sem isto, um check
+# falho seguiria adiante.) A API do smoke sobe com SEFAZ_MANIFESTACAO=ligada; as respostas nunca são ligadas aqui.
 trava_sefaz() { # trava_sefaz MOMENTO
-  local certs ligadas
+  local certs ligadas respostas
   certs=$(sql "select count(*) from certificado_digital") || certs=erro
   ligadas=$(sql "select count(*) from sefaz_distribuicao where busca_ligada") || ligadas=erro
-  if [ "$certs" != 0 ] || [ "$ligadas" != 0 ]; then
-    echo "TRAVA DO SMOKE ($1): certificado_digital=$certs, buscas ligadas=$ligadas. Nada deve existir aqui; smoke interrompido antes de tocar na SEFAZ."
+  respostas=$(sql "select count(*) from sefaz_manifestacao where ligada") || respostas=erro
+  if [ "$certs" != 0 ] || [ "$ligadas" != 0 ] || [ "$respostas" != 0 ]; then
+    echo "TRAVA DO SMOKE ($1): certificado_digital=$certs, buscas ligadas=$ligadas, respostas ligadas=$respostas. Nada deve existir aqui; smoke interrompido antes de tocar na SEFAZ."
     exit 1
   fi
 }
 trava_sefaz "antes do bloco da SEFAZ"
-for r in "GET $SZ/situacao" "GET $SZ" "GET $SZ/$ZERO/xml" "POST $SZ/buscar" "POST $SZ/$ZERO/reabrir"; do
+for r in "GET $SZ/situacao" "GET $SZ" "GET $SZ/$ZERO/xml" "POST $SZ/buscar" "POST $SZ/$ZERO/reabrir" "POST $SZ/$ZERO/responder-de-novo"; do
   req "${r%% *}" "${r#* }" "$LOJA"; check "loja barrada em $r" 403 "$CODE"
 done
 req PUT $SZ/configuracao "$LOJA" '{"busca_ligada":false}'; check "loja barrada em PUT $SZ/configuracao" 403 "$CODE"
+req PUT $SZ/respostas "$LOJA" '{"ligadas":false}'; check "loja barrada em PUT $SZ/respostas" 403 "$CODE"
 req POST "$SZ/$ZERO/ignorar" "$LOJA" '{"motivo":"nao_e_compra"}'; check "loja barrada em POST $SZ/:id/ignorar" 403 "$CODE"
 req GET $SZ/situacao; check "notas da SEFAZ sem token" 401 "$CODE"
 
@@ -566,6 +569,57 @@ check "(b) segue cancelada depois de lançada" cancelada_depois_de_lancada "$(j 
 req POST "$SZ/$NB/ignorar" "$ADM" '{"motivo":"cancelamento_conferido"}'; check "(b) Ciente: 200" 200 "$CODE"; check "(b) ignorada" ignorada "$(j .situacao)"
 req GET $SZ/situacao "$ADM"; check "faixa some depois do Ciente" 0 "$(j .contagem.cancelada_depois_de_lancada)"
 
+# ---------- respostas à SEFAZ (sem rede: a API tem SEFAZ_MANIFESTACAO=ligada, mas as respostas semeadas estão DESLIGADAS e o certificado
+# foi removido; a única tentativa de ligar dá 503). Dois eventos semeados na nota (c), que já foi lançada: ciência registrada e a
+# confirmação do "Dar entrada" na fila (o tique para em "não ligadas" antes de qualquer rede).
+trava_sefaz "antes do bloco das respostas"
+EV1=00000000-0000-4000-8000-0000000000e1; EV2=00000000-0000-4000-8000-0000000000e2
+docker exec -i erp-freela-postgres psql -U erpfreela -d "$PGDB" -v ON_ERROR_STOP=1 -q >/dev/null <<'SQL'
+insert into sefaz_manifestacao (ambiente, cnpj, ligada) values ('producao', '12345678000195', false);
+insert into sefaz_manifestacoes (id, nota_sefaz_id, ambiente, cnpj, chave, tp_evento, origem, pedida_em, enviar_apos, situacao, tentativas, c_stat, n_prot) values
+  ('00000000-0000-4000-8000-0000000000e1', '00000000-0000-4000-8000-0000000000a3', 'producao', '12345678000195', '35261112ABC34501DE35550010000044111999999993',
+   '210210', 'ciencia_automatica', now() - interval '4 days', now() - interval '4 days', 'registrada', 1, 135, '135260000000001'),
+  ('00000000-0000-4000-8000-0000000000e2', '00000000-0000-4000-8000-0000000000a3', 'producao', '12345678000195', '35261112ABC34501DE35550010000044111999999993',
+   '210200', 'dar_entrada', now(), now(), 'na_fila', 0, null, null);
+SQL
+check "semeadura das respostas" 2 "$(sql "select count(*) from sefaz_manifestacoes")"
+req GET $SZ/situacao "$ADM"
+check "respostas: disponíveis no servidor" true "$(j .respostas.disponivel)"; check "respostas: desligadas" false "$(j .respostas.ligadas)"
+check "respostas: 1 na fila" 1 "$(j .respostas.na_fila)"; check "respostas: nenhuma falhou" 0 "$(j .respostas.falharam)"
+req GET "$SZ?filtro=todas" "$ADM"
+check "(c) ciência registrada" registrada "$(LINHA $KPARECE .resposta.ciencia.estado)"
+check "(c) ciência: protocolo" 135260000000001 "$(LINHA $KPARECE .resposta.ciencia.protocolo)"
+check "(c) confirmação na fila" "confirmacao na_fila dar_entrada" "$(LINHA $KPARECE '[.resposta.final.tipo, .resposta.final.estado, .resposta.final.origem] | join(" ")')"
+check "(c) já respondida" false "$(LINHA $KPARECE .resposta.pode_responder)"
+check "(a) sem resposta" null "$(LINHA $K880 .resposta.ciencia)"; check "(a) prazo em ISO" true "$(LINHA $K880 '.resposta.prazo_final | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T")')"
+req POST "$SZ/$NA/ignorar" "$ADM" '{"motivo":"nao_reconheco","avisar_sefaz":true}'; check "ignorar avisando com as respostas desligadas: 409" 409 "$CODE"
+check "ignorar avisando: code" SEFAZ_RESPOSTAS_NAO_LIGADAS "$(j .error.code)"
+check "ignorar avisando: frase" "As respostas à SEFAZ estão desligadas. Ligue em Configurações → Notas da SEFAZ." "$(j .error.message)"
+req POST "$SZ/$NA/ignorar" "$ADM" '{"motivo":"nao_reconheco","avisar_sefaz":"sim"}'; check "avisar_sefaz que não é booleano: 400" 400 "$CODE"
+req POST "$SZ/$NA/ignorar" "$ADM" '{"motivo":"compra_nao_aconteceu","texto":"Pedido cancelado pelo fornecedor"}'
+check "a compra não aconteceu sem avisar: 400" 400 "$CODE"; check "a compra não aconteceu sem avisar: frase" "Este motivo sempre avisa a SEFAZ." "$(j .error.message)"
+check "nada ignorado nas recusas das respostas" 0 "$(sql "select count(*) from notas_sefaz where id = '$NA' and ignorada_em is not null")"
+req POST "$SZ/$NC/responder-de-novo" "$ADM"; check "tentar de novo sem falha: 409" 409 "$CODE"; check "tentar de novo: code" SEFAZ_NADA_A_REENVIAR "$(j .error.code)"
+req POST "$SZ/$ZERO/responder-de-novo" "$ADM"; check "tentar de novo id inexistente: 404" 404 "$CODE"
+req POST "$SZ/nao-e-uuid/responder-de-novo" "$ADM"; check "tentar de novo id malformado: 404" 404 "$CODE"
+req PUT $SZ/respostas "$ADM" '{"ligadas":"sim"}'; check "ligar as respostas com valor que não é booleano: 400" 400 "$CODE"
+req PUT $SZ/respostas "$ADM" '{}'; check "ligar as respostas sem o campo: 400" 400 "$CODE"
+req PUT $SZ/respostas "$ADM" '{"ligadas":false}'; check "desligar as respostas: 200" 200 "$CODE"; check "desligar: segue desligada" false "$(j .respostas.ligadas)"
+check "desligar: histórico respostas_desligadas" 1 "$(sql "select count(*) from sefaz_distribuicao_historico where evento = 'respostas_desligadas'")"
+check "desligar: o histórico da busca não mostra as respostas" 0 "$(j '.historico | length')"
+trava_sefaz "antes do PUT de ligar as respostas"
+req PUT $SZ/respostas "$ADM" '{"ligadas":true}'; check "ligar as respostas sem certificado: 503" 503 "$CODE"
+[ "$CODE" == 503 ] || { echo "TRAVA DO SMOKE: ligar as respostas sem certificado não deu 503 (veio $CODE); smoke interrompido."; exit 1; }
+trava_sefaz "depois do PUT de ligar as respostas"
+check "ligar as respostas sem certificado: code" CERTIFICADO_NAO_CADASTRADO "$(j .error.code)"
+check "ligar as respostas sem certificado: nada ligado" 0 "$(sql "select count(*) from sefaz_manifestacao where ligada")"
+# o banco recusa evento fora do padrão e uma 2ª resposta final ativa
+EVSQL="insert into sefaz_manifestacoes (nota_sefaz_id, ambiente, cnpj, chave, origem, enviar_apos, tp_evento"
+sql "$EVSQL) values ('$NC','producao','12345678000195','$KPARECE','admin',now(),'110111')" >/dev/null 2>&1; check "banco: tp_evento 110111" 1 "$?"
+sql "$EVSQL, x_just) values ('$NA','producao','12345678000195','$K880','admin',now(),'210200','Pedido cancelado pelo fornecedor')" >/dev/null 2>&1; check "banco: 210200 com x_just" 1 "$?"
+sql "$EVSQL, n_prot) values ('$NA','producao','12345678000195','$K880','admin',now(),'210220','1352600000000011')" >/dev/null 2>&1; check "banco: n_prot de 16 dígitos" 1 "$?"
+sql "$EVSQL) values ('$NC','producao','12345678000195','$KPARECE','admin',now(),'210220')" >/dev/null 2>&1; check "banco: 2ª resposta final ativa" 1 "$?"
+
 # o banco recusa o que a regra proíbe
 sql "insert into sefaz_documentos (ambiente, cnpj, nsu, schema, tipo, consulta_id) values ('producao','12345678000195',1,'x','outro','$CONS')" >/dev/null 2>&1; check "banco: NSU repetido" 1 "$?"
 sql "insert into notas_sefaz (ambiente, cnpj_destinatario, chave, emitente_cnpj, numero, serie, situacao_sefaz) values ('producao','12345678000195','ABC','11222333000181','1','1','autorizada')" >/dev/null 2>&1; check "banco: chave ABC" 1 "$?"
@@ -573,9 +627,15 @@ sql "update notas_sefaz set ignorada_em = now() where id = '$NE'" >/dev/null 2>&
 sql "update notas_sefaz set ignorada_em = now(), motivo_ignorar = 'outro' where id = '$NE'" >/dev/null 2>&1; check "banco: 'outro' sem texto" 1 "$?"
 sql "insert into sefaz_distribuicao (ambiente, cnpj) values ('teste','12345678000195')" >/dev/null 2>&1; check "banco: ambiente 'teste'" 1 "$?"
 
-# último check: nenhuma consulta nova, a busca continuou desligada (nada saiu para a SEFAZ)
+# último check: nenhuma consulta nova, a busca continuou desligada, nenhum lote de respostas e só os 2 eventos semeados, nenhum
+# `enviando` (nada saiu para a SEFAZ)
 check "SEFAZ: só a consulta semeada" 0 "$(sql "select count(*) from sefaz_consultas where id <> '$CONS'")"
 check "SEFAZ: nenhuma busca ligada" 0 "$(sql "select count(*) from sefaz_distribuicao where busca_ligada")"
+check "SEFAZ: respostas desligadas" 0 "$(sql "select count(*) from sefaz_manifestacao where ligada")"
+check "SEFAZ: nenhum lote de respostas" 0 "$(sql "select count(*) from sefaz_eventos_lotes")"
+check "SEFAZ: só os 2 eventos semeados" 2 "$(sql "select count(*) from sefaz_manifestacoes")"
+check "SEFAZ: nenhum evento enviando" 0 "$(sql "select count(*) from sefaz_manifestacoes where situacao = 'enviando'")"
+check "SEFAZ: eventos como semeados" "$EV1 registrada|$EV2 na_fila" "$(sql "select string_agg(id || ' ' || situacao, '|' order by id) from sefaz_manifestacoes")"
 rm -f "$PDF" "$TXT" "$JPG" "$OUT"
 
 echo "smoke: $ok ok, $falhas falha(s)"

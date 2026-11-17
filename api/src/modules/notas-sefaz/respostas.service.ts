@@ -114,6 +114,39 @@ function conferirLinha(l: sefaz_manifestacao | null, agora: Date): Recusa | null
 /** `cStat` que cabe no CHECK da coluna (100–9999); o leitor aceita "000"–"099", que o banco recusaria e derrubaria a T2. */
 const cStatGravavel = (c: number | null): number | null => (c !== null && c >= 100 && c <= 9999 ? c : null);
 
+/**
+ * Já saiu para a SEFAZ: gastou tentativa, ou o lote dele pode ter chegado lá (`resultadoDoLote` = resultado de cada lote, por id). Uma
+ * falha ANTES de enviar não conta (a T2 desfaz o +1). O planejador e a caixa (rotas) usam a mesma conta.
+ */
+export function jaEnviada(
+  e: Pick<sefaz_manifestacoes, 'tentativas' | 'lote_id'>,
+  resultadoDoLote: ReadonlyMap<string, string | null>,
+): boolean {
+  return e.tentativas > 0 || (e.lote_id !== null && LOTE_SAIU.has(resultadoDoLote.get(e.lote_id) ?? ''));
+}
+
+/** A linha do banco no formato do planejador. */
+export function eventoExistente(e: sefaz_manifestacoes, resultadoDoLote: ReadonlyMap<string, string | null>): EventoExistente {
+  return {
+    nota_sefaz_id: e.nota_sefaz_id,
+    tp_evento: e.tp_evento as TipoEvento,
+    situacao: e.situacao as EstadoEvento,
+    origem: e.origem as OrigemEvento,
+    pedida_em: e.pedida_em,
+    ja_enviada: jaEnviada(e, resultadoDoLote),
+  };
+}
+
+/** O resultado de cada lote dos eventos (os que têm `lote_id`), por id, para `jaEnviada`. */
+export async function resultadosDosLotes(
+  db: Pick<Prisma.TransactionClient, 'sefaz_eventos_lotes'>,
+  eventos: Pick<sefaz_manifestacoes, 'lote_id'>[],
+): Promise<Map<string, string | null>> {
+  const ids = [...new Set(eventos.map((e) => e.lote_id).filter((x): x is string => x !== null))];
+  const lotes = ids.length ? await db.sefaz_eventos_lotes.findMany({ where: { id: { in: ids } } }) : [];
+  return new Map(lotes.map((l) => [l.id, l.resultado]));
+}
+
 @Injectable()
 export class RespostasSefazService {
   private readonly logger = new Logger(RespostasSefazService.name);
@@ -389,12 +422,7 @@ export class RespostasSefazService {
     if (lidas.length === 0) return notas;
 
     const eventos = await tx.sefaz_manifestacoes.findMany({ where: { nota_sefaz_id: { in: [...notas.keys()] } } });
-    const loteIds = [...new Set(eventos.map((e) => e.lote_id).filter((x): x is string => x !== null))];
-    const lotes = loteIds.length ? await tx.sefaz_eventos_lotes.findMany({ where: { id: { in: loteIds } } }) : [];
-    const resultadoDoLote = new Map(lotes.map((l) => [l.id, l.resultado]));
-    // Já saiu para a SEFAZ: gastou tentativa, ou o lote dele pode ter chegado lá. Uma falha ANTES de enviar não conta (a T2 desfaz o +1).
-    const jaEnviada = (e: sefaz_manifestacoes) =>
-      e.tentativas > 0 || (e.lote_id !== null && LOTE_SAIU.has(resultadoDoLote.get(e.lote_id) ?? ''));
+    const resultadoDoLote = await resultadosDosLotes(tx, eventos);
 
     const lancadas = await this.notas.notasLancadas({
       chaves: [...new Set(lidas.map((n) => normalizarChave(n.chave)))],
@@ -416,19 +444,14 @@ export class RespostasSefazService {
         lancada_pela_chave_em: lancada ? new Date(lancada.created_at) : null,
       };
     });
-    const existentes: EventoExistente[] = eventos.map((e) => ({
-      nota_sefaz_id: e.nota_sefaz_id,
-      tp_evento: e.tp_evento as TipoEvento,
-      situacao: e.situacao as EstadoEvento,
-      origem: e.origem as OrigemEvento,
-      pedida_em: e.pedida_em,
-      ja_enviada: jaEnviada(e),
-    }));
+    const existentes = eventos.map((e) => eventoExistente(e, resultadoDoLote));
     const plano = planejar(paraPlano, existentes, linha.ligada_em ?? NUNCA, agora);
 
     const cancelar = new Set(plano.cancelarCiencias);
     const ciencias = eventos
-      .filter((e) => cancelar.has(e.nota_sefaz_id) && e.tp_evento === '210210' && e.situacao === 'na_fila' && !jaEnviada(e))
+      .filter(
+        (e) => cancelar.has(e.nota_sefaz_id) && e.tp_evento === '210210' && e.situacao === 'na_fila' && !jaEnviada(e, resultadoDoLote),
+      )
       .map((e) => e.id);
     if (ciencias.length > 0) {
       await tx.sefaz_manifestacoes.updateMany({

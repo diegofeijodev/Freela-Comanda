@@ -92,8 +92,8 @@ function deVolta(ev: Evento, gastou: boolean, cStat: number | null = null): Deci
   return { id: ev.id, estado, gastou, cStat, protocolo: null, mensagem: null };
 }
 
-/** Frase da recusa definitiva de um evento (linha da resposta). */
-function fraseRecusa(cStat: number, tpEvento: TipoEvento): string {
+/** Frase da recusa definitiva de um evento (linha da resposta); a caixa a deriva na leitura do `c_stat` gravado. */
+export function fraseRecusa(cStat: number, tpEvento: TipoEvento): string {
   if (cStat === 655 && tpEvento === '210210') return FRASE_RESPOSTA.recusadaJaRespondida;
   if (cStat === 650 || cStat === 651) return FRASE_RESPOSTA.recusadaCanceladaOuDenegada;
   if (cStat === 596) return FRASE_RESPOSTA.recusadaForaDoPrazo;

@@ -414,6 +414,13 @@ export function montarPrismaSefaz(o: { cnpjEmpresa?: string; travaOcupada?: bool
     },
     sefaz_manifestacao: {
       findUnique: async (a: any) => copia(achar('sefaz_manifestacao', a.where)),
+      create: async (a: any) => {
+        const d = a.data as Record<string, unknown>;
+        if (achar('sefaz_manifestacao', { ambiente_cnpj: { ambiente: d.ambiente, cnpj: d.cnpj } })) {
+          throw new Prisma.PrismaClientKnownRequestError('Linha repetida (falso).', { code: 'P2002', clientVersion: 'falso' });
+        }
+        return inserir('sefaz_manifestacao', d);
+      },
       update: async (a: any) => muda('sefaz_manifestacao', obrigatoria('sefaz_manifestacao', a.where), a.data),
     },
     sefaz_eventos_lotes: {
@@ -430,6 +437,7 @@ export function montarPrismaSefaz(o: { cnpjEmpresa?: string; travaOcupada?: bool
         return copia(nova);
       },
       findMany: async (a: any) => muitos('sefaz_manifestacoes', a),
+      count: async (a: any) => muitos('sefaz_manifestacoes', a).length,
       update: async (a: any) => mudaManifestacao(obrigatoria('sefaz_manifestacoes', a.where), a.data),
       updateMany: async (a: any) => {
         const alvo = lista('sefaz_manifestacoes').filter((l) => casa(l, a.where));

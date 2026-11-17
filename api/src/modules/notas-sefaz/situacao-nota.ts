@@ -14,11 +14,18 @@ export type SituacaoNota =
   | 'parece_lancada'
   | 'falta_lancar';
 
-export type MotivoIgnorar = 'lancada_de_outro_jeito' | 'nao_e_compra' | 'nao_reconheco' | 'cancelamento_conferido' | 'outro';
+export type MotivoIgnorar =
+  | 'lancada_de_outro_jeito'
+  | 'nao_e_compra'
+  | 'nao_reconheco'
+  | 'compra_nao_aconteceu'
+  | 'cancelamento_conferido'
+  | 'outro';
 export const MOTIVOS_IGNORAR: readonly MotivoIgnorar[] = [
   'lancada_de_outro_jeito',
   'nao_e_compra',
   'nao_reconheco',
+  'compra_nao_aconteceu',
   'cancelamento_conferido',
   'outro',
 ];

@@ -15,9 +15,11 @@ import { sefazErro } from '../../sefaz/sefaz-erro';
 import { chamarSoap12 } from '../../sefaz/transporte-soap12';
 import { faultSoap12, retornoSoap, SENTINELA_FAULT } from '../../sefaz/__tests__/retorno-falso';
 import { resposta, SefazDfeFalso } from '../../sefaz/__tests__/sefaz-dfe.falso';
+import { SefazEventosFalso } from '../../sefaz/__tests__/sefaz-eventos.falso';
 import { CaixaSefazService } from '../caixa.service';
 import { CicloSefazService } from '../ciclo.service';
 import { FRASE } from '../frases';
+import { RespostasSefazService } from '../respostas.service';
 import { linhaCom, montarPrismaSefaz, type TabelasSefaz } from './prisma-sefaz.falso';
 
 const AGORA = new Date('2026-11-17T17:05:00Z'); // 14h05 em Brasília
@@ -82,7 +84,7 @@ function montar(
   const svc = new CicloSefazService(prisma, config, certificados, sefaz);
   /** Outro processo da API no mesmo banco (ex.: depois de um reinício). */
   const outraApi = (s: SefazDfePort) => new CicloSefazService(prisma, config, certificados, s);
-  return { svc, t, trava, sefaz, certificados, prisma, outraApi };
+  return { svc, t, trava, sefaz, certificados, prisma, outraApi, config };
 }
 
 const linhaDe = (t: TabelasSefaz, cnpj = NOSSO) => t.sefaz_distribuicao.find((l) => l.ambiente === 'producao' && l.cnpj === cnpj)!;
@@ -355,9 +357,10 @@ describe('CicloSefazService', () => {
     });
 
     it('religar ("Ligar a busca") zera a contagem: 3 falhas param; religada, a próxima falha não para; mais 2, para de novo', async () => {
-      const { svc, t, sefaz, prisma, certificados } = montar();
+      const { svc, t, sefaz, prisma, certificados, config } = montar();
       const notas = { notasLancadas: jest.fn(async () => []) } as unknown as NotasService;
-      const caixa = new CaixaSefazService(prisma, svc, notas, certificados);
+      const respostas = new RespostasSefazService(prisma, config, svc, certificados, new SefazEventosFalso(), notas);
+      const caixa = new CaixaSefazService(prisma, svc, notas, certificados, respostas);
       jest.spyOn(prisma.sefaz_documentos, 'createMany').mockRejectedValue(recusada());
       sefaz.responder(...Array.from({ length: 6 }, pagina));
       const falha = (m: number) => expect(svc.ciclo('agendada', null, em(min(m)))).rejects.toThrow('valor recusado pelo banco');

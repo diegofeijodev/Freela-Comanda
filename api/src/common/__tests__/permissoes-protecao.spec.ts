@@ -108,11 +108,13 @@ describe('proteção das rotas (substitui as políticas RLS do Supabase)', () =>
     expect(todas.filter((r) => r.rota.includes('/notas-sefaz'))).toEqual([
       { rota: 'GET /v1/notas-sefaz/situacao', marca: 'admin' },
       { rota: 'PUT /v1/notas-sefaz/configuracao', marca: 'admin' },
+      { rota: 'PUT /v1/notas-sefaz/respostas', marca: 'admin' },
       { rota: 'POST /v1/notas-sefaz/buscar', marca: 'admin' },
       { rota: 'GET /v1/notas-sefaz', marca: 'admin' },
       { rota: 'GET /v1/notas-sefaz/:id/xml', marca: 'admin' },
       { rota: 'POST /v1/notas-sefaz/:id/ignorar', marca: 'admin' },
       { rota: 'POST /v1/notas-sefaz/:id/reabrir', marca: 'admin' },
+      { rota: 'POST /v1/notas-sefaz/:id/responder-de-novo', marca: 'admin' },
     ]);
   });
 
