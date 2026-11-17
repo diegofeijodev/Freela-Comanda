@@ -94,6 +94,26 @@ describe('lerRetornoDistribuicao', () => {
       { nsu: 2n, schema: 'resNFe_v1.01.xsd', xml: '<a/>', bruto: null },
     ]);
   });
+  it('NUL no envelope (&#0; ou cru) some de todo texto lido, e a resposta vale', () => {
+    const lixo = Buffer.from('lixo').toString('base64');
+    const corpo = retornoSoap({ cStat: 138, xMotivo: 'Documento&#0;(s) localizado(s)', ultNsu: 2n, maxNsu: 2n })
+      .replace('<cStat>138</cStat>', '<cStat>13&#0;8</cStat>')
+      .replace('<dhResp>2026', '<dhResp>\u00002026')
+      .replace('<ultNSU>', '<ultNSU>&#0;')
+      .replace(
+        '</retDistDFeInt>',
+        `<loteDistDFeInt><docZip NSU="00000000000000&#0;2" schema="resNFe_v1.01&#0;.xsd">${lixo}&#0;</docZip></loteDistDFeInt></retDistDFeInt>`,
+      );
+    const r = lerRetornoDistribuicao(corpo);
+    expect(r).toEqual({
+      cStat: 138,
+      xMotivo: 'Documento(s) localizado(s)',
+      dhResp: '2026-11-17T09:00:00-03:00',
+      ultNsu: 2n,
+      maxNsu: 2n,
+      documentos: [{ nsu: 2n, schema: 'resNFe_v1.01.xsd', xml: null, bruto: lixo }],
+    });
+  });
   it('docZip que não é gzip vira { xml: null, bruto }', () => {
     const b64 = Buffer.from('lixo').toString('base64');
     const corpo = retornoSoap({ cStat: 138, ultNsu: 1n, maxNsu: 1n }).replace(

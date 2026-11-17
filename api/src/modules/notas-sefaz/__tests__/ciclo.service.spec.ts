@@ -5,8 +5,11 @@ import { HttpException, Logger } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 import { Prisma, type sefaz_distribuicao } from '@prisma/client';
 import { CertificadoErro, MSG_USO, type CertificadoEmUso } from '../../certificado-digital/certificado-digital.port';
-import type { DocumentoDistribuido } from '../../sefaz/distribuicao.port';
+import type { CadeiaIcp } from '../../certificado-digital/cadeia';
+import { SefazDfeAdapter } from '../../sefaz/distribuicao.adapter';
+import type { DocumentoDistribuido, SefazDfePort } from '../../sefaz/distribuicao.port';
 import { sefazErro } from '../../sefaz/sefaz-erro';
+import { retornoSoap } from '../../sefaz/__tests__/retorno-falso';
 import { resposta, SefazDfeFalso } from '../../sefaz/__tests__/sefaz-dfe.falso';
 import { CicloSefazService } from '../ciclo.service';
 import { FRASE } from '../frases';
@@ -73,7 +76,7 @@ function montar(
   const config = { get: (k: string) => env[k] } as unknown as ConfigService;
   const svc = new CicloSefazService(prisma, config, certificados, sefaz);
   /** Outro processo da API no mesmo banco (ex.: depois de um reinício). */
-  const outraApi = (s: SefazDfeFalso) => new CicloSefazService(prisma, config, certificados, s);
+  const outraApi = (s: SefazDfePort) => new CicloSefazService(prisma, config, certificados, s);
   return { svc, t, trava, sefaz, certificados, prisma, outraApi };
 }
 
@@ -626,6 +629,23 @@ describe('CicloSefazService', () => {
       expect(t.sefaz_consultas[0]).toMatchObject({ resultado: 'falha_antes_de_enviar', erro_code: 'SEFAZ_TLS', x_motivo: null });
       expect(JSON.stringify(t.sefaz_consultas[0], (_k, v: unknown) => (typeof v === 'bigint' ? String(v) : v))).not.toContain('CERT_HAS');
       expect(linhaDe(t).mensagem).toBe(FRASE.semContato('14h20'));
+    });
+
+    it('NUL no envelope (adaptador de verdade, transporte falso): a consulta grava normalmente, sem o NUL', async () => {
+      const envelope = retornoSoap({ cStat: 137, xMotivo: 'Nenhum documento&#0; localizado', ultNsu: 100n, maxNsu: 100n }).replace(
+        '<dhResp>2026',
+        '<dhResp>&#0;2026',
+      );
+      const { t, outraApi } = montar();
+      const svc = outraApi(new SefazDfeAdapter({ ancoras: [] } as unknown as CadeiaIcp, async () => envelope));
+      expect(await svc.ciclo('agendada', null, em(AGORA))).toEqual({ fim: 'feito', paginas: 1 });
+      expect(t.sefaz_consultas[0]).toMatchObject({
+        resultado: 'respondida',
+        c_stat: 137,
+        x_motivo: 'Nenhum documento localizado',
+        dh_resp: '2026-11-17T09:00:00-03:00',
+      });
+      expect(linhaDe(t)).toMatchObject({ ult_nsu: 100n, ultima_consulta_em: AGORA, proxima_consulta_em: MAIS65 });
     });
 
     it('enviado sem resposta mantém a reserva de 65 min', async () => {

@@ -16,7 +16,7 @@ import {
   TETO_RESPOSTA_BYTES,
   type ChamarSoap12,
 } from './transporte-soap12';
-import { descompactarDocZip, elementos, lerXml, primeiro, texto, XmlInvalido } from './xml-leitura';
+import { descompactarDocZip, elementos, lerXml, primeiro, texto, XmlInvalido, type NoXml } from './xml-leitura';
 
 export { SEFAZ_DFE };
 
@@ -44,6 +44,15 @@ export function corpoDistNsu(ambiente: AmbienteSefaz, cnpj: string, ultNsu: bigi
   );
 }
 
+// O `text` do Postgres recusa o NUL, e o xmldom o aceita no envelope (cru ou `&#0;`): todo texto lido do envelope passa por aqui, para a
+// consulta gravar (o envelope não é recusado inteiro só por isso; o documento descompactado com NUL já vira `bruto` em descompactarDocZip).
+const semNul = (s: string): string => s.replace(/\u0000/g, '');
+function textoLimpo(raiz: NoXml, nomeLocal: string): string | null {
+  const t = texto(raiz, nomeLocal);
+  return t === null ? null : semNul(t).trim() || null;
+}
+const atributoLimpo = (z: NoXml, nome: string): string | null => semNul(z.getAttribute(nome) ?? '').trim() || null;
+
 function nsuOuNulo(v: string | null): bigint | null {
   if (v === null) return null;
   if (!/^[0-9]{1,15}$/.test(v)) throw new XmlInvalido();
@@ -59,16 +68,16 @@ export function lerRetornoDistribuicao(
     const doc = lerXml(corpoHttp);
     const ret = primeiro(doc, 'retDistDFeInt');
     if (!ret) throw new XmlInvalido();
-    const cStatTxt = texto(ret, 'cStat');
+    const cStatTxt = textoLimpo(ret, 'cStat');
     if (cStatTxt === null || !/^[0-9]{1,5}$/.test(cStatTxt)) throw new XmlInvalido();
     const zips = elementos(ret, 'docZip');
     if (zips.length > MAX_DOCZIP) throw new XmlInvalido();
     let descompactados = 0;
     let estourou = false;
     const documentos: DocumentoDistribuido[] = zips.map((z) => {
-      const nsu = nsuOuNulo(z.getAttribute('NSU')?.trim() || null);
+      const nsu = nsuOuNulo(atributoLimpo(z, 'NSU'));
       if (nsu === null) throw new XmlInvalido();
-      const base64 = z.textContent ?? '';
+      const base64 = semNul(z.textContent ?? ''); // vai para `conteudo_bruto` se não descompactar
       let r: ReturnType<typeof descompactarDocZip> = estourou ? { bruto: base64 } : descompactarDocZip(base64);
       if ('xml' in r) {
         descompactados += Buffer.byteLength(r.xml, 'utf8');
@@ -80,17 +89,17 @@ export function lerRetornoDistribuicao(
       }
       return {
         nsu,
-        schema: z.getAttribute('schema') ?? '',
+        schema: atributoLimpo(z, 'schema') ?? '',
         xml: 'xml' in r ? r.xml : null,
         bruto: 'bruto' in r ? r.bruto : null,
       };
     });
     return {
       cStat: Number(cStatTxt),
-      xMotivo: texto(ret, 'xMotivo') ?? '',
-      dhResp: texto(ret, 'dhResp') ?? '',
-      ultNsu: nsuOuNulo(texto(ret, 'ultNSU')),
-      maxNsu: nsuOuNulo(texto(ret, 'maxNSU')),
+      xMotivo: textoLimpo(ret, 'xMotivo') ?? '',
+      dhResp: textoLimpo(ret, 'dhResp') ?? '',
+      ultNsu: nsuOuNulo(textoLimpo(ret, 'ultNSU')),
+      maxNsu: nsuOuNulo(textoLimpo(ret, 'maxNSU')),
       documentos,
     };
   } catch {
