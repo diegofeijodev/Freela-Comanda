@@ -14,6 +14,12 @@ describe('lerXml', () => {
     expect(() => lerXml('<a><b></a>')).toThrow('XML inválido');
     expect(() => lerXml('texto solto')).toThrow(XmlInvalido);
   });
+  it('BOM UTF-8 e espaços antes de <?xml são tirados antes da leitura', () => {
+    const doc = lerXml('\uFEFF \r\n\t<?xml version="1.0" encoding="utf-8"?><r><a>1</a></r>');
+    expect(texto(doc, 'a')).toBe('1');
+    expect(texto(lerXml('\uFEFF<r><a>2</a></r>'), 'a')).toBe('2');
+    expect(() => lerXml('\uFEFF <!DOCTYPE x><a/>')).toThrow(XmlInvalido);
+  });
   it('acha pelo nome local, com e sem prefixo de namespace', () => {
     const sem = lerXml('<r xmlns="http://x"><chNFe> 123 </chNFe><vazio> </vazio></r>');
     const com = lerXml('<p:r xmlns:p="http://x"><p:chNFe>123</p:chNFe></p:r>');
@@ -37,5 +43,9 @@ describe('descompactarDocZip', () => {
     expect(descompactarDocZip(grande)).toEqual({ bruto: grande });
     const limite = gzipSync(Buffer.alloc(TETO_DOCZIP_BYTES, 97)).toString('base64');
     expect('xml' in descompactarDocZip(limite)).toBe(true);
+  });
+  it('XML com byte NUL vira bruto (o Postgres recusaria o texto sempre)', () => {
+    const comNul = docZip('<a>x\u0000y</a>');
+    expect(descompactarDocZip(comNul)).toEqual({ bruto: comNul });
   });
 });

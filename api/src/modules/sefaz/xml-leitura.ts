@@ -20,7 +20,9 @@ export type NoXml = Element;
 
 const PROIBIDO = /<!\s*(doctype|entity)/i;
 
-export function lerXml(texto: string, tetoBytes: number = TETO_XML_BYTES): Document {
+export function lerXml(entrada: string, tetoBytes: number = TETO_XML_BYTES): Document {
+  // BOM UTF-8 e espaços antes de `<?xml`: o `toString('utf8')` do transporte não tira o BOM, e declaração fora da posição 0 é erro fatal.
+  const texto = entrada.replace(/^\uFEFF/, '').trimStart();
   if (Buffer.byteLength(texto, 'utf8') > tetoBytes || PROIBIDO.test(texto)) throw new XmlInvalido();
   try {
     // qualquer aviso, erro ou erro fatal do parser invalida o documento
@@ -49,11 +51,16 @@ export function texto(raiz: Document | NoXml, nomeLocal: string): string | null 
   return t ? t : null;
 }
 
-/** base64 + gzip → XML em texto; se não for gzip válido ou passar de 4 MB descompactado, devolve o próprio base64 em `bruto`. */
+/**
+ * base64 + gzip → XML em texto; se não for gzip válido, passar de 4 MB descompactado ou tiver o byte NUL, devolve o próprio base64 em
+ * `bruto` (o documento fica guardado como ilegível e não é tentado de novo).
+ */
 export function descompactarDocZip(base64: string): { xml: string } | { bruto: string } {
   try {
     const gz = Buffer.from(base64.trim(), 'base64');
-    return { xml: gunzipSync(gz, { maxOutputLength: TETO_DOCZIP_BYTES }).toString('utf8') };
+    const xml = gunzipSync(gz, { maxOutputLength: TETO_DOCZIP_BYTES }).toString('utf8');
+    // O `text` do Postgres recusa o NUL (e o XML 1.0 não o admite): gravar falharia sempre, a cada nova tentativa da mesma página.
+    return xml.includes('\u0000') ? { bruto: base64 } : { xml };
   } catch {
     return { bruto: base64 };
   }

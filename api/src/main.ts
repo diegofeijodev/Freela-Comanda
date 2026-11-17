@@ -45,6 +45,9 @@ async function bootstrap() {
 
   const config = app.get(ConfigService);
 
+  // SIGTERM do `docker stop`: roda os onModuleDestroy (agendador da SEFAZ para os timers, Prisma desconecta) e fecha o servidor.
+  app.enableShutdownHooks();
+
   app.useGlobalFilters(new HttpExceptionFilter());
   app.useGlobalInterceptors(new WireInterceptor());
   app.useGlobalPipes(

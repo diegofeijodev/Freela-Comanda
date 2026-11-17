@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { HttpException, Logger } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
-import type { sefaz_distribuicao } from '@prisma/client';
+import { Prisma, type sefaz_distribuicao } from '@prisma/client';
 import { CertificadoErro, MSG_USO, type CertificadoEmUso } from '../../certificado-digital/certificado-digital.port';
 import type { DocumentoDistribuido } from '../../sefaz/distribuicao.port';
 import { sefazErro } from '../../sefaz/sefaz-erro';
@@ -617,6 +617,17 @@ describe('CicloSefazService', () => {
       expect(t.sefaz_consultas[0]).toMatchObject({ resultado: 'falha_antes_de_enviar', erro_code: 'SEFAZ_TLS', c_stat: null });
     });
 
+    it('a causa técnica do TLS vai só para a linha de log da consulta (nem banco nem agenda)', async () => {
+      const { svc, t, sefaz } = montar();
+      sefaz.responder(sefazErro('SEFAZ_TLS', false, undefined, 'CERT_HAS_EXPIRED'));
+      await svc.ciclo('agendada', null, em(AGORA));
+      const linha = logs.find((l) => l.includes('sefaz.distribuicao'))!;
+      expect(JSON.parse(linha.slice(linha.indexOf('{')))).toMatchObject({ erro_code: 'SEFAZ_TLS', causa: 'CERT_HAS_EXPIRED' });
+      expect(t.sefaz_consultas[0]).toMatchObject({ resultado: 'falha_antes_de_enviar', erro_code: 'SEFAZ_TLS', x_motivo: null });
+      expect(JSON.stringify(t.sefaz_consultas[0], (_k, v: unknown) => (typeof v === 'bigint' ? String(v) : v))).not.toContain('CERT_HAS');
+      expect(linhaDe(t).mensagem).toBe(FRASE.semContato('14h20'));
+    });
+
     it('enviado sem resposta mantém a reserva de 65 min', async () => {
       const { svc, t, sefaz } = montar();
       sefaz.responder(sefazErro('SEFAZ_TEMPO', true));
@@ -702,6 +713,59 @@ describe('CicloSefazService', () => {
 
     expect(await svc.classificarPendentes()).toBe(0);
     expect(t.sefaz_documentos[0].processado_em).toBeNull();
+  });
+
+  it('classificação: documento que o banco recusa 3 vezes sai da fila como descartado, com o motivo, e a fila anda', async () => {
+    const { svc, t, prisma } = montar();
+    const pendente = (nsu: bigint, schema: string, tipo: string, xml: string) =>
+      linhaCom('sefaz_documentos', { ambiente: 'producao', cnpj: NOSSO, nsu, schema, tipo, xml, consulta_id: randomUUID() });
+    t.sefaz_documentos.push(
+      pendente(101n, RES_NFE, 'resNFe', fx('res-nfe.xml')),
+      pendente(102n, RES_NFE, 'resNFe', fx('res-nfe.xml')),
+      pendente(103n, 'procNFe_v4.00.xsd', 'procNFe', fx('proc-nfe.xml')),
+    );
+    const criar = prisma.notas_sefaz.create.bind(prisma.notas_sefaz);
+    const recusa = jest.spyOn(prisma.notas_sefaz, 'create').mockImplementation(((a: { data: { chave: string } }) => {
+      if (a.data.chave === VETOR) {
+        throw new Prisma.PrismaClientKnownRequestError('valor grande demais', { code: 'P2000', clientVersion: 'falso' });
+      }
+      return criar(a as never);
+    }) as never);
+    const doc = (nsu: bigint) => t.sefaz_documentos.find((d) => d.nsu === nsu)!;
+    const avisos = () => logs.filter((l) => l.includes('sefaz.classificacao'));
+
+    // com 2 por vez, os dois presos ocupam a vez inteira: 1ª e 2ª tentativas ficam pendentes, com a contagem
+    for (const n of [1, 2]) {
+      expect(await svc.classificarPendentes(2)).toBe(0);
+      for (const nsu of [101n, 102n]) {
+        expect(doc(nsu).processado_em).toBeNull();
+        expect(doc(nsu).erro_processamento).toBe(
+          `Não foi possível classificar (PrismaClientKnownRequestError P2000). Tentativa ${n} de 3.`,
+        );
+      }
+    }
+    expect(doc(103n).processado_em).toBeNull();
+
+    // 3ª recusa: descartados (fora da fila), com o motivo; o NSU 103 ainda não teve vez
+    expect(await svc.classificarPendentes(2)).toBe(0);
+    for (const nsu of [101n, 102n]) {
+      expect(doc(nsu).processado_em).not.toBeNull();
+      expect(doc(nsu).erro_processamento).toBe(
+        'Descartado depois de 3 tentativas: Não foi possível classificar (PrismaClientKnownRequestError P2000).',
+      );
+      expect(doc(nsu).chave).toBeNull();
+    }
+    expect(avisos()).toHaveLength(6);
+    expect(avisos().filter((l) => l.includes('"descartado":true'))).toHaveLength(2);
+
+    // a fila anda: o 103 é classificado, e os descartados não são tentados de novo (nem logados)
+    const chamadas = recusa.mock.calls.length;
+    expect(await svc.classificarPendentes(2)).toBe(1);
+    expect(doc(103n).processado_em).not.toBeNull();
+    expect(t.notas_sefaz.map((n) => n.chave)).toEqual([K880]);
+    expect(recusa.mock.calls.length).toBe(chamadas + 1);
+    expect(await svc.classificarPendentes(2)).toBe(0);
+    expect(avisos()).toHaveLength(6);
   });
 
   it('classificação: cancelamento depois do resumo cancela a nota; resumo atrasado não descancela', async () => {

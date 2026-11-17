@@ -13,18 +13,28 @@ export const MSG_SEFAZ_ERRO: Record<CodigoSefazErro, string> = {
 };
 
 export class SefazErro extends Error {
-  /** `enviado`: o pedido pode ter chegado à SEFAZ (o erro veio depois do handshake TLS). */
+  /**
+   * `enviado`: o pedido pode ter chegado à SEFAZ (o erro veio depois do handshake TLS).
+   * `causa`: só o `code` do erro do Node (ex.: `CERT_HAS_EXPIRED`), para o log da consulta; nunca a mensagem, nunca PEM.
+   */
   constructor(
     message: string,
     readonly code: CodigoSefazErro,
     readonly enviado: boolean,
     readonly httpStatus?: number,
+    readonly causa?: string,
   ) {
     super(message);
     this.name = 'SefazErro';
   }
 }
 
-export function sefazErro(code: CodigoSefazErro, enviado: boolean, httpStatus?: number): SefazErro {
-  return new SefazErro(MSG_SEFAZ_ERRO[code], code, enviado, httpStatus);
+export function sefazErro(code: CodigoSefazErro, enviado: boolean, httpStatus?: number, causa?: string): SefazErro {
+  return new SefazErro(MSG_SEFAZ_ERRO[code], code, enviado, httpStatus, causa);
+}
+
+/** O `code` de um erro do Node, só se tiver a forma de um código (`UNABLE_TO_VERIFY_LEAF_SIGNATURE`); senão `undefined`. */
+export function causaDe(e: unknown): string | undefined {
+  const code = (e as { code?: unknown } | null | undefined)?.code;
+  return typeof code === 'string' && /^[A-Z0-9_]{1,64}$/.test(code) ? code : undefined;
 }

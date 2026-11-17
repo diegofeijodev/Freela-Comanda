@@ -1,8 +1,9 @@
 import type { ClientRequest, IncomingMessage } from 'node:http';
 import * as https from 'node:https';
 import type { Socket } from 'node:net';
+import * as tls from 'node:tls';
 import type { CertificadoEmUso } from '../certificado-digital/certificado-digital.port';
-import { sefazErro, type SefazErro } from './sefaz-erro';
+import { causaDe, sefazErro, type SefazErro } from './sefaz-erro';
 
 // Cliente SOAP 1.2 sobre `node:https` com autenticação mútua (mTLS). Sem regra de negócio: a distribuição de DF-e e,
 // depois, a NFC-e o reusam com outra URL e outra action. Não registra nada em log (quem chama registra código, status e
@@ -55,7 +56,8 @@ export function chamarSoap12(c: ChamadaSoap12, requisitar: typeof https.request 
         reject(erro);
       } else resolve(corpo);
     };
-    const falhou = (): void => fim(sefazErro(conectou && !seguro ? 'SEFAZ_TLS' : 'SEFAZ_REDE', seguro));
+    // `causa` = só o `code` do erro do Node (cadeia, nome, validade, protocolo), para o log da consulta
+    const falhou = (e?: unknown): void => fim(sefazErro(conectou && !seguro ? 'SEFAZ_TLS' : 'SEFAZ_REDE', seguro, undefined, causaDe(e)));
     const prazo = setTimeout(() => fim(sefazErro('SEFAZ_TEMPO', seguro)), c.tempoLimiteMs);
 
     const receber = (res: IncomingMessage): void => {
@@ -76,31 +78,33 @@ export function chamarSoap12(c: ChamadaSoap12, requisitar: typeof https.request 
 
     try {
       const envelope = Buffer.from(envelopeSoap12(c.corpo), 'utf8');
-      req = requisitar(
-        c.url,
-        {
-          method: 'POST',
-          minVersion: 'TLSv1.2',
-          rejectUnauthorized: true,
-          agent: false,
-          ca: c.confianca,
-          key: c.certificado.chavePrivada.export({ type: 'pkcs8', format: 'pem' }), // a chave em PEM só existe aqui
-          cert: [c.certificado.certificado, ...c.certificado.cadeia].map(String).join('\n'),
-          headers: {
-            'Content-Type': `application/soap+xml; charset=utf-8; action="${c.action}"`,
-            'Content-Length': envelope.length, // bytes
-          },
+      // Chave e certificado só dentro do contexto: com NODE_DEBUG=http/https/tls o Node imprime as opções do pedido (e o nome do
+      // pool do agente, que concatena `key`/`cert`). Com `secureContext` o Node ignora `ca`/`minVersion` soltos: vão aqui dentro.
+      const secureContext = tls.createSecureContext({
+        minVersion: 'TLSv1.2',
+        ca: c.confianca,
+        key: c.certificado.chavePrivada.export({ type: 'pkcs8', format: 'pem' }), // a chave em PEM só existe aqui
+        cert: [c.certificado.certificado, ...c.certificado.cadeia].map(String).join('\n'),
+      });
+      const opcoes: https.RequestOptions & Pick<tls.ConnectionOptions, 'secureContext'> = {
+        method: 'POST',
+        rejectUnauthorized: true,
+        agent: false,
+        secureContext,
+        headers: {
+          'Content-Type': `application/soap+xml; charset=utf-8; action="${c.action}"`,
+          'Content-Length': envelope.length, // bytes
         },
-        receber,
-      );
+      };
+      req = requisitar(c.url, opcoes, receber);
       req.on('socket', (s: Socket) => {
         s.once('connect', () => (conectou = true));
         s.once('secureConnect', () => (seguro = true));
       });
       req.on('error', falhou);
       req.end(envelope);
-    } catch {
-      falhou(); // URL ou opção recusada na hora: nada saiu
+    } catch (e) {
+      falhou(e); // URL, opção ou contexto TLS recusados na hora: nada saiu
     }
   });
 }

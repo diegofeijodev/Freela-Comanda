@@ -7,6 +7,8 @@ import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import type { TLSSocket } from 'node:tls';
 import { inspect } from 'node:util';
+// o objeto do próprio módulo (não a cópia do `import * as`), para o jest.spyOn alcançar o que o transporte chama
+import tlsDoNode = require('node:tls');
 import type { CertificadoEmUso } from '../../certificado-digital/certificado-digital.port';
 import { SefazErro } from '../sefaz-erro';
 import { chamarSoap12, envelopeSoap12, type ChamadaSoap12 } from '../transporte-soap12';
@@ -127,6 +129,16 @@ describe('chamarSoap12 (servidor HTTPS local)', () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
+  it('servidor fora da confiança: a causa técnica guarda só o code do Node (para o log)', async () => {
+    const url = await subir(() => undefined, true);
+
+    const e = await falha(chamarSoap12(chamada(url)));
+    expect(e).toMatchObject({ code: 'SEFAZ_TLS', enviado: false, causa: 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' });
+    expect(e.message).toBe('A conexão segura com a SEFAZ não foi aceita.');
+    expect(inspect(e)).not.toContain('unable to verify'); // a mensagem do Node não vem junto, só o code
+    expect(inspect(e)).not.toContain('BEGIN');
+  });
+
   it('porta fechada: SEFAZ_REDE sem envio', async () => {
     const url = await subir(() => undefined);
     const s = servidor!;
@@ -185,10 +197,12 @@ describe('chamarSoap12 (servidor HTTPS local)', () => {
 });
 
 describe('chamarSoap12 (opções do https.request)', () => {
-  it('TLS 1.2+, confiança fechada, sem agente, chave PKCS#8 e certificado com a cadeia', async () => {
-    let opcoes: https.RequestOptions | undefined;
+  afterEach(() => jest.restoreAllMocks());
+
+  it('TLS 1.2+, confiança fechada, sem agente; chave PKCS#8 e certificado com a cadeia só dentro do secureContext', async () => {
+    let opcoes: (https.RequestOptions & tlsDoNode.ConnectionOptions) | undefined;
     let urlPedida: unknown;
-    const requisitar = ((url: unknown, o: https.RequestOptions) => {
+    const requisitar = ((url: unknown, o: https.RequestOptions & tlsDoNode.ConnectionOptions) => {
       urlPedida = url;
       opcoes = o;
       const req = Object.assign(new EventEmitter(), {
@@ -197,17 +211,25 @@ describe('chamarSoap12 (opções do https.request)', () => {
       });
       return req;
     }) as unknown as typeof https.request;
-    const confianca = ['PEM-A', 'PEM-B'];
+    const contexto = jest.spyOn(tlsDoNode, 'createSecureContext');
+    const confianca = [AC_TESTE];
     const certificado = { ...CLIENTE, cadeia: [new X509Certificate(AC_TESTE)] };
 
     const e = await falha(chamarSoap12(chamada('https://127.0.0.1:1/ws', { confianca, certificado }), requisitar));
     expect(e).toMatchObject({ code: 'SEFAZ_REDE', enviado: false });
 
     expect(urlPedida).toBe('https://127.0.0.1:1/ws');
-    expect(opcoes).toMatchObject({ method: 'POST', minVersion: 'TLSv1.2', rejectUnauthorized: true, agent: false });
-    expect(opcoes!.ca).toBe(confianca);
-    expect(String(opcoes!.key)).toMatch(/^-----BEGIN PRIVATE KEY-----/);
-    expect(String(opcoes!.cert).match(/-----BEGIN CERTIFICATE-----/g)).toHaveLength(2);
+    expect(opcoes).toMatchObject({ method: 'POST', rejectUnauthorized: true, agent: false });
+    // NODE_DEBUG=http/https/tls imprime as opções do pedido: nada de PEM nelas, só o contexto já montado
+    for (const solta of ['key', 'cert', 'ca', 'minVersion', 'pfx', 'passphrase']) expect(opcoes).not.toHaveProperty(solta);
+    expect(inspect(opcoes, { depth: 5 })).not.toContain('PRIVATE KEY');
+    expect(contexto).toHaveBeenCalledTimes(1);
+    expect(opcoes!.secureContext).toBe(contexto.mock.results[0]!.value);
+    const pedido = contexto.mock.calls[0]![0]!;
+    expect(pedido.minVersion).toBe('TLSv1.2');
+    expect(pedido.ca).toBe(confianca);
+    expect(String(pedido.key)).toMatch(/^-----BEGIN PRIVATE KEY-----/);
+    expect(String(pedido.cert).match(/-----BEGIN CERTIFICATE-----/g)).toHaveLength(2);
     expect(opcoes!.headers).toMatchObject({
       'Content-Type': 'application/soap+xml; charset=utf-8; action="urn:acao-teste"',
       'Content-Length': Buffer.byteLength(envelopeSoap12('<x/>')),

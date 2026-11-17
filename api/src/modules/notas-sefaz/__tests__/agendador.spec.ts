@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { Logger } from '@nestjs/common';
 import { AgendadorSefaz } from '../agendador';
 import type { CicloSefazService, ResumoCiclo } from '../ciclo.service';
@@ -109,5 +111,12 @@ describe('AgendadorSefaz', () => {
     ag.onModuleDestroy();
     await jest.advanceTimersByTimeAsync(20 * MIN);
     expect(falso.ciclo).not.toHaveBeenCalled();
+  });
+
+  it('o main.ts liga os ganchos de desligamento antes de ouvir (sem eles o onModuleDestroy não roda no SIGTERM do Docker)', () => {
+    const main = readFileSync(join(__dirname, '..', '..', '..', 'main.ts'), 'utf8');
+    const ganchos = main.indexOf('app.enableShutdownHooks()');
+    expect(ganchos).toBeGreaterThan(-1);
+    expect(ganchos).toBeLessThan(main.indexOf('await app.listen('));
   });
 });

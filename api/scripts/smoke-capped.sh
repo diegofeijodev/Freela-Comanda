@@ -28,7 +28,8 @@ const l = net.createServer().listen(0, '127.0.0.1', () => { net.connect(l.addres
 echo "$PROVA"
 [ "$(echo "$PROVA" | grep -c 'conexão recusada')" -eq 3 ] || { echo "barreira de rede: esperava 3 recusas"; exit 1; }
 LOG=$(mktemp)
-DATABASE_URL="$URL" PORT=$PORTA NODE_OPTIONS="--max-old-space-size=600 --require $SEM_REDE" ANTHROPIC_API_KEY= \
+# npm_config_update_notifier=false: o aviso de versão do npx também roda sob a barreira e daria falso "BARROU CONEXÃO NA API"
+DATABASE_URL="$URL" PORT=$PORTA NODE_OPTIONS="--max-old-space-size=600 --require $SEM_REDE" ANTHROPIC_API_KEY= npm_config_update_notifier=false \
   CERTIFICADO_SECRET=smoke-certificado-segredo-de-teste-0123456789 \
   SEFAZ_DFE_AMBIENTE=producao \
   setsid npx ts-node --transpile-only -r tsconfig-paths/register src/main.ts >"$LOG" 2>&1 &

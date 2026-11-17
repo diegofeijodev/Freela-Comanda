@@ -8,6 +8,7 @@ import {
   corpoDistNsu,
   lerRetornoDistribuicao,
   SefazDfeAdapter,
+  TETO_DESCOMPACTADO_RESPOSTA_BYTES,
   URL_DISTRIBUICAO,
 } from '../distribuicao.adapter';
 import { SefazErro } from '../distribuicao.port';
@@ -59,6 +60,39 @@ describe('lerRetornoDistribuicao', () => {
     expect(r.documentos.map((d) => d.xml)).toEqual(docs.map((d) => d.conteudo));
     expect(r.documentos.map((d) => d.schema)).toEqual(docs.map((d) => d.schema));
     expect(r.documentos.every((d) => d.bruto === null)).toBe(true);
+  });
+  it('BOM e espaço antes de <?xml: a resposta é lida normalmente', () => {
+    expect(lerRetornoDistribuicao('\uFEFF \r\n' + fx('ret-137.xml'))).toMatchObject({ cStat: 137, ultNsu: 1234n, maxNsu: 1234n });
+  });
+  it('teto do total descompactado: o documento que passa do teto e todos os seguintes ficam crus, sem derrubar a resposta', () => {
+    const cem = (c: string) => `<a>${c.repeat(93)}</a>`; // 100 bytes descompactados
+    const docs = [
+      { nsu: 1n, schema: 'resNFe_v1.01.xsd', conteudo: cem('a') },
+      { nsu: 2n, schema: 'resNFe_v1.01.xsd', conteudo: cem('b') },
+      { nsu: 3n, schema: 'resNFe_v1.01.xsd', conteudo: cem('c') },
+      { nsu: 4n, schema: 'resEvento_v1.01.xsd', conteudo: '<a/>' }, // caberia sozinho, mas vem depois do teto
+    ];
+    const r = lerRetornoDistribuicao(retornoSoap({ cStat: 138, ultNsu: 4n, maxNsu: 4n, docs }), 250);
+    expect(r.cStat).toBe(138);
+    expect(r.documentos.map((d) => d.nsu)).toEqual([1n, 2n, 3n, 4n]);
+    expect(r.documentos.map((d) => d.schema)).toEqual(docs.map((d) => d.schema));
+    expect(r.documentos.map((d) => d.xml)).toEqual([cem('a'), cem('b'), null, null]);
+    expect(r.documentos.map((d) => d.bruto)).toEqual([null, null, docZip(cem('c')), docZip('<a/>')]);
+    // teto padrão (64 MB) com os mesmos documentos: tudo descompactado
+    const padrao = lerRetornoDistribuicao(retornoSoap({ cStat: 138, ultNsu: 4n, maxNsu: 4n, docs }));
+    expect(padrao.documentos.every((d) => d.xml !== null)).toBe(true);
+    expect(TETO_DESCOMPACTADO_RESPOSTA_BYTES).toBe(64 * 1024 * 1024);
+  });
+  it('documento com byte NUL vira { xml: null, bruto } e os outros seguem', () => {
+    const docs = [
+      { nsu: 1n, schema: 'resNFe_v1.01.xsd', conteudo: '<a>\u0000</a>' },
+      { nsu: 2n, schema: 'resNFe_v1.01.xsd', conteudo: '<a/>' },
+    ];
+    const r = lerRetornoDistribuicao(retornoSoap({ cStat: 138, ultNsu: 2n, maxNsu: 2n, docs }));
+    expect(r.documentos).toEqual([
+      { nsu: 1n, schema: 'resNFe_v1.01.xsd', xml: null, bruto: docZip('<a>\u0000</a>') },
+      { nsu: 2n, schema: 'resNFe_v1.01.xsd', xml: '<a/>', bruto: null },
+    ]);
   });
   it('docZip que não é gzip vira { xml: null, bruto }', () => {
     const b64 = Buffer.from('lixo').toString('base64');

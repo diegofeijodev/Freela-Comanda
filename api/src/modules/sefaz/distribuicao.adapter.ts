@@ -27,6 +27,8 @@ export const URL_DISTRIBUICAO: Record<AmbienteSefaz, string> = {
 export const ACTION_DIST_NSU = 'http://www.portalfiscal.inf.br/nfe/wsdl/NFeDistribuicaoDFe/nfeDistDFeInteresse';
 export const C_UF_AUTOR = '35';
 const MAX_DOCZIP = 50;
+/** Teto do total descompactado de UMA resposta (50 docZip × 4 MB seriam 200 MB): passou, o documento e os seguintes ficam crus. */
+export const TETO_DESCOMPACTADO_RESPOSTA_BYTES = 64 * 1024 * 1024;
 const FORMATO_CNPJ = /^[0-9A-Z]{12}[0-9]{2}$/;
 
 /** Conteúdo do <soap12:Body>: sem prefixo de namespace na área de dados (prefixo = rejeição 404). */
@@ -49,7 +51,10 @@ function nsuOuNulo(v: string | null): bigint | null {
 }
 
 /** Lê o corpo HTTP (envelope SOAP) e devolve a resposta; qualquer defeito vira SEFAZ_RESPOSTA_INVALIDA (já enviado). */
-export function lerRetornoDistribuicao(corpoHttp: string): RespostaDistribuicao {
+export function lerRetornoDistribuicao(
+  corpoHttp: string,
+  tetoDescompactado: number = TETO_DESCOMPACTADO_RESPOSTA_BYTES,
+): RespostaDistribuicao {
   try {
     const doc = lerXml(corpoHttp);
     const ret = primeiro(doc, 'retDistDFeInt');
@@ -58,10 +63,21 @@ export function lerRetornoDistribuicao(corpoHttp: string): RespostaDistribuicao 
     if (cStatTxt === null || !/^[0-9]{1,5}$/.test(cStatTxt)) throw new XmlInvalido();
     const zips = elementos(ret, 'docZip');
     if (zips.length > MAX_DOCZIP) throw new XmlInvalido();
+    let descompactados = 0;
+    let estourou = false;
     const documentos: DocumentoDistribuido[] = zips.map((z) => {
       const nsu = nsuOuNulo(z.getAttribute('NSU')?.trim() || null);
       if (nsu === null) throw new XmlInvalido();
-      const r = descompactarDocZip(z.textContent ?? '');
+      const base64 = z.textContent ?? '';
+      let r: ReturnType<typeof descompactarDocZip> = estourou ? { bruto: base64 } : descompactarDocZip(base64);
+      if ('xml' in r) {
+        descompactados += Buffer.byteLength(r.xml, 'utf8');
+        // passou do teto da resposta: este e os seguintes ficam crus ("grande demais"), com o NSU, e a resposta segue valendo
+        if (descompactados > tetoDescompactado) {
+          estourou = true;
+          r = { bruto: base64 };
+        }
+      }
       return {
         nsu,
         schema: z.getAttribute('schema') ?? '',

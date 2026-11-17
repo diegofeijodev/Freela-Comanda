@@ -69,6 +69,9 @@ export const MSG_CICLO = {
 
 const DIA_MS = 24 * 60 * 60_000;
 const CLASSIFICAR_POR_VEZ = 200;
+/** Documento que falha na classificação esta quantidade de vezes sai da fila como descartado (senão 200 presos param a fila de vez). */
+export const TENTATIVAS_CLASSIFICACAO = 3;
+const TENTATIVA = /Tentativa (\d+) de \d+\.$/;
 /** Decisão 5: `anteriorEnviada` é a mais recente em que a pergunta pode ter chegado à SEFAZ (sem `falha_antes_de_enviar`). */
 const ENVIADAS: ResultadoConsulta[] = ['respondida', 'sem_resposta', 'interrompida'];
 const TX1 = { maxWait: 5_000, timeout: 10_000 };
@@ -328,9 +331,11 @@ export class CicloSefazService {
     const inicio = Date.now();
     let resp: RespostaDistribuicao | null = null;
     let erro: Extract<Chamada, { tipo: 'erro' }> | null = null;
+    let causa: string | null = null; // só o `code` do Node, só para o log (nem banco nem agenda)
     try {
       resp = await this.sefaz.distribuirPorNsu(p.cert, p.ambiente, p.cnpj, r.contexto.ultNsuNosso);
     } catch (e) {
+      if (e instanceof SefazErro) causa = e.causa ?? null;
       erro =
         e instanceof SefazErro
           ? { tipo: 'erro', code: e.code, enviado: e.enviado, httpStatus: e.httpStatus }
@@ -430,6 +435,7 @@ export class CicloSefazService {
         c_stat: resp?.cStat ?? null,
         erro_code: erro?.code ?? null,
         http_status: erro?.httpStatus ?? null,
+        causa,
         documentos: resp?.documentos.length ?? 0,
         ult_nsu: resp?.ultNsu?.toString() ?? null,
         max_nsu: resp?.maxNsu?.toString() ?? null,
@@ -441,7 +447,11 @@ export class CicloSefazService {
     return acao;
   }
 
-  /** Classifica até `limite` documentos com `processado_em` vazio, um por transação; devolve quantos foram processados. */
+  /**
+   * Classifica até `limite` documentos com `processado_em` vazio, um por transação; devolve quantos foram processados.
+   * Falha = fica pendente com "Tentativa N de 3." em `erro_processamento`; na 3ª, `processado_em` é preenchido e o motivo fica como
+   * "Descartado depois de 3 tentativas: …" (o XML continua guardado; para tentar de novo, limpar `processado_em` e `erro_processamento`).
+   */
   classificarPendentes(limite: number = CLASSIFICAR_POR_VEZ): Promise<number> {
     const vez = this.filaClassificacao.then(() => this.classificarAgora(limite));
     this.filaClassificacao = vez.catch(() => undefined);
@@ -487,11 +497,28 @@ export class CicloSefazService {
         });
         processados++;
       } catch (e) {
-        // fica pendente e é tentado de novo no próximo tique; a frase gravada é fixa (nunca a mensagem da biblioteca)
+        // Pendente até a 3ª falha, depois descartado. A contagem mora na frase gravada: só conta a falha que o banco registrou
+        // (banco fora do ar não descarta nada). A frase é fixa (nunca a mensagem da biblioteca).
         const frase = e instanceof XmlInvalido ? 'XML inválido.' : `Não foi possível classificar (${descreverErro(e)}).`;
-        await this.prisma.sefaz_documentos.update({ where: { id: d.id }, data: { erro_processamento: frase } }).catch(() => undefined);
+        const tentativa = Number(TENTATIVA.exec(d.erro_processamento ?? '')?.[1] ?? 0) + 1;
+        const descartado = tentativa >= TENTATIVAS_CLASSIFICACAO;
+        await this.prisma.sefaz_documentos
+          .update({
+            where: { id: d.id },
+            data: descartado
+              ? { processado_em: agora, erro_processamento: `Descartado depois de ${tentativa} tentativas: ${frase}` }
+              : { erro_processamento: `${frase} Tentativa ${tentativa} de ${TENTATIVAS_CLASSIFICACAO}.` },
+          })
+          .catch(() => undefined);
         this.logger.warn(
-          JSON.stringify({ evento: 'sefaz.classificacao', documento_id: d.id, nsu: d.nsu.toString(), erro: descreverErro(e) }),
+          JSON.stringify({
+            evento: 'sefaz.classificacao',
+            documento_id: d.id,
+            nsu: d.nsu.toString(),
+            erro: descreverErro(e),
+            tentativa,
+            descartado,
+          }),
         );
       }
     }
