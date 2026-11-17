@@ -77,7 +77,7 @@ export const FRASES_VALIDACAO = {
   unidade: 'A unidade no cupom tem até 6 letras.',
 } as const;
 
-/** Retornos da SEFAZ: UX §6.1 (a de cancelamento recusado é da UX 4.3). As horas são de Brasília (`horaSp`). */
+/** Retornos da SEFAZ: UX §6.1 (a de cancelamento recusado é da UX 4.3; as do "Testar a conexão", da UX 5.1). Horas de Brasília (`horaSp`). */
 export const FRASE_RETORNO = {
   autorizado: (autorizadaEm: Date, nProt: string) => `Autorizado às ${horaSp(autorizadaEm)} · protocolo ${nProt}`,
   autorizadoComAlerta: (xMsg: string) => `Autorizado, com um aviso da SEFAZ: “${xMsg}”. O cupom vale. Mostre o aviso ao contador.`,
@@ -121,6 +121,13 @@ export const FRASE_RETORNO = {
     `A SEFAZ não respondeu. O cupom pode ter sido autorizado. Consulte a partir das ${horaSp(consultarAPartirDe)} e não emita outro cupom para esta venda até lá.`,
   cancelamentoRecusado: (codigo: number, motivo: string) =>
     `A SEFAZ não aceitou o cancelamento (código ${codigo}): ${semPontoFinal(motivo)}. O cupom continua valendo.`,
+  // "Testar a conexão" (UX 5.1, a linha sob o botão; o certificado, o 656 e as paradas usam as frases acima)
+  statusOk: (respondeuEm: Date) => `A SEFAZ respondeu às ${horaSp(respondeuEm)}: o serviço está funcionando.`,
+  statusSemContato: 'Não consegui falar com a SEFAZ. Nada foi enviado.',
+  statusForaDoAr: (codigo: number) => `A SEFAZ está fora do ar agora (código ${codigo}).`,
+  /** Nova (a UX não fixa), no estilo da UX §6.3. */
+  statusOutroCodigo: (codigo: number) =>
+    `A SEFAZ não confirmou que o serviço está funcionando (código ${codigo}). Fale com o suporte do Freela Comanda e informe este código.`,
 } as const;
 
 /** Motivo do produto fora do cupom, em minúscula, com as palavras da tag (UX 6.2 e 5.7); os sem tag no estilo da UX §6.3. */

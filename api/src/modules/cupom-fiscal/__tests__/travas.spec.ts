@@ -9,6 +9,7 @@ import {
   TETO_RECUSAS_HORA,
   type EstadoTravas,
 } from '../travas';
+import { acoesDoCupom, inicioDaEspera, type CupomParaAcoes } from '../situacao-cupom';
 
 const AGORA = new Date('2026-11-17T17:05:00Z'); // 14h05 em Brasília
 const s = (n: number) => new Date(AGORA.getTime() + n * 1000);
@@ -51,23 +52,76 @@ describe('podeChamar', () => {
     expect(podeChamar(livre({ bloqueado_ate: AGORA }), 'autorizacao', AGORA)).toEqual({ ok: true });
   });
 
-  it.each(['parada_656', 'parada_certificado', 'parada_configuracao', 'parada_serie_em_uso'] as const)(
-    'ambiente %s → NFCE_PARADA em todos os serviços, antes do bloqueio',
+  it('parada_656 → NFCE_PARADA em todos os serviços, antes do bloqueio', () => {
+    for (const servico of SERVICOS) {
+      expect(podeChamar(livre({ situacao: 'parada_656', bloqueado_ate: min(30) }), servico, AGORA)).toEqual({
+        ok: false,
+        code: 'NFCE_PARADA',
+        ate: null,
+      });
+    }
+  });
+
+  // Decisão do controlador (T9-2): consulta pela chave e cancelamento só param no 656 (janela e parada_656) e nos próprios limites.
+  it.each(['parada_certificado', 'parada_configuracao', 'parada_serie_em_uso'] as const)(
+    'ambiente %s → NFCE_PARADA na emissão e no status; consulta e cancelamento passam',
     (situacao) => {
-      for (const servico of SERVICOS) {
+      for (const servico of ['autorizacao', 'status'] as const) {
         expect(podeChamar(livre({ situacao, bloqueado_ate: min(30) }), servico, AGORA)).toEqual({
           ok: false,
           code: 'NFCE_PARADA',
           ate: null,
         });
       }
+      for (const servico of ['consulta', 'evento'] as const) {
+        expect(podeChamar(livre({ situacao }), servico, AGORA)).toEqual({ ok: true });
+        // a janela do 656 continua valendo para eles
+        expect(podeChamar(livre({ situacao, bloqueado_ate: min(30) }), servico, AGORA)).toEqual({
+          ok: false,
+          code: 'NFCE_BLOQUEADA',
+          ate: min(30),
+        });
+      }
+      // e os limites da própria consulta também
+      expect(podeChamar(livre({ situacao, enviadoEm: s(-60) }), 'consulta', AGORA)).toEqual({
+        ok: false,
+        code: 'NFCE_CONSULTA_CEDO',
+        ate: s(60),
+      });
     },
   );
 
-  it('10 recusas há 59 min → NFCE_MUITAS_RECUSAS até a mais antiga + 60 min, em todos os serviços', () => {
+  it('beco da série (T9-2): parada_serie_em_uso + cupom sem_resposta da mesma série → a consulta sai; a emissão não', () => {
+    const cupom: CupomParaAcoes = {
+      situacao: 'sem_resposta',
+      ambiente: 'producao',
+      envios: 1,
+      numero_reaproveitavel: true,
+      autorizada_em: null,
+      cancelamento_pedido_em: null,
+      lanca_venda: true,
+      venda_lancada_em: null,
+      venda_desfeita_em: null,
+      enviadoEm: min(-3),
+      ultimaConsultaDaChave: null,
+    };
+    expect(acoesDoCupom(cupom, AGORA).acoes).toEqual(['consultar']);
+    const amb = livre({ situacao: 'parada_serie_em_uso', recusas: vezes(10, () => min(-5)), consultas: vezes(5, () => min(-20)) });
+    expect(
+      podeChamar({ ...amb, enviadoEm: inicioDaEspera(cupom), ultimaConsultaDaChave: cupom.ultimaConsultaDaChave }, 'consulta', AGORA),
+    ).toEqual({
+      ok: true,
+    });
+    expect(podeChamar(amb, 'autorizacao', AGORA)).toEqual({ ok: false, code: 'NFCE_PARADA', ate: null });
+  });
+
+  it('10 recusas há 59 min → NFCE_MUITAS_RECUSAS até a mais antiga + 60 min, na emissão e no status; consulta e cancelamento passam', () => {
     const recusas = vezes(10, () => min(-59));
-    for (const servico of SERVICOS) {
+    for (const servico of ['autorizacao', 'status'] as const) {
       expect(podeChamar(livre({ recusas }), servico, AGORA)).toEqual({ ok: false, code: 'NFCE_MUITAS_RECUSAS', ate: min(1) });
+    }
+    for (const servico of ['consulta', 'evento'] as const) {
+      expect(podeChamar(livre({ recusas }), servico, AGORA)).toEqual({ ok: true });
     }
   });
 
@@ -134,11 +188,28 @@ describe('podeChamar', () => {
     expect(podeChamar(livre({ ultimo_status_em: min(-1) }), 'autorizacao', AGORA)).toEqual({ ok: true });
   });
 
-  it('ordem: parada → bloqueio → teto de recusas → espera do serviço', () => {
-    const tudo = livre({ bloqueado_ate: min(10), recusas: vezes(10, () => min(-1)), enviadoEm: s(-10) });
-    expect(podeChamar(tudo, 'consulta', AGORA)).toMatchObject({ code: 'NFCE_BLOQUEADA' });
-    expect(podeChamar({ ...tudo, bloqueado_ate: null }, 'consulta', AGORA)).toMatchObject({ code: 'NFCE_MUITAS_RECUSAS' });
-    expect(podeChamar({ ...tudo, bloqueado_ate: null, recusas: [] }, 'consulta', AGORA)).toMatchObject({ code: 'NFCE_CONSULTA_CEDO' });
+  it('ordem na emissão e no status: parada → bloqueio → teto de recusas → espera do serviço', () => {
+    const tudo = livre({
+      situacao: 'parada_configuracao',
+      bloqueado_ate: min(10),
+      recusas: vezes(10, () => min(-1)),
+      ultimo_status_em: min(-1),
+    });
+    expect(podeChamar(tudo, 'status', AGORA)).toMatchObject({ code: 'NFCE_PARADA' });
+    expect(podeChamar({ ...tudo, situacao: 'ok' }, 'status', AGORA)).toMatchObject({ code: 'NFCE_BLOQUEADA' });
+    expect(podeChamar({ ...tudo, situacao: 'ok', bloqueado_ate: null }, 'status', AGORA)).toMatchObject({ code: 'NFCE_MUITAS_RECUSAS' });
+    expect(podeChamar({ ...tudo, situacao: 'ok', bloqueado_ate: null, recusas: [] }, 'status', AGORA)).toMatchObject({
+      code: 'NFCE_TESTE_CEDO',
+    });
+  });
+
+  it('ordem na consulta: parada_656 → bloqueio → espera da consulta (outras paradas e o teto não contam)', () => {
+    const tudo = livre({ situacao: 'parada_656', bloqueado_ate: min(10), recusas: vezes(10, () => min(-1)), enviadoEm: s(-10) });
+    expect(podeChamar(tudo, 'consulta', AGORA)).toMatchObject({ code: 'NFCE_PARADA' });
+    expect(podeChamar({ ...tudo, situacao: 'parada_certificado' }, 'consulta', AGORA)).toMatchObject({ code: 'NFCE_BLOQUEADA' });
+    expect(podeChamar({ ...tudo, situacao: 'parada_certificado', bloqueado_ate: null }, 'consulta', AGORA)).toMatchObject({
+      code: 'NFCE_CONSULTA_CEDO',
+    });
   });
 });
 

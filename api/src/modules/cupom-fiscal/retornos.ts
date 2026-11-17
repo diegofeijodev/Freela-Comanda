@@ -1,13 +1,13 @@
 // Retornos da SEFAZ → o que fazer com o cupom e com o ambiente (desenho §5.3 e §5.4; travas da §4.4; frases da UX §6.1). Puras: sem
 // banco, sem rede; a hora vem no contexto. Regra de ouro da numeração (§4.3): um número só fica livre com prova de que a SEFAZ não o
-// tem. Resposta que não prova nada (falha depois de enviar, lote aceito sem protNFe, código não catalogado) = `sem_resposta`: o número
-// fica preso e só a consulta pela chave decide (a partir de 2 min). Nada aqui manda reenviar.
+// tem. Resposta que não prova nada (falha depois de enviar, lote aceito sem protNFe, autorizado ou denegado sem `nProt` válido, código
+// não catalogado) = `sem_resposta`: o número fica preso e só a consulta pela chave decide (a partir de 2 min). Nada aqui manda reenviar.
 //
 // `rejeicao` (conta no teto de 10 por hora): a SEFAZ respondeu com código de rejeição, ou seja, 200 em diante, menos 301 e 302 (uso
 // denegado). Os 1xx (autorizado, lote aceito, serviço parado, cancelamento homologado) e as falhas de transporte não contam.
 
 import type { AmbienteSefaz } from '../sefaz/distribuicao.port';
-import type { RespostaAutorizacao, RespostaConsulta, RespostaEvento } from '../sefaz/nfce.port';
+import type { RespostaAutorizacao, RespostaConsulta, RespostaEvento, RespostaStatus } from '../sefaz/nfce.port';
 import { SefazErro } from '../sefaz/sefaz-erro';
 import { FRASE_RETORNO as F } from './frases';
 import type { SituacaoCupom } from './situacao-cupom';
@@ -63,8 +63,13 @@ const QR = new Set([373, 394, 395]); // o código do hash do QR inválido ainda 
 const EVENTO_REGISTRADO = new Set([135, 155]);
 const NOTA_CANCELADA = new Set([101, 151]);
 const NAO_CATALOGADO = 999;
+const STATUS_EM_OPERACAO = 107;
 const certificado = (c: number) => c === 213 || (c >= 280 && c <= 286) || (c >= 290 && c <= 298);
 const ehRejeicao = (c: number) => c >= 200 && !DENEGADO.has(c);
+/** Sem protocolo não há prova nem DANFE (T9-4): o adaptador já anula o `nProt` fora do formato; aqui se confere de novo (15 ou 17 dígitos). */
+const temProtocolo = (p: { nProt: string | null }) => p.nProt !== null && /^[0-9]{15}([0-9]{2})?$/.test(p.nProt);
+/** A SEFAZ diz que tem a nota (autorizada ou denegada): o número é dela, com ou sem protocolo legível. */
+const temANota = (c: number) => AUTORIZADO.has(c) || DENEGADO.has(c);
 
 /** Família por código (desenho §11, ponto 10.4): só os códigos da pesquisa; fora da lista = `outra` (o 1º teste completa). */
 const FAMILIAS: readonly [Familia, readonly number[]][] = [
@@ -106,7 +111,7 @@ function recusaDe(codigo: number, xMotivo: string | null | undefined, frase: (mo
 type Efeito = Pick<AcaoRetorno, 'ambiente' | 'bloquear656' | 'bloqueadoAte'> & { frase: string };
 
 /** Código que para ou bloqueia o ambiente, em qualquer serviço (§4.4, regras 5 e 6): 656, 781, certificado e esquema. null = não para. */
-function efeitoNoAmbiente(c: number, ctx: ContextoRetorno): Efeito | null {
+function efeitoNoAmbiente(c: number, ctx: Pick<ContextoRetorno, 'agora' | 'ultimo656'>): Efeito | null {
   if (c === 656) {
     const d = depoisDo656(ctx.ultimo656, ctx.agora);
     return {
@@ -149,7 +154,8 @@ function fraseDaFamilia(f: Familia, c: number): string {
 
 /**
  * Autorização (§5.3, tabela "Autorização"). Com `protNFe`, vale o código dele (seja qual for o do lote); sem, o do lote. Autorizado ou
- * denegado sem `protNFe`, lote aceito (103/104/105) sem `protNFe`, outro 1xx e o 999 = `sem_resposta`: a SEFAZ pode ter a nota.
+ * denegado sem `protNFe` ou sem `nProt` válido, lote aceito (103/104/105) sem `protNFe`, outro 1xx e o 999 = `sem_resposta`: a SEFAZ
+ * pode ter a nota.
  */
 export function acaoAutorizacao(r: RespostaAutorizacao | SefazErro, ctx: ContextoRetorno): AcaoRetorno {
   if (r instanceof SefazErro) return { cupom: r.enviado ? 'sem_resposta' : 'nao_enviado', rejeicao: false, recusa: null };
@@ -158,8 +164,10 @@ export function acaoAutorizacao(r: RespostaAutorizacao | SefazErro, ctx: Context
   const xMotivo = p ? p.xMotivo : r.xMotivoLote;
   const rejeicao = ehRejeicao(c);
 
-  if (p && AUTORIZADO.has(c)) return { cupom: 'autorizado', rejeicao: false, ...alertaDe(p), recusa: null };
-  if (p && DENEGADO.has(c)) return { cupom: 'denegado', rejeicao: false, recusa: recusaDe(c, xMotivo, (m) => F.denegado(c, m)) };
+  if (p && temProtocolo(p) && AUTORIZADO.has(c)) return { cupom: 'autorizado', rejeicao: false, ...alertaDe(p), recusa: null };
+  if (p && temProtocolo(p) && DENEGADO.has(c)) {
+    return { cupom: 'denegado', rejeicao: false, recusa: recusaDe(c, xMotivo, (m) => F.denegado(c, m)) };
+  }
   if (DENEGADO.has(c) || (c < 200 && !FORA_DO_AR.has(c)) || c === NAO_CATALOGADO) return { cupom: 'sem_resposta', rejeicao, recusa: null };
 
   if (FORA_DO_AR.has(c)) return { cupom: 'nao_enviado', rejeicao: false, recusa: recusaDe(c, xMotivo, () => F.foraDoAr(c)) };
@@ -190,7 +198,9 @@ const FINAIS: readonly SituacaoCupom[] = ['cancelado', 'denegado', 'descartado']
 
 /**
  * Consulta pela chave (§5.3, tabela "Consulta"; §5.1). O cancelamento registrado (evento 135/155, ou a nota 101/151) vale sobre o
- * `protNFe`; "sem evento → autorizado" só quando a resposta mostra a nota autorizada; 217 = `nao_consta` só se não temos protocolo.
+ * `protNFe`; "sem evento → autorizado" só quando a resposta mostra a nota autorizada, com `nProt` válido; autorizada ou denegada sem
+ * `nProt` válido = `sem_resposta` (o número fica preso, mesmo vindo de um estado de número livre); 217 = `nao_consta` só se não temos
+ * protocolo.
  * 656, certificado e esquema param o ambiente e deixam o cupom como está; 108/109, falha de transporte e qualquer outro código também
  * deixam (o `enviando` vencido vira `sem_resposta`). `cancelado`, `denegado` e `descartado` não mudam.
  */
@@ -207,11 +217,13 @@ export function acaoConsulta(r: RespostaConsulta | SefazErro, atual: SituacaoCup
 
   const cancelada = (r.cancelamento !== null && EVENTO_REGISTRADO.has(r.cancelamento.cStat)) || NOTA_CANCELADA.has(c);
   if (cancelada) return { cupom: 'cancelado', rejeicao: false, recusa: null };
-  if (p && AUTORIZADO.has(p.cStat)) return { cupom: 'autorizado', rejeicao: false, ...alertaDe(p), recusa: null };
+  if (p && temProtocolo(p) && AUTORIZADO.has(p.cStat)) return { cupom: 'autorizado', rejeicao: false, ...alertaDe(p), recusa: null };
   if (COM_PROTOCOLO.includes(manter)) return { cupom: manter, rejeicao, recusa: null };
 
-  const den = p && DENEGADO.has(p.cStat) ? p : DENEGADO.has(c) ? { cStat: c, xMotivo: r.xMotivo } : null;
-  if (den) return { cupom: 'denegado', rejeicao: false, recusa: recusaDe(den.cStat, den.xMotivo, (m) => F.denegado(den.cStat, m)) };
+  if (p && temProtocolo(p) && DENEGADO.has(p.cStat)) {
+    return { cupom: 'denegado', rejeicao: false, recusa: recusaDe(p.cStat, p.xMotivo, (m) => F.denegado(p.cStat, m)) };
+  }
+  if ((p && temANota(p.cStat)) || temANota(c)) return { cupom: 'sem_resposta', rejeicao, recusa: null };
   if (c === 217) return { cupom: 'nao_consta', rejeicao, recusa: null };
   return { cupom: manter, rejeicao, recusa: null };
 }
@@ -235,4 +247,34 @@ export function acaoCancelamento(r: RespostaEvento | SefazErro, ctx: ContextoRet
   if (efeito) return comEfeito('autorizado', c, xMotivo, efeito);
   if (!FORA_DO_AR.has(c) && (c < 200 || c === NAO_CATALOGADO)) return { cupom: 'cancelando', rejeicao, recusa: null };
   return { cupom: 'autorizado', rejeicao, recusa: recusaDe(c, xMotivo, (m) => F.cancelamentoRecusado(c, m)) };
+}
+
+/** O que fazer com a resposta do "Testar a conexão" (status do serviço). */
+export interface AcaoStatus {
+  /** 107: a SEFAZ respondeu que o serviço está em operação. */
+  emOperacao: boolean;
+  /** Conta no teto de recusas, como nos outros serviços. */
+  rejeicao: boolean;
+  ambiente?: SituacaoAmbiente;
+  bloquear656?: true;
+  bloqueadoAte?: Date;
+  /** O `cStat` (null na falha de transporte), para o registro do envio. */
+  codigo: number | null;
+  /** A linha sob o botão (UX 5.1); na parada e no 656, é também a mensagem do ambiente. */
+  frase: string;
+}
+
+/**
+ * "Testar a conexão" (decisão T9-3): a espera de 5 min é do `podeChamar`; aqui, o 656, a parada (781, certificado, esquema) e a
+ * rejeição contam como nos outros serviços (`efeitoNoAmbiente`, `ehRejeicao`). 108/109 = fora do ar, sem rejeição. O relógio
+ * (`relogioDiverge` com o `dhRecbto` do status) fica com o serviço, como nas outras respostas.
+ */
+export function acaoStatus(r: RespostaStatus | SefazErro, ctx: Pick<ContextoRetorno, 'agora' | 'ultimo656'>): AcaoStatus {
+  if (r instanceof SefazErro) return { emOperacao: false, rejeicao: false, codigo: null, frase: F.statusSemContato };
+  const c = r.cStat;
+  if (c === STATUS_EM_OPERACAO) return { emOperacao: true, rejeicao: false, codigo: c, frase: F.statusOk(ctx.agora) };
+  if (FORA_DO_AR.has(c)) return { emOperacao: false, rejeicao: false, codigo: c, frase: F.statusForaDoAr(c) };
+  const efeito = efeitoNoAmbiente(c, ctx);
+  if (efeito) return { emOperacao: false, rejeicao: ehRejeicao(c), codigo: c, ...efeito };
+  return { emOperacao: false, rejeicao: ehRejeicao(c), codigo: c, frase: F.statusOutroCodigo(c) };
 }

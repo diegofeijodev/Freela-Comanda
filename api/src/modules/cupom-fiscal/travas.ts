@@ -1,13 +1,16 @@
 // Travas contra o 656 ("consumo indevido": a SEFAZ bloqueia o CNPJ por até 1 hora, e com ele o caixa de hoje da loja). Desenho §4.4.
 // Puras: o serviço lê o estado do ambiente (sob o FOR UPDATE da T1) e o diário `nfce_envios`, e pergunta aqui antes de QUALQUER chamada
 // à SEFAZ (autorização, consulta, evento ou status). Nenhum laço: toda chamada nasce de um clique e passa por `podeChamar`.
-// A parada (`parada_*`) e o teto de recusas valem para os 4 serviços (§4.4: "nada sai até o admin religar"; "param todos os envios").
+// Quem resolve um cupom em andamento escapa das paradas de configuração (decisão T9-2): a consulta pela chave e o cancelamento (evento)
+// só param no 656 (janela de 65 min e `parada_656`) e nos próprios limites (consulta: 2 min, 1 a cada 2 min por chave, 20 por hora;
+// cancelamento: o prazo de 30 min, conferido pelo serviço). Sem isso, um cupom sem resposta de uma série parada não teria saída
+// (a série só troca sem pendentes). Emissão e status seguem todas as travas: qualquer parada e o teto de 10 recusas por hora.
 
 import type { ServicoNfce } from '../sefaz/nfce.port';
 
 export type SituacaoAmbiente = 'ok' | 'parada_656' | 'parada_certificado' | 'parada_configuracao' | 'parada_serie_em_uso';
 
-/** Respostas de rejeição (todos os serviços) em 60 min que param os envios até a mais antiga sair da janela (a SEFAZ pune acima de 30 iguais). */
+/** Respostas de rejeição (somadas de todos os serviços) em 60 min que param a emissão e o status até a mais antiga sair da janela (a SEFAZ pune acima de 30 iguais). */
 export const TETO_RECUSAS_HORA = 10;
 /** Consultas pela chave em 60 min, no ambiente. */
 export const TETO_CONSULTAS_HORA = 20;
@@ -62,15 +65,22 @@ function esperaMaisLonga(esperas: readonly (Date | null)[], agora: Date): Date |
   return ate;
 }
 
+/** Consulta pela chave e cancelamento: resolvem um cupom em andamento, então só o 656 e os próprios limites os param (T9-2). */
+const resolveCupom = (s: ServicoNfce) => s === 'consulta' || s === 'evento';
+
 /**
- * Pode chamar a SEFAZ agora? Ordem: parada (até o admin religar) → bloqueio do 656 → teto de recusas → espera do serviço (consulta:
- * 2 min do envio, 2 min da última consulta da chave e 20 por hora; status: 5 min). `ate` = quando abre (null na parada).
+ * Pode chamar a SEFAZ agora? Ordem: parada (até o admin religar; na consulta e no evento, só a `parada_656`) → bloqueio do 656 →
+ * teto de recusas (só emissão e status) → espera do serviço (consulta: 2 min do envio, 2 min da última consulta da chave e 20 por
+ * hora; status: 5 min). `ate` = quando abre (null na parada).
  */
 export function podeChamar(e: EstadoTravas, servico: ServicoNfce, agora: Date): ResultadoTrava {
-  if (e.situacao !== 'ok') return { ok: false, code: 'NFCE_PARADA', ate: null };
+  const resolve = resolveCupom(servico);
+  if (e.situacao === 'parada_656' || (e.situacao !== 'ok' && !resolve)) return { ok: false, code: 'NFCE_PARADA', ate: null };
   if (e.bloqueado_ate !== null && e.bloqueado_ate > agora) return { ok: false, code: 'NFCE_BLOQUEADA', ate: e.bloqueado_ate };
-  const recusas = tetoAte(e.recusas, TETO_RECUSAS_HORA, agora);
-  if (recusas !== null) return { ok: false, code: 'NFCE_MUITAS_RECUSAS', ate: recusas };
+  if (!resolve) {
+    const recusas = tetoAte(e.recusas, TETO_RECUSAS_HORA, agora);
+    if (recusas !== null) return { ok: false, code: 'NFCE_MUITAS_RECUSAS', ate: recusas };
+  }
 
   if (servico === 'consulta') {
     const ate = esperaMaisLonga(

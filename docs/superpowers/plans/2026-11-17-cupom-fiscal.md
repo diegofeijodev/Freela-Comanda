@@ -365,7 +365,7 @@ expect(erroDoItemFiscal({ gtin: '7891000315508' })).toBe('Este GTIN não confere
 - Create: `api/src/modules/cupom-fiscal/retornos.ts`, `travas.ts`, `situacao-cupom.ts` e `frases.ts`
 - Test: `api/src/modules/cupom-fiscal/__tests__/retornos.spec.ts`, `travas.spec.ts` e `situacao-cupom.spec.ts`
 
-**Interfaces:**
+**Interfaces** (atualizadas na rodada de decisões T9-1 a T9-4; são as assinaturas do código):
 - **Tipos:**
   - `SituacaoCupom` (os 10 valores do CHECK);
   - `SituacaoAmbiente = 'ok' | 'parada_656' | 'parada_certificado' | 'parada_configuracao' | 'parada_serie_em_uso'`;
@@ -374,24 +374,35 @@ expect(erroDoItemFiscal({ gtin: '7891000315508' })).toBe('Este GTIN não confere
   - `VendaEstoque = 'lancada' | 'pendente' | 'desfeita' | 'desfazer_pendente' | 'teste' | 'nao_lanca'`;
   - `TipoPendente = 'sem_resposta' | 'nao_saiu' | 'recusado' | 'venda_pendente'`.
 - **`retornos.ts`:**
-  - `interface AcaoRetorno { cupom: SituacaoCupom; rejeicao: boolean; numeroReaproveitavel?: false; ambiente?: SituacaoAmbiente; bloquear656?: true; recusa: { codigo: number; familia: Familia; frase: string } | null }`;
-  - `acaoAutorizacao(r: RespostaAutorizacao | SefazErro): AcaoRetorno`;
-  - `acaoConsulta(r: RespostaConsulta | SefazErro, atual: SituacaoCupom): AcaoRetorno`;
-  - `acaoCancelamento(r: RespostaEvento | SefazErro): AcaoRetorno`;
+  - `interface Recusa { codigo: number; familia: Familia; frase: string; x_motivo: string }` (`x_motivo` sem o prefixo "Rejeição:", cortado em 255);
+  - `interface AcaoRetorno { cupom: SituacaoCupom; rejeicao: boolean; numeroReaproveitavel?: false; ambiente?: SituacaoAmbiente; bloquear656?: true; bloqueadoAte?: Date; alerta?: { c_msg: string | null; x_msg: string | null }; recusa: Recusa | null }`;
+  - `interface ContextoRetorno { ambiente: AmbienteSefaz; serie: number; numero: number; agora: Date; enviadoEm: Date; ultimo656: Date | null }` (as frases do 539, do QR, do 204 e do 656 precisam dele; com 656, `bloqueadoAte` já vem de `depoisDo656(ultimo656, agora)` e o 2º em 24 h traz `ambiente: 'parada_656'`);
+  - `acaoAutorizacao(r: RespostaAutorizacao | SefazErro, ctx: ContextoRetorno): AcaoRetorno`;
+  - `acaoConsulta(r: RespostaConsulta | SefazErro, atual: SituacaoCupom, ctx: ContextoRetorno): AcaoRetorno`;
+  - `acaoCancelamento(r: RespostaEvento | SefazErro, ctx: ContextoRetorno): AcaoRetorno`;
+  - `interface AcaoStatus { emOperacao: boolean; rejeicao: boolean; ambiente?: SituacaoAmbiente; bloquear656?: true; bloqueadoAte?: Date; codigo: number | null; frase: string }`;
+  - `acaoStatus(r: RespostaStatus | SefazErro, ctx: Pick<ContextoRetorno, 'agora' | 'ultimo656'>): AcaoStatus` ("Testar a conexão": 656, paradas e rejeições contam como nos outros serviços);
   - `familiaDoCodigo(c: number): Familia` (lista da §11 do desenho);
-  - `relogioDiverge(dhRecbto: string, agora: Date): boolean` (mais de 120 s).
+  - `motivoSefaz(x: string | null | undefined): string`;
+  - `relogioDiverge(dhRecbto: string, agora: Date): boolean` (mais de 120 s; o serviço aplica, com o `dhRecbto` do lote, do status ou o `dhRegEvento`, nunca o `protocolo.dhRecbto` de uma consulta).
+  - Regras: autorizado ou denegado sem `protNFe` ou sem `nProt` válido, lote aceito sem `protNFe`, outro 1xx e o 999 = `sem_resposta`; `rejeicao` = código ≥ 200, menos 301 e 302.
 - **`travas.ts`:**
   - constantes `TETO_RECUSAS_HORA = 10`, `TETO_CONSULTAS_HORA = 20`, `ESPERA_CONSULTA_MS = 120_000`, `STATUS_CADA_MS = 300_000`, `BLOQUEIO_656_MS = 65 * 60_000`, `MAX_ENVIOS = 3`;
   - `podeChamar(e: EstadoTravas, servico: 'autorizacao' | 'consulta' | 'evento' | 'status', agora: Date): { ok: true } | { ok: false; code: 'NFCE_BLOQUEADA' | 'NFCE_MUITAS_RECUSAS' | 'NFCE_PARADA' | 'NFCE_CONSULTA_CEDO' | 'NFCE_TESTE_CEDO'; ate: Date | null }`;
-  - `EstadoTravas = { situacao: SituacaoAmbiente; bloqueado_ate: Date | null; recusas: Date[]; consultas: Date[]; ultimo_status_em: Date | null; enviadoEm?: Date | null; ultimaConsultaDaChave?: Date | null }`;
+    - emissão e status: qualquer parada → bloqueio do 656 → teto de 10 recusas por hora → espera do status (5 min);
+    - consulta e evento (T9-2): só `parada_656` → bloqueio do 656 → espera da consulta (2 min do envio, 2 min da última consulta da chave, 20 por hora = `NFCE_CONSULTA_CEDO`); o prazo do cancelamento é conferido pelo serviço;
+  - `EstadoTravas = { situacao: SituacaoAmbiente; bloqueado_ate: Date | null; recusas: Date[]; consultas: Date[]; ultimo_status_em: Date | null; enviadoEm?: Date | null; ultimaConsultaDaChave?: Date | null }` (`enviadoEm` = `inicioDaEspera(cupom)`);
   - `depoisDo656(ultimo656: Date | null, agora: Date): { bloqueado_ate: Date; parada: boolean }`.
 - **`situacao-cupom.ts`:**
   - `PRAZO_CANCELAR_MS = 29 * 60_000`;
-  - `situacaoEfetiva(c, agora): SituacaoCupom` (`enviando` há mais de 2 min = `sem_resposta`);
+  - `CupomParaAcoes = { situacao; ambiente; envios; numero_reaproveitavel; autorizada_em; cancelamento_pedido_em; lanca_venda; venda_lancada_em; venda_desfeita_em; enviadoEm; ultimaConsultaDaChave }` (os dois últimos, do diário `nfce_envios`);
+  - `situacaoEfetiva(c, agora): SituacaoCupom` (`enviando` a partir de 2 min = `sem_resposta`);
+  - `inicioDaEspera(c): Date | null` (em `cancelando`, o pedido de cancelamento; nas outras, o último envio);
   - `acoesDoCupom(c: CupomParaAcoes, agora: Date): { acoes: AcaoCupom[]; consultar_a_partir_de: Date | null; cancelar_ate: Date | null }`;
   - `vendaEstoque(c): VendaEstoque | null`;
   - `tipoPendente(c, agora): TipoPendente | null`.
 - **`frases.ts`:**
+  - `FRASES_VALIDACAO` (veio de `validacao-fiscal.ts`), `FRASE_RETORNO` (UX 6.1, a do cancelamento recusado da UX 4.3 e as do "Testar a conexão" da UX 5.1), `FRASE_ERRO` (UX 6.2, pela chave do código) e `reais(c: bigint)`;
   - o texto final das tabelas 6.1 e 6.2 da UX, literal, com hora `14h05`, e a versão "modo de teste" ou "valendo" onde a UX dá as duas;
   - o `xMotivo` vai à parte (`recusa.x_motivo`, sem o prefixo "Rejeição:", cortado em 255), para o `<details>` da tela;
   - teste: a frase do 539 com a série 2 e o número 12 é igual à da UX 6.1, letra por letra.

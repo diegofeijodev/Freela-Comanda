@@ -1,16 +1,18 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { ProtocoloNfce, RespostaAutorizacao, RespostaConsulta, RespostaEvento } from '../../sefaz/nfce.port';
+import type { ProtocoloNfce, RespostaAutorizacao, RespostaConsulta, RespostaEvento, RespostaStatus } from '../../sefaz/nfce.port';
 import { sefazErro, type SefazErro } from '../../sefaz/sefaz-erro';
 import { FRASE_ERRO, FRASE_RETORNO, FRASES_VALIDACAO } from '../frases';
 import {
   acaoAutorizacao,
   acaoCancelamento,
   acaoConsulta,
+  acaoStatus,
   familiaDoCodigo,
   motivoSefaz,
   relogioDiverge,
   type AcaoRetorno,
+  type AcaoStatus,
   type ContextoRetorno,
   type Familia,
   type Recusa,
@@ -267,6 +269,15 @@ describe('acaoAutorizacao (desenho §5.3, tabela "Autorização"; UX §6.1)', ()
   it('539 usa a série e o número do cupom do contexto', () => {
     expect(acaoAutorizacao(aut(539), ctx({ serie: 7, numero: 300 })).recusa?.frase).toContain('o número 300 da série 7 já foi usado');
   });
+
+  // Decisão do controlador (T9-4): sem protocolo não há prova nem DANFE; o adaptador anula o nProt fora do formato.
+  it.each([100, 150, 120, 110, 301, 302])('%i com protNFe mas sem nProt válido → sem_resposta (consultar pela chave)', (c) => {
+    expect(acaoAutorizacao(aut(c, { nProt: null, cMsg: '7', xMsg: 'Aviso' }), ctx())).toEqual({
+      cupom: 'sem_resposta',
+      rejeicao: false,
+      recusa: null,
+    });
+  });
 });
 
 describe('acaoConsulta (desenho §5.3, tabela "Consulta"; §5.1 "Consultar")', () => {
@@ -354,6 +365,22 @@ describe('acaoConsulta (desenho §5.3, tabela "Consulta"; §5.1 "Consultar")', (
     });
   });
 
+  // T9-4: a SEFAZ indica que tem a nota (autorizada ou denegada), mas sem nProt válido → sem_resposta: o número fica preso, mesmo que o
+  // cupom estivesse num estado de número livre (rejeitado, nao_enviado, nao_consta). Com protocolo nosso (autorizado/cancelando), nada muda.
+  it.each<[string, RespostaConsulta, SituacaoCupom, SituacaoCupom]>([
+    ['autorizada sem nProt, em sem_resposta', autorizada({ protocolo: prot(100, { nProt: null }) }), 'sem_resposta', 'sem_resposta'],
+    ['autorizada sem nProt, em rejeitado', autorizada({ protocolo: prot(100, { nProt: null }) }), 'rejeitado', 'sem_resposta'],
+    ['autorizada sem nProt, em nao_enviado', autorizada({ protocolo: prot(150, { nProt: null }) }), 'nao_enviado', 'sem_resposta'],
+    ['autorizada sem nProt, em nao_consta', autorizada({ protocolo: prot(120, { nProt: null }) }), 'nao_consta', 'sem_resposta'],
+    ['autorizada sem protNFe, em rejeitado', cons(100), 'rejeitado', 'sem_resposta'],
+    ['denegada sem nProt, em sem_resposta', cons(110, { protocolo: prot(110, { nProt: null }) }), 'sem_resposta', 'sem_resposta'],
+    ['denegada sem protNFe, em nao_enviado', cons(302), 'nao_enviado', 'sem_resposta'],
+    ['autorizada sem nProt, em cancelando: continua', autorizada({ protocolo: prot(100, { nProt: null }) }), 'cancelando', 'cancelando'],
+    ['autorizada sem nProt, em autorizado: continua', autorizada({ protocolo: prot(100, { nProt: null }) }), 'autorizado', 'autorizado'],
+  ])('%s → %s', (_nome, r, atual, esperado) => {
+    expect(acaoConsulta(r, atual, ctx())).toEqual({ cupom: esperado, rejeicao: false, recusa: null });
+  });
+
   it('certificado e esquema na consulta: o cupom fica e o ambiente para', () => {
     expect(acaoConsulta(cons(285), 'sem_resposta', ctx())).toMatchObject({ cupom: 'sem_resposta', ambiente: 'parada_certificado' });
     expect(acaoConsulta(cons(225), 'cancelando', ctx())).toMatchObject({ cupom: 'cancelando', ambiente: 'parada_configuracao' });
@@ -436,6 +463,80 @@ describe('acaoCancelamento (desenho §5.4)', () => {
     ],
   ])('%s', (_nome, r, esperado) => {
     expect(acaoCancelamento(r, ctx())).toEqual(esperado);
+  });
+});
+
+describe('acaoStatus ("Testar a conexão"; UX 5.1; decisão T9-3)', () => {
+  const st = (cStat: number, xMotivo = `Rejeição: status ${cStat}`): RespostaStatus => ({
+    cStat,
+    xMotivo,
+    dhRecbto: '2026-11-17T14:05:20-03:00',
+    tMed: 1,
+  });
+  const ctxStatus = (ultimo656: Date | null = null) => ({ agora: AGORA, ultimo656 });
+
+  it.each<[string, RespostaStatus | SefazErro, AcaoStatus]>([
+    [
+      '107 em operação',
+      st(107, 'Serviço em Operação'),
+      { emOperacao: true, rejeicao: false, codigo: 107, frase: 'A SEFAZ respondeu às 14h05: o serviço está funcionando.' },
+    ],
+    ['108 fora do ar', st(108), { emOperacao: false, rejeicao: false, codigo: 108, frase: 'A SEFAZ está fora do ar agora (código 108).' }],
+    ['109 fora do ar', st(109), { emOperacao: false, rejeicao: false, codigo: 109, frase: 'A SEFAZ está fora do ar agora (código 109).' }],
+    [
+      'SefazErro antes de enviar',
+      sefazErro('SEFAZ_REDE', false),
+      { emOperacao: false, rejeicao: false, codigo: null, frase: 'Não consegui falar com a SEFAZ. Nada foi enviado.' },
+    ],
+    [
+      'SefazErro depois de enviar',
+      sefazErro('SEFAZ_TEMPO', true),
+      { emOperacao: false, rejeicao: false, codigo: null, frase: 'Não consegui falar com a SEFAZ. Nada foi enviado.' },
+    ],
+    [
+      '656: conta como nos outros serviços',
+      st(656),
+      { emOperacao: false, rejeicao: true, codigo: 656, bloquear656: true, bloqueadoAte: mais(AGORA, 65 * MIN), frase: U.bloqueio15h10 },
+    ],
+    [
+      '285 certificado: a frase do certificado e a parada',
+      st(285),
+      { emOperacao: false, rejeicao: true, codigo: 285, ambiente: 'parada_certificado', frase: U.certificado285 },
+    ],
+    [
+      '225 esquema: parada de configuração',
+      st(225),
+      { emOperacao: false, rejeicao: true, codigo: 225, ambiente: 'parada_configuracao', frase: U.sistema225 },
+    ],
+    [
+      '781 não credenciado: parada de configuração',
+      st(781),
+      { emOperacao: false, rejeicao: true, codigo: 781, ambiente: 'parada_configuracao', frase: U.credenciada781 },
+    ],
+    [
+      '252 outra rejeição: conta no teto, sem parada',
+      st(252),
+      { emOperacao: false, rejeicao: true, codigo: 252, frase: FRASE_RETORNO.statusOutroCodigo(252) },
+    ],
+    [
+      '106 (1xx desconhecido): não é rejeição',
+      st(106),
+      { emOperacao: false, rejeicao: false, codigo: 106, frase: FRASE_RETORNO.statusOutroCodigo(106) },
+    ],
+  ])('%s', (_nome, r, esperado) => {
+    expect(acaoStatus(r, ctxStatus())).toEqual(esperado);
+  });
+
+  it('o 2º 656 em 24 h também para a emissão no status', () => {
+    expect(acaoStatus(st(656), ctxStatus(mais(AGORA, -2 * HORA)))).toEqual({
+      emOperacao: false,
+      rejeicao: true,
+      codigo: 656,
+      bloquear656: true,
+      bloqueadoAte: mais(AGORA, 65 * MIN),
+      ambiente: 'parada_656',
+      frase: U.duasVezes,
+    });
   });
 });
 
@@ -531,6 +632,9 @@ describe('frases.ts = UX §6.1 e §6.2, literais', () => {
     ['SefazErro não enviado', F.naoEnviado],
     ['SefazErro enviado', F.semResposta(sp('14:07'))],
     ['cancelamento recusado (UX 4.3)', comN(F.cancelamentoRecusado(501, '<motivo>'), 501)],
+    ['Testar a conexão: funcionando (UX 5.1)', F.statusOk(sp('14:05'))],
+    ['Testar a conexão: sem contato (UX 5.1)', F.statusSemContato],
+    ['Testar a conexão: fora do ar (UX 5.1)', comN(F.statusForaDoAr(108), 108)],
   ])('6.1 %s', (_nome, frase) => {
     expect(UX).toContain(`"${frase}"`);
   });
