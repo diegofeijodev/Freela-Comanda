@@ -594,7 +594,10 @@ o dono acompanha. Pressupõe a busca da entrega 2 já testada (o roteiro dela) e
      Root X1 pela impressão digital 96:BC:EC:06:…:08:C6, gera uma chave RSA na hora e assina/verifica 'x' com RSA-SHA1>"` → as duas conferências `true`.
      Falhou a assinatura = OpenSSL da imagem recusa SHA-1: parar.
 2. **Homologação (1º "eu autorizo").**
-   - A caixa de homologação quase nunca tem nota (ninguém emite NF-e de teste para o CNPJ). O dono escolhe **uma** chave de nota real recente da empresa;
+   - A caixa de homologação quase nunca tem nota (ninguém emite NF-e de teste para o CNPJ). O dono escolhe **uma** chave de nota real recente da empresa
+     **ainda não lançada no Comanda** (conferir antes: `select count(*) from notas_entrada where chave = '<chave>'` = 0). Por quê: `notasLancadas` cruza
+     só pela chave, sem o ambiente; uma chave já lançada vira `ja_lancada` na linha de homologação, o planejador não cria a ciência (nem a 210200) e o
+     lote de 1 não sai. Pelo mesmo motivo, não lançar essa nota no Comanda enquanto o servidor estiver em homologação (nasceria uma 210200 de homologação);
      ela é semeada por SQL em `notas_sefaz` com `ambiente = 'homologacao'`, `cnpj_destinatario` = o da empresa, `situacao_sefaz = 'autorizada'`, `tp_nf = 1`,
      `autorizada_em = now() - interval '1 day'` (o planejador só manda ciência até 9 dias), emitente, número e série tirados da chave (o evento de
      homologação não vale nada na produção; nota de homologação nunca chega ao "Dar entrada").
@@ -618,7 +621,8 @@ o dono acompanha. Pressupõe a busca da entrega 2 já testada (o roteiro dela) e
      e `select resultado, c_stat, count(*) from sefaz_eventos_lotes group by 1,2` sem 656.
 4. **Volta, nesta ordem.** PRIMEIRO "Desligar as respostas" na tela; depois `SEFAZ_MANIFESTACAO` vazia no `.env` e recriar só a API; conferir que o painel
    diz "As respostas à SEFAZ não estão ativadas neste servidor."; nunca apagar `sefaz_manifestacoes` nem `sefaz_eventos_lotes`. Avisar o dono: toda nota
-   com ciência registrada ainda precisa de resposta final em 90 dias (pelo portal ou religando as respostas).
+   com ciência registrada ainda precisa de resposta final em 90 dias (pelo portal ou religando as respostas). O aviso do prazo continua na tela com a
+   variável vazia (a leitura só olha o banco), desde que `SEFAZ_DFE_AMBIENTE` siga não vazio.
 
 ## Pontos em aberto (só o dono ou o contador respondem)
 
@@ -628,5 +632,6 @@ o dono acompanha. Pressupõe a busca da entrega 2 já testada (o roteiro dela) e
    último): combinar quem responde.
 3. **Dono:** "É a mesma nota" e "Já lancei de outro jeito" confirmam a compra sozinhos (decisão do construtor 3). Se preferir só com a caixa marcada, a
    troca é de texto e de um booleano.
-4. **Dono:** notas lançadas **antes** de ligar as respostas não são confirmadas sozinhas (decisão do construtor 2). Basta?
+4. **Dono:** notas lançadas **antes** da 1ª vez que as respostas forem ligadas não são confirmadas sozinhas (decisão do construtor 2; `ligada_em` só
+   na 1ª vez, decisão do controlador na onda final). Basta?
 5. **Dono:** qual chave usar no teste de homologação (passo 2 do roteiro).
