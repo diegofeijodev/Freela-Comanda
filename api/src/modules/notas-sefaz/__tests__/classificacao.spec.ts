@@ -169,6 +169,34 @@ describe('classificar + aplicarNaCaixa', () => {
     expect((c as { cancelada_em: Date }).cancelada_em.toISOString()).toBe('2026-11-16T13:00:00.000Z');
   });
 
+  it('procEventoNFe 110111 com cStat de rejeição no retEvento não cancela; 136 e 155 cancelam', () => {
+    const x = fx('proc-evento-110111.xml');
+    const rej = classificar(doc('procEventoNFe', x.replace('<cStat>135<', '<cStat>494<')), NOSSO);
+    expect(rej).toEqual({ tipo: 'outro_evento', chave: '35261111222333000181550010000001201000000120', tp_evento: '110111' });
+    expect(aplicarNaCaixa(linha(), rej, 'd1', BASE)).toBeNull();
+    expect(chaveDoDocumento(rej).tp_evento).toBe('110111');
+    for (const cs of ['135', '136', '155']) {
+      expect(classificar(doc('procEventoNFe', x.replace('<cStat>135<', `<cStat>${cs}<`)), NOSSO).tipo).toBe('cancelamento');
+    }
+  });
+
+  it('procEventoNFe sem retEvento segue cancelando', () => {
+    const x = fx('proc-evento-110111.xml').replace(/<retEvento.*<\/retEvento>/, '');
+    expect(classificar(doc('procEventoNFe', x), NOSSO).tipo).toBe('cancelamento');
+  });
+
+  it('empresa só como transportadora ou só em autXML, dest de outro CNPJ: não entra na caixa', () => {
+    const base = fx('proc-nfe.xml').replace('<CNPJ>12345678000195</CNPJ><xNome>RESTAURANTE', '<CNPJ>99888777000100</CNPJ><xNome>RESTAURANTE');
+    const transp = base.replace('</infNFe>', `<transp><transporta><CNPJ>${NOSSO}</CNPJ></transporta></transp></infNFe>`);
+    const aut = base.replace('</infNFe>', `<autXML><CNPJ>${NOSSO}</CNPJ></autXML></infNFe>`);
+    for (const x of [transp, aut]) {
+      expect(x).toContain(NOSSO);
+      const c = classificar(doc('procNFe', x), NOSSO);
+      expect(c).toEqual({ tipo: 'nao_destinatario', chave: K880 });
+      expect(aplicarNaCaixa(null, c, 'd1', BASE)).toBeNull();
+    }
+  });
+
   it('resumo depois do cancelamento não volta a situação para autorizada', () => {
     const c = classificar(doc('resNFe', fx('res-nfe.xml')), NOSSO);
     const r = aplicarNaCaixa(linha({ chave: VETOR, situacao_sefaz: 'cancelada' }), c, 'd3', BASE) as { atualizar: Partial<LinhaCaixa> };

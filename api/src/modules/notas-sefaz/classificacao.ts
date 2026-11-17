@@ -125,6 +125,12 @@ function evento(raiz: Raiz, procesado: boolean): Classificacao {
   const inf = (procesado ? primeiro(raiz, 'infEvento') : null) ?? raiz;
   const tp = texto(inf, 'tpEvento');
   if (tp !== CANCELAMENTO) return { tipo: 'outro_evento', chave: chaveOuNula(texto(inf, 'chNFe')), tp_evento: tp };
+  // evento rejeitado (retEvento com outro cStat): fica registrado, mas a nota não vira cancelada (a marca não volta)
+  const ret = procesado ? primeiro(raiz, 'retEvento') : null;
+  const cStatRet = ret ? inteiro(texto(ret, 'cStat')) : null;
+  if (ret && (cStatRet === null || ![135, 136, 155].includes(cStatRet))) {
+    return { tipo: 'outro_evento', chave: chaveOuNula(texto(inf, 'chNFe')), tp_evento: tp };
+  }
   const cancelada_em = data(texto(inf, 'dhEvento'));
   if (!cancelada_em) throw new XmlInvalido();
   return { tipo: 'cancelamento', chave: chaveLida(texto(inf, 'chNFe')), cancelada_em, emitente_cnpj: documentoDe(inf) };
