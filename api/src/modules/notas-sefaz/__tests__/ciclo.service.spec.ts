@@ -72,7 +72,9 @@ function montar(
   const env: Record<string, string> = { SEFAZ_DFE_AMBIENTE: o.ambiente ?? 'producao' };
   const config = { get: (k: string) => env[k] } as unknown as ConfigService;
   const svc = new CicloSefazService(prisma, config, certificados, sefaz);
-  return { svc, t, trava, sefaz, certificados };
+  /** Outro processo da API no mesmo banco (ex.: depois de um reinício). */
+  const outraApi = (s: SefazDfeFalso) => new CicloSefazService(prisma, config, certificados, s);
+  return { svc, t, trava, sefaz, certificados, prisma, outraApi };
 }
 
 const linhaDe = (t: TabelasSefaz, cnpj = NOSSO) => t.sefaz_distribuicao.find((l) => l.ambiente === 'producao' && l.cnpj === cnpj)!;
@@ -162,6 +164,87 @@ describe('CicloSefazService', () => {
     expect(await svc.ciclo('agendada', null, em(AGORA))).toEqual({ fim: 'feito', paginas: 10 });
     expect(sefaz.chamadas).toHaveLength(10);
     expect(linhaDe(t)).toMatchObject({ ult_nsu: 110n, proxima_consulta_em: AGORA, em_andamento_desde: null });
+  });
+
+  it('reserva antes da rede: quando a pergunta sai, a próxima já está em +65 min; se a API cai ali, a reserva segura a próxima', async () => {
+    const { svc, t, sefaz, outraApi } = montar();
+    let naRede: (estado: unknown) => void = () => undefined;
+    const estadoNaRede = new Promise((r) => (naRede = r));
+    sefaz.antesDeResponder = () => {
+      const l = linhaDe(t);
+      naRede({ proxima: l.proxima_consulta_em, emAndamento: l.em_andamento_desde, consultas: t.sefaz_consultas.map((c) => c.resultado) });
+      return new Promise<void>(() => undefined); // a resposta nunca chega: o processo morreu com a pergunta no ar
+    };
+    void svc.ciclo('agendada', null, em(AGORA));
+    expect(await estadoNaRede).toEqual({ proxima: MAIS65, emAndamento: AGORA, consultas: [null] });
+
+    // a API volta (outro processo, mesmo banco): passados os 2 min do "em andamento", a reserva ainda segura
+    const depois = new SefazDfeFalso();
+    const api2 = outraApi(depois);
+    expect(await api2.ciclo('agendada', null, em(min(3)))).toEqual({ fim: 'aguarde', paginas: 0 });
+    expect((await recusa(api2.buscarAgora(QUEM, em(min(30))))).code).toBe('SEFAZ_AGUARDE');
+    expect(depois.chamadas).toHaveLength(0);
+
+    // vencida a reserva, sai de novo com o MESMO NSU, e a pergunta perdida vira `interrompida`
+    depois.responder(resposta(137, { ultNsu: 100n, maxNsu: 100n }));
+    expect(await api2.ciclo('agendada', null, em(min(65)))).toEqual({ fim: 'feito', paginas: 1 });
+    expect(depois.chamadas.map((c) => c.ultNsu)).toEqual([100n]);
+    expect(t.sefaz_consultas.map((c) => c.resultado)).toEqual(['interrompida', 'respondida']);
+  });
+
+  it('T2 que falha desfaz tudo: NSU, documentos e fechamento voltam, e a reserva da T1 continua valendo', async () => {
+    const { svc, t, sefaz, prisma } = montar();
+    // a gravação da linha no T2 acontece e logo depois a transação cai (a 1ª chamada é a reserva da T1, a 2ª é a do T2)
+    const linhas = prisma.sefaz_distribuicao as unknown as { update: (a: unknown) => Promise<unknown> };
+    const original = linhas.update;
+    let vezes = 0;
+    const espiao = jest.spyOn(linhas, 'update').mockImplementation(async (a) => {
+      const r = await original(a);
+      if (++vezes === 2) throw new Error('queda simulada no meio do T2');
+      return r;
+    });
+    sefaz.responder(
+      resposta(138, {
+        ultNsu: 150n,
+        maxNsu: 150n,
+        documentos: [doc(149n, RES_NFE, fx('res-nfe.xml')), doc(150n, RES_EVENTO, fx('res-evento-110111.xml'))],
+      }),
+    );
+    await expect(svc.ciclo('agendada', null, em(AGORA))).rejects.toThrow('queda simulada no meio do T2');
+    expect(vezes).toBe(2); // o T2 chegou a gravar a linha (ult_nsu 150) antes de cair
+
+    expect(t.sefaz_documentos).toHaveLength(0);
+    expect(t.notas_sefaz).toHaveLength(0);
+    expect(t.sefaz_consultas).toHaveLength(1);
+    expect(t.sefaz_consultas[0]).toMatchObject({ resultado: null, terminada_em: null, c_stat: null, documentos: null });
+    expect(linhaDe(t)).toMatchObject({
+      ult_nsu: 100n,
+      max_nsu: null,
+      proxima_consulta_em: MAIS65,
+      em_andamento_desde: AGORA,
+      ultima_consulta_em: min(-120),
+      falhas_seguidas: 0,
+    });
+
+    // não libera em 2 min: ocupada, depois aguarde, sem chamada
+    espiao.mockRestore();
+    expect((await svc.ciclo('agendada', null, em(min(1)))).fim).toBe('ocupada');
+    expect((await svc.ciclo('agendada', null, em(min(3)))).fim).toBe('aguarde');
+    expect(sefaz.chamadas).toHaveLength(1);
+
+    // em +65 min sai com o NSU antigo (os documentos voltam) e a consulta caída vira `interrompida`
+    sefaz.responder(
+      resposta(138, {
+        ultNsu: 150n,
+        maxNsu: 150n,
+        documentos: [doc(149n, RES_NFE, fx('res-nfe.xml')), doc(150n, RES_EVENTO, fx('res-evento-110111.xml'))],
+      }),
+    );
+    expect(await svc.ciclo('agendada', null, em(MAIS65))).toEqual({ fim: 'feito', paginas: 1 });
+    expect(sefaz.chamadas.map((c) => c.ultNsu)).toEqual([100n, 100n]);
+    expect(t.sefaz_consultas.map((c) => c.resultado)).toEqual(['interrompida', 'respondida']);
+    expect(t.sefaz_documentos).toHaveLength(2);
+    expect(linhaDe(t).ult_nsu).toBe(150n);
   });
 
   it('queda entre as transações: ocupada, depois aguarde, e com 65 min a consulta aberta vira interrompida', async () => {
