@@ -28,6 +28,7 @@ type Filtro = 'a_conferir' | 'todas';
 const POR_QUE =
   'A SEFAZ entrega só o resumo da nota (fornecedor, valor e data) até a empresa confirmar que a recebeu, e este sistema ainda não faz essa confirmação. ' +
   'Por isso, para dar entrada, envie o XML, o PDF ou a foto. Se o seu contador ou o portal da SEFAZ já confirmou o recebimento, a nota completa pode aparecer aqui.';
+const DESLIGADA = 'A busca de notas na SEFAZ está desligada. As notas já recebidas continuam na lista.';
 const VAZIO = 'A SEFAZ passa a separar as notas deste CNPJ a partir da primeira busca; as emitidas antes não aparecem aqui. A busca roda sozinha, de hora em hora. Enquanto isso, lance notas pela aba Lançar nota.';
 
 const CAIXA = {
@@ -240,9 +241,9 @@ export function NotasSefazAba({ situacao, focarId, onConferir, onLancarPorArquiv
       <div className="space-y-2">
         <p className="text-sm font-medium">{linhaUltimaBusca(situacao, agora)}</p>
 
-        {estado === 'sem_botao' && !parada && (
+        {estado === 'sem_botao' && !parada && !vazioTotal && (
           <Caixa tom="neutro" role="status">
-            <p>A busca de notas na SEFAZ está desligada. As notas já recebidas continuam na lista.</p>
+            <p>{DESLIGADA}</p>
             <Link href="/configuracoes#notas-sefaz" className="inline-flex min-h-11 items-center text-primary underline underline-offset-2">Ligar em Configurações</Link>
           </Caixa>
         )}
@@ -288,17 +289,20 @@ export function NotasSefazAba({ situacao, focarId, onConferir, onLancarPorArquiv
         </div>
       )}
 
-      {lista.isError && (
+      {(lista.isError || (aConferirVazia && todas.isError)) && (
         <div className="space-y-2 text-sm">
           <p role="alert">Não consegui ver as notas da SEFAZ agora. Toque em Tentar de novo.</p>
-          <Button type="button" variant="outline" className="h-11 w-full sm:w-auto" onClick={() => void lista.refetch()}>Tentar de novo</Button>
+          <p className="break-words text-xs text-muted-foreground">{errMsg(lista.error ?? todas.error)}</p>
+          <Button type="button" variant="outline" className="h-11 w-full sm:w-auto" onClick={() => void (lista.isError ? lista.refetch() : todas.refetch())}>Tentar de novo</Button>
         </div>
       )}
 
       {vazioTotal && (
         <div className="space-y-3 rounded-xl border border-dashed p-4 text-sm">
           <p className="font-medium">Nenhuma nota chegou ainda</p>
-          <p className="text-muted-foreground">{VAZIO}</p>
+          {estado === 'sem_botao' && !parada
+            ? <><p className="text-muted-foreground">{DESLIGADA}</p><Link href="/configuracoes#notas-sefaz" className="inline-flex min-h-11 items-center text-primary underline underline-offset-2">Ligar em Configurações</Link></>
+            : <p className="text-muted-foreground">{VAZIO}</p>}
           {botaoBuscar}
         </div>
       )}

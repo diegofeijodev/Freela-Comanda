@@ -256,3 +256,8 @@ export function emissaoSp(iso: string | null): string {
   const p = partes(new Date(iso));
   return `${p.day}/${p.month}/${p.year}`;
 }
+
+/** "Conferir"/"Lançar mesmo assim" substituem a nota da aba Lançar nota: se já há uma em conferência, o admin confirma antes de perder o que preencheu. */
+export function precisaConfirmarTroca(notaEmConferencia: unknown): boolean {
+  return notaEmConferencia !== null && notaEmConferencia !== undefined;
+}

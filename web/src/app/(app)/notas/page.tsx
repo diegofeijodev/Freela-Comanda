@@ -25,7 +25,9 @@ import { ErrorBoundary } from "@/components/error-boundary";
 import { NotasSefazAba } from "@/components/notas-sefaz-aba";
 import { FaixaCancelamentoSefaz } from "@/components/notas-sefaz-faixa";
 import { useSituacaoSefaz } from "@/hooks/use-notas-sefaz";
-import { contagemAba } from "@/lib/notas-sefaz";
+import { contagemAba, precisaConfirmarTroca } from "@/lib/notas-sefaz";
+import { useAuthStore } from "@/modules/auth/application/auth.store";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 
 
 type NovoInsumo = { nome: string; unidade: string; subgrupo: string };
@@ -61,7 +63,10 @@ export default function Notas() {
   const geracaoIa = useRef(0);
   const arquivoRef = useRef<HTMLInputElement>(null);
   // Aba "Notas da SEFAZ": só existe com a busca disponível no servidor (ambiente ≠ desligado); sem isso a tela é a de sempre, sem abas.
-  const { data: situacaoSefaz } = useSituacaoSefaz(true);
+  // Só o admin consulta a SEFAZ (a loja receberia 403 dessas rotas).
+  const ehAdmin = useAuthStore((s) => s.user?.perfil === "admin");
+  const { data: situacaoSefaz } = useSituacaoSefaz(ehAdmin);
+  const [trocaXml, setTrocaXml] = useState<string | null>(null);
   const sefaz = situacaoSefaz && situacaoSefaz.ambiente !== "desligado" ? situacaoSefaz : null;
   const [aba, setAba] = useState<"lancar" | "sefaz">("lancar");
   const [focarId, setFocarId] = useState<string | null>(null);
@@ -226,6 +231,11 @@ export default function Notas() {
 
   // "Conferir": a MESMA conferência de hoje, preenchida a partir do XML completo (o servidor confere de novo no "Dar entrada").
   function conferirDaSefaz(xml: string) {
+    // Já há nota em conferência (com o que o admin preencheu nela): pergunta antes de trocar.
+    if (precisaConfirmarTroca(nota)) return setTrocaXml(xml);
+    trocarPorNotaDaSefaz(xml);
+  }
+  function trocarPorNotaDaSefaz(xml: string) {
     setAba("lancar");
     void carregar([new File([xml], "nota-sefaz.xml", { type: "text/xml" })], "sefaz");
   }
@@ -366,7 +376,9 @@ export default function Notas() {
           <FaixaCancelamentoSefaz canceladas={sefaz.canceladas_depois} onVer={verCanceladas} />
           <Tabs value={aba} onValueChange={(v) => setAba(v === "sefaz" ? "sefaz" : "lancar")} className="space-y-5">
             <TabsList className="grid h-auto w-full grid-cols-2 sm:inline-flex sm:w-auto">
-              <TabsTrigger value="lancar" className="h-11 whitespace-normal px-4">Lançar nota</TabsTrigger>
+              <TabsTrigger value="lancar" className="h-11 whitespace-normal px-4">Lançar nota
+                {nota && <span role="img" aria-label="há uma nota em conferência" className="ml-2 inline-block h-2.5 w-2.5 shrink-0 rounded-full bg-primary" />}
+              </TabsTrigger>
               <TabsTrigger value="sefaz" className="h-11 whitespace-normal px-4">Notas da SEFAZ{contagemAba(sefaz) > 0 ? ` · ${contagemAba(sefaz)}` : ""}</TabsTrigger>
             </TabsList>
             {/* forceMount: a nota que está sendo conferida (e o campo de arquivo) sobrevive à troca de aba. */}
@@ -379,6 +391,19 @@ export default function Notas() {
           </Tabs>
         </>
       ) : lancar}
+
+      <AlertDialog open={trocaXml !== null} onOpenChange={(o) => { if (!o) setTrocaXml(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Trocar a nota em conferência?</AlertDialogTitle>
+            <AlertDialogDescription>A nota que está em conferência na aba Lançar nota será descartada, com as escolhas que você fez nela.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="gap-2">
+            <AlertDialogCancel className="h-11" autoFocus>Continuar com a nota atual</AlertDialogCancel>
+            <AlertDialogAction className="h-11" onClick={() => { if (trocaXml !== null) trocarPorNotaDaSefaz(trocaXml); setTrocaXml(null); }}>Trocar a nota</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

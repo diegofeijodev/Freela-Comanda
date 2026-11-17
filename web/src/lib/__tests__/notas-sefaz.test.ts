@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { NotaParecida, NotaSefaz, SituacaoBuscaSefaz, SituacaoSefazLigada } from "../erp-api";
 import {
-  acoesDaNota, contagemAba, emissaoSp, estadoBuscar, linhasHistoricoSefaz, faixaCancelamento, horaSp, linhaEspera, linhaProxima, linhaUltimaBusca, quando, resumoPainel, tagDaNota, TEXTO_MOTIVO,
+  acoesDaNota, contagemAba, precisaConfirmarTroca, emissaoSp, estadoBuscar, linhasHistoricoSefaz, faixaCancelamento, horaSp, linhaEspera, linhaProxima, linhaUltimaBusca, quando, resumoPainel, tagDaNota, TEXTO_MOTIVO,
   toastBuscaFeita,
 } from "../notas-sefaz";
 
@@ -228,5 +228,13 @@ describe("emissaoSp", () => {
   it("data no fuso de Brasília, traço sem data", () => {
     expect(emissaoSp("2026-11-15T01:30:00Z")).toBe("14/11/2026");
     expect(emissaoSp(null)).toBe("—");
+  });
+});
+
+describe("precisaConfirmarTroca", () => {
+  it("há nota em conferência: pede confirmação; não há: segue direto", () => {
+    expect(precisaConfirmarTroca({ numero: "1" })).toBe(true);
+    expect(precisaConfirmarTroca(null)).toBe(false);
+    expect(precisaConfirmarTroca(undefined)).toBe(false);
   });
 });
