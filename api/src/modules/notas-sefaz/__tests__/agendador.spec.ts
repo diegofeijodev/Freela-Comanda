@@ -3,18 +3,20 @@ import { join } from 'node:path';
 import { Logger } from '@nestjs/common';
 import { AgendadorSefaz } from '../agendador';
 import type { CicloSefazService, ResumoCiclo } from '../ciclo.service';
+import type { RespostasSefazService, ResumoRespostas } from '../respostas.service';
 
 const MIN = 60_000;
 
-function montar(ambiente: 'desligado' | 'homologacao' | 'producao', ciclo?: jest.Mock) {
+function montar(ambiente: 'desligado' | 'homologacao' | 'producao', ciclo?: jest.Mock, processar?: jest.Mock) {
   const falso = {
     ambiente: jest.fn(() => ambiente),
     ciclo: ciclo ?? jest.fn(async (): Promise<ResumoCiclo> => ({ fim: 'aguarde', paginas: 0 })),
     classificarPendentes: jest.fn(async () => 0),
   };
-  const ag = new AgendadorSefaz(falso as unknown as CicloSefazService);
+  const respostas = { processar: processar ?? jest.fn(async (): Promise<ResumoRespostas> => ({ fim: 'vazia', enviados: 0 })) };
+  const ag = new AgendadorSefaz(falso as unknown as CicloSefazService, respostas as unknown as RespostasSefazService);
   ag.onApplicationBootstrap();
-  return { ag, falso };
+  return { ag, falso, respostas };
 }
 
 describe('AgendadorSefaz', () => {
@@ -32,11 +34,52 @@ describe('AgendadorSefaz', () => {
   });
 
   it('desligado: nenhum timer e nenhum ciclo', async () => {
-    const { falso } = montar('desligado');
+    const { falso, respostas } = montar('desligado');
     expect(jest.getTimerCount()).toBe(0);
     await jest.advanceTimersByTimeAsync(11 * MIN);
     expect(falso.ciclo).not.toHaveBeenCalled();
     expect(falso.classificarPendentes).not.toHaveBeenCalled();
+    expect(respostas.processar).not.toHaveBeenCalled();
+  });
+
+  it('o tique chama as respostas DEPOIS da busca e da classificação, uma vez por tique', async () => {
+    const { falso, respostas } = montar('producao');
+    await jest.advanceTimersByTimeAsync(MIN);
+    expect(respostas.processar).toHaveBeenCalledTimes(1);
+    const ordem = (m: jest.Mock) => m.mock.invocationCallOrder[0];
+    expect(ordem(falso.ciclo)).toBeLessThan(ordem(falso.classificarPendentes));
+    expect(ordem(falso.classificarPendentes)).toBeLessThan(ordem(respostas.processar));
+    await jest.advanceTimersByTimeAsync(5 * MIN);
+    expect(respostas.processar).toHaveBeenCalledTimes(2);
+  });
+
+  it('erro das respostas vira logger.error (classe e code, sem a mensagem) e não derruba o tique nem a busca', async () => {
+    const processar = jest
+      .fn()
+      .mockRejectedValueOnce(Object.assign(new Error('texto da biblioteca <evento>'), { code: 'P2002' }))
+      .mockResolvedValue({ fim: 'vazia', enviados: 0 });
+    const { ag, falso } = montar('producao', undefined, processar);
+    await jest.advanceTimersByTimeAsync(MIN);
+    expect(falso.ciclo).toHaveBeenCalledTimes(1);
+    expect(falso.classificarPendentes).toHaveBeenCalledTimes(1);
+    expect(erros).toHaveLength(1);
+    expect(erros[0]).toContain('respostas');
+    expect(erros[0]).toContain('P2002');
+    expect(erros[0]).not.toContain('texto da biblioteca');
+    await jest.advanceTimersByTimeAsync(5 * MIN);
+    expect(falso.ciclo).toHaveBeenCalledTimes(2);
+    expect(processar).toHaveBeenCalledTimes(2);
+    processar.mockRejectedValue('não é Error');
+    await expect(ag.tique()).resolves.toBeUndefined();
+  });
+
+  it('a busca e a classificação falhando, as respostas rodam mesmo assim', async () => {
+    const ciclo = jest.fn().mockRejectedValue(new Error('x'));
+    const { falso, respostas } = montar('producao', ciclo);
+    falso.classificarPendentes.mockRejectedValue(new Error('y'));
+    await jest.advanceTimersByTimeAsync(MIN);
+    expect(respostas.processar).toHaveBeenCalledTimes(1);
+    expect(erros).toHaveLength(2);
   });
 
   it('producao: 1º tique 1 min depois do boot, depois a cada 5 min', async () => {
