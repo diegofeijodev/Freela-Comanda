@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Fictícia: escrita à mão a partir do esquema retEnviNFe_v4.00: lote recusado inteiro (esquema), sem protNFe. Nunca resposta real da SEFAZ. -->
+<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <soap:Body>
+    <nfeResultMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4">
+      <retEnviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
+        <tpAmb>2</tpAmb>
+        <verAplic>SP_NFCE_PL_009_V400</verAplic>
+        <cStat>225</cStat>
+        <xMotivo>Rejeição: Falha no Schema XML do lote de NFe</xMotivo>
+        <cUF>35</cUF>
+        <dhRecbto>2026-11-17T14:30:02-03:00</dhRecbto>
+      </retEnviNFe>
+    </nfeResultMsg>
+  </soap:Body>
+</soap:Envelope>

@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Fictícia: escrita à mão a partir dos esquemas (retEnviNFe_v4.00 e TProtNFe): rejeição da nota, sem nProt. Nunca resposta real da SEFAZ. -->
+<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <soap:Body>
+    <nfeResultMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4">
+      <retEnviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
+        <tpAmb>2</tpAmb>
+        <verAplic>SP_NFCE_PL_009_V400</verAplic>
+        <cStat>104</cStat>
+        <xMotivo>Lote processado</xMotivo>
+        <cUF>35</cUF>
+        <dhRecbto>2026-11-17T14:30:02-03:00</dhRecbto>
+        <protNFe versao="4.00">
+          <infProt>
+            <tpAmb>2</tpAmb>
+            <verAplic>SP_NFCE_PL_009_V400</verAplic>
+            <chNFe>35261112345678000195650010000000121402133776</chNFe>
+            <dhRecbto>2026-11-17T14:30:02-03:00</dhRecbto>
+            <cStat>386</cStat>
+            <xMotivo>Rejeição: CFOP não permitido para o CSOSN informado</xMotivo>
+          </infProt>
+        </protNFe>
+      </retEnviNFe>
+    </nfeResultMsg>
+  </soap:Body>
+</soap:Envelope>

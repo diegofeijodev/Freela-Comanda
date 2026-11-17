@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Fictícia: escrita à mão a partir do esquema retConsStatServ_v4.00 (envelope com outro prefixo, de propósito). Nunca resposta real da SEFAZ. -->
+<env:Envelope xmlns:env="http://www.w3.org/2003/05/soap-envelope">
+  <env:Body>
+    <nfeResultMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeStatusServico4">
+      <retConsStatServ xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
+        <tpAmb>2</tpAmb>
+        <verAplic>SP_NFCE_PL_009_V400</verAplic>
+        <cStat>107</cStat>
+        <xMotivo>Serviço em Operação</xMotivo>
+        <cUF>35</cUF>
+        <dhRecbto>2026-11-17T14:29:58-03:00</dhRecbto>
+        <tMed>1</tMed>
+      </retConsStatServ>
+    </nfeResultMsg>
+  </env:Body>
+</env:Envelope>

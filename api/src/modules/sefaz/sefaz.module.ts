@@ -4,6 +4,8 @@ import { SefazDfeAdapter } from './distribuicao.adapter';
 import { SEFAZ_DFE } from './distribuicao.port';
 import { SefazEventosAdapter } from './eventos.adapter';
 import { SEFAZ_EVENTOS } from './eventos.port';
+import { SefazNfceAdapter } from './nfce.adapter';
+import { SEFAZ_NFCE } from './nfce.port';
 import { CHAMAR_SOAP12, chamarSoap12 } from './transporte-soap12';
 
 @Module({
@@ -14,7 +16,9 @@ import { CHAMAR_SOAP12, chamarSoap12 } from './transporte-soap12';
     { provide: SEFAZ_DFE, useExisting: SefazDfeAdapter },
     SefazEventosAdapter,
     { provide: SEFAZ_EVENTOS, useExisting: SefazEventosAdapter },
+    SefazNfceAdapter,
+    { provide: SEFAZ_NFCE, useExisting: SefazNfceAdapter },
   ],
-  exports: [SEFAZ_DFE, SEFAZ_EVENTOS],
+  exports: [SEFAZ_DFE, SEFAZ_EVENTOS, SEFAZ_NFCE],
 })
 export class SefazModule {}

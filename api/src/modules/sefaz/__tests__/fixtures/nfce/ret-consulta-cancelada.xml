@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Fictícia: escrita à mão a partir dos esquemas (retConsSitNFe_v4.00, TProtNFe e procEventoNFe do leiauteEvento_v1.00): nota cancelada, assinatura de mentira, nProt de 17 dígitos. Nunca resposta real da SEFAZ. -->
+<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <soap:Body>
+    <nfeResultMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeConsultaProtocolo4">
+      <retConsSitNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
+        <tpAmb>2</tpAmb>
+        <verAplic>SP_NFCE_PL_009_V400</verAplic>
+        <cStat>101</cStat>
+        <xMotivo>Cancelamento de NF-e homologado</xMotivo>
+        <cUF>35</cUF>
+        <dhRecbto>2026-11-17T14:52:00-03:00</dhRecbto>
+        <chNFe>35261112345678000195650010000000121402133776</chNFe>
+        <protNFe versao="4.00">
+          <infProt>
+            <tpAmb>2</tpAmb>
+            <verAplic>SP_NFCE_PL_009_V400</verAplic>
+            <chNFe>35261112345678000195650010000000121402133776</chNFe>
+            <dhRecbto>2026-11-17T14:30:02-03:00</dhRecbto>
+            <nProt>13526000000012345</nProt>
+            <digVal>q2bBTSHNkQhO2Vb5w8Cqv6eVZaE=</digVal>
+            <cStat>100</cStat>
+            <xMotivo>Autorizado o uso da NF-e</xMotivo>
+          </infProt>
+        </protNFe>
+        <procEventoNFe versao="1.00">
+          <evento versao="1.00">
+            <infEvento Id="ID1101113526111234567800019565001000000012140213377601">
+              <cOrgao>35</cOrgao>
+              <tpAmb>2</tpAmb>
+              <CNPJ>12345678000195</CNPJ>
+              <chNFe>35261112345678000195650010000000121402133776</chNFe>
+              <dhEvento>2026-11-17T14:45:00-03:00</dhEvento>
+              <tpEvento>110111</tpEvento>
+              <nSeqEvento>1</nSeqEvento>
+              <verEvento>1.00</verEvento>
+              <detEvento versao="1.00">
+                <descEvento>Cancelamento</descEvento>
+                <nProt>13526000000012345</nProt>
+                <xJust>Cliente desistiu da compra no caixa</xJust>
+              </detEvento>
+            </infEvento>
+            <Signature xmlns="http://www.w3.org/2000/09/xmldsig#">
+              <SignedInfo>
+                <CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"/>
+                <SignatureMethod Algorithm="http://www.w3.org/2000/09/xmldsig#rsa-sha1"/>
+                <Reference URI="#ID1101113526111234567800019565001000000012140213377601">
+                  <DigestMethod Algorithm="http://www.w3.org/2000/09/xmldsig#sha1"/>
+                  <DigestValue>RklDVElDSU8tRklDVElDSU8tRklDVA==</DigestValue>
+                </Reference>
+              </SignedInfo>
+              <SignatureValue>RklDVElDSUE=</SignatureValue>
+            </Signature>
+          </evento>
+          <retEvento versao="1.00">
+            <infEvento Id="ID13526000000067890">
+              <tpAmb>2</tpAmb>
+              <verAplic>SP_EVENTOS_PL_100</verAplic>
+              <cOrgao>35</cOrgao>
+              <cStat>135</cStat>
+              <xMotivo>Evento registrado e vinculado a NF-e</xMotivo>
+              <chNFe>35261112345678000195650010000000121402133776</chNFe>
+              <tpEvento>110111</tpEvento>
+              <xEvento>Cancelamento registrado</xEvento>
+              <nSeqEvento>1</nSeqEvento>
+              <dhRegEvento>2026-11-17T14:45:03-03:00</dhRegEvento>
+              <nProt>13526000000067890</nProt>
+            </infEvento>
+          </retEvento>
+        </procEventoNFe>
+      </retConsSitNFe>
+    </nfeResultMsg>
+  </soap:Body>
+</soap:Envelope>

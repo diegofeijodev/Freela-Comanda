@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Fictícia: escrita à mão a partir do esquema retEnvEvento do leiauteEvento_v1.00: cancelamento registrado, nProt de 17 dígitos. Nunca resposta real da SEFAZ. -->
+<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <soap:Body>
+    <nfeResultMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4">
+      <retEnvEvento xmlns="http://www.portalfiscal.inf.br/nfe" versao="1.00">
+        <idLote>7</idLote>
+        <tpAmb>2</tpAmb>
+        <verAplic>SP_EVENTOS_PL_100</verAplic>
+        <cOrgao>35</cOrgao>
+        <cStat>128</cStat>
+        <xMotivo>Lote de Evento Processado</xMotivo>
+        <retEvento versao="1.00">
+          <infEvento Id="ID13526000000067890">
+            <tpAmb>2</tpAmb>
+            <verAplic>SP_EVENTOS_PL_100</verAplic>
+            <cOrgao>35</cOrgao>
+            <cStat>135</cStat>
+            <xMotivo>Evento registrado e vinculado a NF-e</xMotivo>
+            <chNFe>35261112345678000195650010000000121402133776</chNFe>
+            <tpEvento>110111</tpEvento>
+            <xEvento>Cancelamento registrado</xEvento>
+            <nSeqEvento>1</nSeqEvento>
+            <dhRegEvento>2026-11-17T14:45:03-03:00</dhRegEvento>
+            <nProt>13526000000067890</nProt>
+          </infEvento>
+        </retEvento>
+      </retEnvEvento>
+    </nfeResultMsg>
+  </soap:Body>
+</soap:Envelope>

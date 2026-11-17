@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Fictícia: escrita à mão a partir do esquema retConsSitNFe_v4.00: a nota não consta na base. Nunca resposta real da SEFAZ. -->
+<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <soap:Body>
+    <nfeResultMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeConsultaProtocolo4">
+      <retConsSitNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
+        <tpAmb>2</tpAmb>
+        <verAplic>SP_NFCE_PL_009_V400</verAplic>
+        <cStat>217</cStat>
+        <xMotivo>Rejeição: NF-e não consta na base de dados da SEFAZ</xMotivo>
+        <cUF>35</cUF>
+        <dhRecbto>2026-11-17T14:40:00-03:00</dhRecbto>
+        <chNFe>35261112345678000195650010000000121402133776</chNFe>
+      </retConsSitNFe>
+    </nfeResultMsg>
+  </soap:Body>
+</soap:Envelope>
