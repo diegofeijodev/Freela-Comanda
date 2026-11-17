@@ -58,7 +58,10 @@ export type ResumoRespostas = { fim: FimRespostas; enviados: number };
 export const ERRO_RELOGIO = 'RELOGIO';
 /** `erro_code` do lote que não saiu por erro que não é `SefazErro` (ex.: a montagem do corpo recusou o lote): falha ANTES de enviar. */
 export const ERRO_LOCAL = 'ERRO_LOCAL';
-/** `x_motivo` (frase fixa, nunca o detalhe) do evento que não pôde ser montado ou assinado: ele vira `falhou` e não sai. */
+/**
+ * `x_motivo` (frase fixa, nunca o detalhe) do evento que não pôde ser montado ou assinado quando OUTROS do lote assinaram: ele vira
+ * `falhou` e não sai. Se nenhum assinar, ninguém falha: as respostas param.
+ */
 export const MOTIVO_SEM_ASSINATURA = 'O XML não pôde ser assinado.';
 
 const DIA_MS = 24 * 60 * 60_000;
@@ -255,10 +258,10 @@ export class RespostasSefazService {
       ).slice(0, LOTE_MAX);
       if (escolhidos.length === 0) return fim({ fim: 'vazia' });
 
-      // Monta e assina cada um, sem gravar ainda. O que não pode ser montado (dado fora do padrão, ex.: justificativa não normalizada) ou
-      // assinado vira `falhou` com a frase fixa (sem +1, sem lote), e os outros seguem: um evento com defeito nunca prende a fila.
+      // Monta e assina cada um, sem gravar ainda (nada de +1 nem `lote_id` antes de saber quem assinou).
       const dhEvento = dhSefaz(agora);
       const assinados: EventoDoLote[] = [];
+      const recusados: string[] = [];
       let certificadoRecusou = false;
       for (const e of escolhidos) {
         try {
@@ -270,15 +273,13 @@ export class RespostasSefazService {
         } catch (erro) {
           // `AssinaturaErro` depois de a montagem passar = a assinatura com o certificado; outro erro = o dado do próprio evento
           if (erro instanceof AssinaturaErro) certificadoRecusou = true;
-          naoAssinados++;
-          await tx.sefaz_manifestacoes.update({
-            where: { id: e.id },
-            data: { situacao: 'falhou', x_motivo: MOTIVO_SEM_ASSINATURA, atualizada_em: agora },
-          });
+          recusados.push(e.id);
         }
       }
+      naoAssinados = recusados.length;
       if (assinados.length === 0) {
-        // Nenhum assinou: nada sai, e as respostas param com frase e histórico (senão o defeito se repetiria calado a cada tique).
+        // Nenhum assinou (certificado, ou o único da fila com defeito): ninguém vira `falhou`; os eventos ficam na fila como estavam
+        // (sem +1, sem lote) e as respostas param com frase e histórico. Trocado o certificado e religadas, tudo sai de novo.
         const situacao: SituacaoRespostas = certificadoRecusou ? 'parada_certificado' : 'parada_configuracao';
         await this.gravarSituacao(
           tx,
@@ -293,6 +294,13 @@ export class RespostasSefazService {
           agora,
         );
         return fim({ fim: 'parada' });
+      }
+      // Outros assinaram: o que não assinou vira `falhou` com a frase fixa (sem +1, sem lote) e não prende a fila.
+      for (const id of recusados) {
+        await tx.sefaz_manifestacoes.update({
+          where: { id },
+          data: { situacao: 'falhou', x_motivo: MOTIVO_SEM_ASSINATURA, atualizada_em: agora },
+        });
       }
 
       // O lote antes dos eventos (a chave estrangeira `lote_id` é imediata). idLote = milissegundos do relógio (13 dígitos).

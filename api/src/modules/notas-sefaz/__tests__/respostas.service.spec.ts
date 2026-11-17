@@ -731,9 +731,10 @@ describe('RespostasSefazService', () => {
         expect(JSON.parse(alerta)).toMatchObject({ evento: 'sefaz.eventos', alerta: 'assinatura_recusada', eventos: 1 });
       });
 
-      it('nenhum assina por defeito do certificado: parada_certificado com histórico, zero chamadas, nenhum lote', async () => {
+      it('nenhum assina por defeito do certificado: ninguém falha (voltam à fila sem gastar), parada_certificado com histórico; trocado o certificado e religadas, tudo sai', async () => {
         const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' }); // chave que a assinatura RSA-SHA1 recusa
-        const { svc, t, porta } = montar({ cert: { chavePrivada: privateKey } });
+        const opcoes: Parameters<typeof montar>[0] = { cert: { chavePrivada: privateKey } };
+        const { svc, t, porta } = montar(opcoes);
         const a = nota(VETOR);
         const b = nota(K880, { autorizada_em: dias(3), emitida_em: dias(3) });
         t.notas_sefaz.push(a, b);
@@ -749,18 +750,27 @@ describe('RespostasSefazService', () => {
         expect(t.sefaz_distribuicao_historico).toEqual([
           expect.objectContaining({ evento: 'respostas_paradas', situacao: 'parada_certificado', c_stat: null, feito_em: AGORA }),
         ]);
-        for (const n of [a, b]) expect(evDa(t, n)).toMatchObject({ situacao: 'falhou', x_motivo: SEM_ASSINATURA, tentativas: 0 });
+        for (const n of [a, b]) {
+          expect(evDa(t, n)).toMatchObject({ situacao: 'na_fila', tentativas: 0, lote_id: null, x_motivo: null, xml_evento: null });
+        }
         expect(await svc.processar(em(min(5)))).toEqual({ fim: 'parada', enviados: 0 });
+
+        // o admin troca o certificado e liga as respostas de novo: as duas saem
+        opcoes!.cert = undefined;
+        Object.assign(linhaDe(t), { situacao: 'ok', mensagem: null });
+        responder(porta);
+        expect(await svc.processar(em(min(10)))).toEqual({ fim: 'feito', enviados: 2 });
+        for (const n of [a, b]) expect(evDa(t, n)).toMatchObject({ situacao: 'registrada', tentativas: 1 });
       });
 
-      it('nenhum assina por defeito do evento (só o 210240 na fila): parada_configuracao com histórico', async () => {
+      it('nenhum assina por defeito do evento (só o 210240 na fila): ele volta à fila sem gastar, parada_configuracao com histórico', async () => {
         const { svc, t, porta } = montar();
         const ruim = nota(VETOR, { motivo_ignorar: 'outro', motivo_texto: 'teste', ignorada_em: min(-3) });
         t.notas_sefaz.push(ruim);
         t.sefaz_manifestacoes.push(naoAconteceu(ruim));
         expect(await svc.processar(em(AGORA))).toEqual({ fim: 'parada', enviados: 0 });
         expect(porta.chamadas).toHaveLength(0);
-        expect(evDa(t, ruim, '210240')).toMatchObject({ situacao: 'falhou', x_motivo: SEM_ASSINATURA });
+        expect(evDa(t, ruim, '210240')).toMatchObject({ situacao: 'na_fila', tentativas: 0, lote_id: null, x_motivo: null });
         expect(linhaDe(t)).toMatchObject({ situacao: 'parada_configuracao', mensagem: FRASE_RESPOSTA.assinaturaConfiguracao });
         expect(t.sefaz_distribuicao_historico).toEqual([expect.objectContaining({ situacao: 'parada_configuracao', c_stat: null })]);
       });
