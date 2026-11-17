@@ -39,6 +39,12 @@ describe('CadastrosService (CNPJ com letras)', () => {
     expect(c.update[0].data.cnpj).toBe('');
   });
 
+  it('salvarConfig com cnpj null grava vazio (como string vazia), sem erro', async () => {
+    const { svc, c } = montar();
+    await svc.salvarConfig({ cnpj: null as unknown as string });
+    expect(c.update[0].data.cnpj).toBe('');
+  });
+
   it('salvarConfig sem a chave cnpj não mexe no cnpj', async () => {
     const { svc, c } = montar();
     await svc.salvarConfig({ mkup_padrao: 2 });

@@ -38,7 +38,7 @@ async function main() {
 
   await prisma.configuracoes.update({
     where: { id: 1 },
-    data: { razao_social: 'Chopp & Espeto Valinhos Ltda', nome_fantasia: 'Chopp & Espeto Valinhos', cnpj: '00.000.000/0001-00', endereco: 'Valinhos/SP' },
+    data: { razao_social: 'Chopp & Espeto Valinhos Ltda', nome_fantasia: 'Chopp & Espeto Valinhos', cnpj: '12.345.678/0001-95', endereco: 'Valinhos/SP' },
   });
 
   const insumos = [

@@ -23,7 +23,7 @@ export class CadastrosService {
   async salvarConfig(dto: ConfiguracoesDto) {
     const data: ConfiguracoesDto = { ...dto };
     if (dto.cnpj !== undefined) {
-      const cnpj = normalizarCnpj(dto.cnpj);
+      const cnpj = normalizarCnpj(dto.cnpj ?? '');
       if (cnpj !== '' && !cnpjValido(cnpj)) {
         throw new BadRequestException({ code: 'CNPJ_INVALIDO', message: 'CNPJ inválido. Confira os 14 caracteres (pode ter letras).' });
       }

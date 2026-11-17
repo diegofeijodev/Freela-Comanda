@@ -268,6 +268,19 @@ check "migração: nota normalizada" 98765432000110 "$(sql "select fornecedor_cn
 sql "$(cat prisma/migrations/20261116140000_cnpj_alfanumerico/migration.sql)" >/dev/null
 check "migração idempotente: fornecedor" 98ABC76543DE21 "$(sql "select cnpj from fornecedores where nome='Forn Migra Smoke'")"
 check "migração idempotente: nota" 98765432000110 "$(sql "select fornecedor_cnpj from notas_entrada where fornecedor_nome='Forn Migra Smoke'")"
+# migração dos dados antigos (vínculos e chaves do Lovable) com proteção contra colisão
+MIG2=prisma/migrations/20261116140200_cnpj_chave_antigos/migration.sql
+PIC=$(sql "select id from itens_estoque where nome='Picanha'")
+CLIMPA=35261188ABC22233CC55001000005511100005511599
+CALVO=35261199ABC22233CC55001000005511100005511599
+sql "insert into vinculos_produto (fornecedor_cnpj, codigo_fornecedor, item_estoque_id) values ('12.111.222/0001-33','V1','$PIC'),('12.222.333/0001-44','C1','$PIC'),('12222333000144','C1','$PIC'),('55.666.777/0001-88','D1','$PIC'),('55666777000188 ','D1','$PIC')" >/dev/null
+sql "insert into notas_entrada (fornecedor_nome, chave) values ('Chave Suja Smoke','35 2611 99ab c222 33cc 55001000005511100005511599'),('Chave Limpa Smoke','$CLIMPA'),('Chave Colide Smoke','35-2611-88ab-c222-33cc-55001000005511100005511599'),('Chave Curta Smoke','abc-123')" >/dev/null
+estado_mig2() { sql "select (select count(*) from vinculos_produto where fornecedor_cnpj='12111222000133' and codigo_fornecedor='V1'), (select count(*) from vinculos_produto where fornecedor_cnpj='12.111.222/0001-33'), (select count(*) from vinculos_produto where fornecedor_cnpj='12.222.333/0001-44'), (select count(*) from vinculos_produto where fornecedor_cnpj='12222333000144'), (select count(*) from vinculos_produto where fornecedor_cnpj='55666777000188' and codigo_fornecedor='D1'), (select count(*) from vinculos_produto where codigo_fornecedor='D1'), (select chave from notas_entrada where fornecedor_nome='Chave Suja Smoke'), (select chave from notas_entrada where fornecedor_nome='Chave Colide Smoke'), (select chave from notas_entrada where fornecedor_nome='Chave Curta Smoke')"; }
+sql "$(cat $MIG2)" >/dev/null
+ESPERADO="1|0|1|1|1|2|$CALVO|35-2611-88ab-c222-33cc-55001000005511100005511599|abc-123"
+check "migração dos antigos: vínculo pontuado, colisões e chaves" "$ESPERADO" "$(estado_mig2)"
+sql "$(cat $MIG2)" >/dev/null
+check "migração dos antigos: idempotente" "$ESPERADO" "$(estado_mig2)"
 
 # ---------- nota repetida (mesmo CNPJ + mesmo número; a nota de 4411 acima é o vetor)
 HOJE_BR=$(TZ=America/Sao_Paulo date +%d/%m/%Y)
