@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { CircleAlert, Loader2, Plus, Trash2 } from "lucide-react";
 import { lancarNota, lerFotoNota, lerPdfNota, listarItensEstoque, listarSubgrupos, notaPelaChave, notasRecentes, notasRepetidas, statusIa, sugerirInsumosItens, vinculos, type NotaParecida } from "@/lib/erp-api";
@@ -20,6 +20,12 @@ import { documentoConfere, normalizarCnpj } from "@/lib/fiscal";
 import { aguardandoIa, aplicarSugestoes, avisoDaIa, chaveDeIaDisponivel, respostaVale, sugerirEmLotes, type ResultadoIa } from "@/lib/sugestao-ia";
 import { chaveDaConsulta, enviaConfirmacao, fraseNotaRepetida } from "@/lib/nota-repetida";
 import { NotaRepetidaDialogo, NotaRepetidaFaixa, type EstadoRepetida } from "@/components/nota-repetida-faixa";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ErrorBoundary } from "@/components/error-boundary";
+import { NotasSefazAba } from "@/components/notas-sefaz-aba";
+import { FaixaCancelamentoSefaz } from "@/components/notas-sefaz-faixa";
+import { useSituacaoSefaz } from "@/hooks/use-notas-sefaz";
+import { contagemAba } from "@/lib/notas-sefaz";
 
 
 type NovoInsumo = { nome: string; unidade: string; subgrupo: string };
@@ -36,7 +42,7 @@ export default function Notas() {
   const qc = useQueryClient();
 
   const [nota, setNota] = useState<NotaLida | null>(null);
-  const [origem, setOrigem] = useState<"xml" | "pdf" | "foto">("xml");
+  const [origem, setOrigem] = useState<"xml" | "pdf" | "foto" | "sefaz">("xml");
   const [linhas, setLinhas] = useState<Linha[]>([]);
   const [parcelas, setParcelas] = useState<Parcela[]>([]);
   const [entrada, setEntrada] = useState(isoDate(new Date()));
@@ -54,6 +60,17 @@ export default function Notas() {
   // Descarta a resposta tardia da IA: avança em arquivo novo, Cancelar, "Não lançar esta nota" e depois do "Dar entrada".
   const geracaoIa = useRef(0);
   const arquivoRef = useRef<HTMLInputElement>(null);
+  // Aba "Notas da SEFAZ": só existe com a busca disponível no servidor (ambiente ≠ desligado); sem isso a tela é a de sempre, sem abas.
+  const { data: situacaoSefaz } = useSituacaoSefaz(true);
+  const sefaz = situacaoSefaz && situacaoSefaz.ambiente !== "desligado" ? situacaoSefaz : null;
+  const [aba, setAba] = useState<"lancar" | "sefaz">("lancar");
+  const [focarId, setFocarId] = useState<string | null>(null);
+  const hashLido = useRef(false);
+  useEffect(() => {
+    if (!sefaz || hashLido.current) return;
+    hashLido.current = true;
+    if (window.location.hash === "#notas-sefaz") setAba("sefaz");
+  }, [sefaz]);
   const chaveConsulta = consulta?.chave ?? null;
 
   const { data: insumos } = useQuery({ queryKey: ["insumos-ativos"], queryFn: async () => (await listarItensEstoque({ ativo: true })) as Insumo[] });
@@ -89,7 +106,7 @@ export default function Notas() {
     arquivoRef.current?.focus();
   }
 
-  async function carregar(arquivos: File[]) {
+  async function carregar(arquivos: File[], origemXml: "xml" | "sefaz" = "xml") {
     if (!arquivos.length) return;
     const fotos = arquivos.every(pareceImagem);
     if (arquivos.length > 1 && (!fotos || arquivos.length > MAX_FOTOS)) return void toast.error("Envie até 4 fotos da mesma nota.");
@@ -137,7 +154,7 @@ export default function Notas() {
       const forma = lida.forma_pagamento in FORMAS ? lida.forma_pagamento : "outros";
       setParcelas(lida.parcelas?.length ? lida.parcelas : A_VISTA.includes(forma) ? [] : [{ numero: "1", vencimento: somaDias(diaValido(lida.data_emissao) ? lida.data_emissao : entrada, 30), valor: lida.valor_total }]);
       setNota({ ...lida, forma_pagamento: forma });
-      setOrigem(fotos ? "foto" : isPdf ? "pdf" : "xml");
+      setOrigem(fotos ? "foto" : isPdf ? "pdf" : origemXml);
       setTocou(false); setConfirmadaPara(null); setFraseDialogo(null);
       setChaveIgual(jaLancada);
       if (jaLancada) setConsulta(null); else definirConsulta(lida.emitente_cnpj, lida.numero, lida.serie);
@@ -207,10 +224,19 @@ export default function Notas() {
     } finally { enviando.current = false; setBusy(false); }
   }
 
-  return (
+  // "Conferir": a MESMA conferência de hoje, preenchida a partir do XML completo (o servidor confere de novo no "Dar entrada").
+  function conferirDaSefaz(xml: string) {
+    setAba("lancar");
+    void carregar([new File([xml], "nota-sefaz.xml", { type: "text/xml" })], "sefaz");
+  }
+  function lancarPorArquivo() {
+    setAba("lancar");
+    requestAnimationFrame(() => arquivoRef.current?.focus());
+  }
+  const verCanceladas = () => { setAba("sefaz"); setFocarId(sefaz?.canceladas_depois[0]?.id ?? null); };
+
+  const lancar = (
     <div className="space-y-5">
-      <PageHeader title="Entrada de Notas" sub="NF-e ou cupom fiscal: envie o XML, o PDF ou a foto e confira antes de dar entrada" actions={<Button asChild variant="outline"><Link href="/contas">Contas a pagar</Link></Button>
-} />
       <Panel title="1. Arquivo da nota">
         <Input type="file" multiple accept=".xml,.pdf,text/xml,application/pdf,image/jpeg,image/png,image/webp" className="max-w-sm" disabled={lendo} ref={arquivoRef} onChange={(e) => { const fs = Array.from(e.target.files ?? []); if (fs.length) carregar(fs); e.target.value = ""; }} />
         <p className="mt-2 text-xs text-muted-foreground">{lendo ? "Lendo a nota…" : "XML é lido na hora e com exatidão. PDF e foto são lidos por inteligência artificial — confira os valores."}</p>
@@ -328,6 +354,31 @@ export default function Notas() {
           </tr>
         ))}{!notas?.length && <tr><td className="py-3 text-muted-foreground">Nenhuma nota lançada ainda.</td></tr>}</tbody></table></div>
       </Panel>
+    </div>
+  );
+
+  return (
+    <div className="space-y-5">
+      <PageHeader title="Entrada de Notas" sub="NF-e ou cupom fiscal: envie o XML, o PDF ou a foto e confira antes de dar entrada" actions={<Button asChild variant="outline"><Link href="/contas">Contas a pagar</Link></Button>
+} />
+      {sefaz ? (
+        <>
+          <FaixaCancelamentoSefaz canceladas={sefaz.canceladas_depois} onVer={verCanceladas} />
+          <Tabs value={aba} onValueChange={(v) => setAba(v === "sefaz" ? "sefaz" : "lancar")} className="space-y-5">
+            <TabsList className="grid h-auto w-full grid-cols-2 sm:inline-flex sm:w-auto">
+              <TabsTrigger value="lancar" className="h-11 whitespace-normal px-4">Lançar nota</TabsTrigger>
+              <TabsTrigger value="sefaz" className="h-11 whitespace-normal px-4">Notas da SEFAZ{contagemAba(sefaz) > 0 ? ` · ${contagemAba(sefaz)}` : ""}</TabsTrigger>
+            </TabsList>
+            {/* forceMount: a nota que está sendo conferida (e o campo de arquivo) sobrevive à troca de aba. */}
+            <TabsContent value="lancar" forceMount className="mt-0 data-[state=inactive]:hidden">{lancar}</TabsContent>
+            <TabsContent value="sefaz" className="mt-0">
+              <ErrorBoundary fallback={<p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm">Não consegui mostrar as notas da SEFAZ agora. A aba Lançar nota continua funcionando.</p>}>
+                <NotasSefazAba situacao={sefaz} focarId={focarId} onConferir={conferirDaSefaz} onLancarPorArquivo={lancarPorArquivo} onFocoFeito={() => setFocarId(null)} />
+              </ErrorBoundary>
+            </TabsContent>
+          </Tabs>
+        </>
+      ) : lancar}
     </div>
   );
 }

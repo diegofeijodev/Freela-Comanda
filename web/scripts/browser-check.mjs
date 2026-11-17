@@ -495,6 +495,246 @@ const caixas = await Promise.all(['Substituir certificado', 'Remover'].map((n) =
   await loja.ctx.close();
 }
 
+// ---------------- ADMIN: aba Notas da SEFAZ na Entrada de Notas (celular 360x800 e computador 1366x900)
+// A API do navegador segue SEM SEFAZ_DFE_AMBIENTE: a busca NUNCA liga de verdade. Todo estado "ligado", a lista, o XML, o "Ignorar" e o
+// "Buscar agora" vêm de page.route; no fim o banco confirma que nenhuma consulta existe.
+{
+  const PGDB = 'erpfreela_browser';
+  const FUSO = 'America/Sao_Paulo';
+  const hhmm = (iso) => {
+    const p = Object.fromEntries(new Intl.DateTimeFormat('pt-BR', { timeZone: FUSO, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(iso)).map((x) => [x.type, x.value]));
+    return `${p.hour}h${p.minute}`;
+  };
+  const dvChave = (s) => { let peso = 2; let soma = 0; for (let i = s.length - 1; i >= 0; i--) { soma += Number(s[i]) * peso; peso = peso === 9 ? 2 : peso + 1; } const r = soma % 11; return r < 2 ? 0 : 11 - r; };
+  const chaveK = (n) => { const base = `35261111222333000181550010${String(n).padStart(8, '0')}1${String(n).padStart(8, '0')}`; return base + dvChave(base); };
+  const CNPJ_K = '11222333000181';
+  const OPS = [];
+  const UID = (n) => `00000000-0000-4000-8000-0000000000${String(n).padStart(2, '0')}`;
+  const minutos = (m) => new Date(Date.now() + m * 60_000).toISOString();
+
+  const parecida = { id: UID(90), numero: '880', serie: '1', fornecedor_nome: 'LATICÍNIOS K', data_emissao: '2026-11-14', data_entrada: '2026-11-15', valor_total: 80, origem: 'foto', created_at: '2026-11-15T12:00:00Z' };
+  const nova = (n, p) => ({
+    id: UID(n), chave: chaveK(n), emitente_cnpj: CNPJ_K, emitente_nome: 'LATICÍNIOS K', numero: String(n), serie: '1', emitida_em: '2026-11-14T13:00:00Z', autorizada_em: '2026-11-14T13:01:00Z',
+    valor_total: 100 + n, situacao_sefaz: 'autorizada', cancelada_em: null, situacao: 'falta_lancar', lancada: null, parecidas: [], pode_conferir: false, nao_parece_compra: false, ignorada: null, ...p,
+  });
+  const K77 = nova(77, { situacao: 'cancelada_depois_de_lancada', situacao_sefaz: 'cancelada', lancada: { ...parecida, id: UID(91), numero: '77', origem: 'xml', data_entrada: '2026-11-03' } });
+  const K880 = nova(880, { situacao: 'parece_lancada', parecidas: [parecida], pode_conferir: false });
+  const K990 = nova(990, { situacao: 'falta_lancar', pode_conferir: true });
+  const outras = [
+    nova(11, { emitente_nome: 'ATACADÃO S.A.', situacao: 'ja_lancada', lancada: { ...parecida, id: UID(92), numero: '11', origem: 'xml', data_entrada: '2026-11-03' } }),
+    nova(12, { emitente_nome: 'ATACADÃO S.A.', situacao: 'cancelada', situacao_sefaz: 'cancelada' }),
+    nova(13, { emitente_nome: 'ATACADÃO S.A.', situacao: 'denegada', situacao_sefaz: 'denegada' }),
+    nova(14, { emitente_nome: 'ATACADÃO S.A.', situacao: 'ignorada', ignorada: { em: '2026-11-15T15:00:00Z', por_nome: 'Diego', motivo: 'nao_e_compra', texto: null } }),
+  ];
+  const rows = [K77, K880, K990, ...outras];
+  const original = new Map(rows.map((r) => [r.id, r.situacao]));
+  const A_CONFERIR = ['cancelada_depois_de_lancada', 'parece_lancada', 'falta_lancar'];
+  const XML_K990 = XML.replace(/Id="NFe\d{44}"/, `Id="NFe${chaveK(990)}"`).replace('<CNPJ>12345678000199</CNPJ>', `<CNPJ>${CNPJ_K}</CNPJ>`);
+
+  let proxima = minutos(-1); // no passado: "Buscar agora" liberado
+  let ultima = { em: minutos(-5), novas: 1 };
+  let buscaFase = 0; // 1 = POST feito (a próxima leitura diz "em andamento"), 2 = a leitura seguinte diz "terminou, 2 novas"
+  let listaModo = 'normal'; // 'normal' | 'vazia' | 'erro'
+  let lancou = false;
+  const situacaoAtual = () => {
+    let emAndamento = false;
+    if (buscaFase === 1) { emAndamento = true; buscaFase = 2; }
+    else if (buscaFase === 2) { buscaFase = 0; ultima = { em: new Date().toISOString(), novas: 2 }; }
+    const quais = (s) => rows.filter((r) => r.situacao === s);
+    return {
+      ambiente: 'producao', cnpj: '12345678000199', busca_ligada: true, situacao: 'ok', mensagem: null, aviso: null, ultima_consulta: ultima,
+      primeira_consulta_em: minutos(-60 * 24 * 7), proxima_consulta_em: proxima, bloqueado_ate: null, em_andamento: emAndamento, lacunas: 0, dias_sem_buscar: 0,
+      ligada_por_nome: 'Admin', ligada_em: minutos(-60 * 24), outro_cnpj_ou_modo: false, certificado: { ok: true, code: null, mensagem: null, avisos: [] },
+      contagem: { falta_lancar: quais('falta_lancar').length, parece_lancada: quais('parece_lancada').length, cancelada_depois_de_lancada: quais('cancelada_depois_de_lancada').length },
+      canceladas_depois: quais('cancelada_depois_de_lancada').map((r) => ({ id: r.id, numero: r.numero, serie: r.serie, emitente_nome: r.emitente_nome })), historico: [],
+    };
+  };
+  const cors = { 'access-control-allow-origin': new URL(BASE).origin, 'access-control-allow-headers': 'authorization, content-type', 'access-control-allow-methods': 'GET, POST, PUT, OPTIONS' };
+  const json = (route, corpo, status = 200) => route.fulfill({ status, contentType: 'application/json', headers: cors, body: JSON.stringify(corpo) });
+  const instalar = async (page) => {
+    await page.route(/\/v1\/notas-sefaz(\/|\?|$)/, async (route) => {
+      const req = route.request();
+      if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: cors });
+      const caminho = new URL(req.url()).pathname;
+      OPS.push(`${req.method()} ${caminho}`);
+      if (req.method() === 'GET' && caminho.endsWith('/situacao')) return json(route, situacaoAtual());
+      if (req.method() === 'GET' && caminho.endsWith('/xml')) return route.fulfill({ status: 200, contentType: 'text/xml', headers: cors, body: XML_K990 });
+      if (req.method() === 'GET') {
+        if (listaModo === 'erro') return json(route, { error: { code: 'ERRO', message: 'Falha simulada.' } }, 500);
+        if (listaModo === 'vazia') return json(route, []);
+        const filtro = new URL(req.url()).searchParams.get('filtro');
+        return json(route, filtro === 'todas' ? rows : rows.filter((r) => A_CONFERIR.includes(r.situacao)));
+      }
+      if (req.method() === 'POST' && caminho.endsWith('/buscar')) { buscaFase = 1; return json(route, { iniciada: true }, 202); }
+      const m = caminho.match(/\/v1\/notas-sefaz\/([^/]+)\/(ignorar|reabrir)$/);
+      const linha = m && rows.find((r) => r.id === m[1]);
+      if (req.method() === 'POST' && linha) {
+        if (m[2] === 'ignorar') {
+          const b = JSON.parse(req.postData() ?? '{}');
+          linha.situacao = 'ignorada';
+          linha.ignorada = { em: new Date().toISOString(), por_nome: 'Admin', motivo: b.motivo, texto: b.texto ?? null };
+        } else { linha.situacao = original.get(linha.id); linha.ignorada = null; }
+        return json(route, linha);
+      }
+      return json(route, { error: { code: 'NAO_SIMULADO', message: 'Não simulado.' } }, 404);
+    });
+    // Dar entrada com origem "sefaz": a API do navegador está desligada (SEFAZ_DFE_AMBIENTE ausente) e recusaria de propósito.
+    // Aqui só se prova o que a TELA manda (origem e chave); o servidor conferir de novo é do jest e do smoke.
+    await page.route(/\/v1\/notas(\?|$)/, async (route) => {
+      const req = route.request();
+      if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: cors });
+      if (req.method() === 'POST') {
+        const b = JSON.parse(req.postData() ?? '{}');
+        OPS.push(`POST /v1/notas origem=${b.origem} chave=${b.chave}`);
+        if (b.origem !== 'sefaz') return route.continue();
+        lancou = true;
+        return json(route, { id: UID(99), contas: 2, a_vista: false, insumos_criados: 0 }, 201);
+      }
+      if (req.method() === 'GET' && lancou) {
+        return json(route, [{ id: UID(99), numero: '990', serie: '1', fornecedor_nome: 'LATICÍNIOS K', data_entrada: '2026-11-17', valor_total: 701.95, forma_pagamento: 'boleto', origem: 'sefaz', repetida_de: null }]);
+      }
+      return route.continue();
+    });
+  };
+
+  const { ctx, page, erros } = await sessao('admin@erpfreela.local', { width: 360, height: 800 });
+  const abaLancar = page.getByRole('tab', { name: 'Lançar nota' });
+  const abaSefaz = page.getByRole('tab', { name: /^Notas da SEFAZ/ });
+  const cartoes = page.locator('ul[aria-label="Notas da SEFAZ"] > li');
+  const cartao = (n) => cartoes.filter({ hasText: `NF ${n} ·` });
+  const sim = (p, t = 30_000) => p.waitFor({ timeout: t }).then(() => true, () => false);
+  const FRASE_FAIXA = 'A NF 77 de LATICÍNIOS K, que você já lançou, foi cancelada pelo fornecedor. Estoque e contas a pagar não foram alterados: ajuste à mão, se for preciso.';
+
+  // 1) API real, desligada: tela de sempre, sem abas e sem faixa.
+  await page.goto(`${BASE}/notas`, { waitUntil: 'networkidle', timeout: 180_000 });
+  check('sefaz aba: tela de sempre aparece', await sim(page.getByText('1. Arquivo da nota')));
+  check('sefaz aba: servidor desligado não tem aba', (await abaSefaz.count()) === 0 && (await abaLancar.count()) === 0);
+  check('sefaz aba: servidor desligado não tem faixa', (await page.getByText('que você já lançou, foi cancelada').count()) === 0);
+
+  // 2) Ligado (simulado): abas, faixa e teclado.
+  await instalar(page);
+  await page.reload({ waitUntil: 'networkidle', timeout: 180_000 });
+  check('sefaz aba: "Notas da SEFAZ · 2" existe', await sim(page.getByRole('tab', { name: 'Notas da SEFAZ · 2', exact: true })));
+  check('sefaz aba: "Lançar nota" é a padrão', (await abaLancar.getAttribute('aria-selected')) === 'true');
+  check('sefaz aba: a faixa aparece na aba "Lançar nota"', await sim(page.getByText(FRASE_FAIXA)));
+  await abaLancar.focus();
+  await page.keyboard.press('ArrowRight');
+  check('sefaz aba: seta para a direita seleciona a outra aba', await page.waitForFunction(() => [...document.querySelectorAll('[role=tab]')].find((t) => t.textContent.startsWith('Notas da SEFAZ'))?.getAttribute('aria-selected') === 'true', null, { timeout: 10_000 }).then(() => true, () => false));
+
+  // 3) Situações e "Por quê?" (aba aberta; "Todas").
+  check('sefaz aba: lista "A conferir" tem 3 cartões', await cartoes.first().waitFor({ timeout: 30_000 }).then(async () => (await cartoes.count()) === 3, () => false));
+  await page.getByRole('button', { name: 'Todas', exact: true }).click();
+  check('sefaz aba: "Todas" tem 7 cartões', await page.waitForFunction(() => document.querySelectorAll('ul[aria-label="Notas da SEFAZ"] > li').length === 7, null, { timeout: 20_000 }).then(() => true, () => false));
+  const lista = page.locator('ul[aria-label="Notas da SEFAZ"]');
+  for (const t of [
+    'Cancelada pelo fornecedor depois de você lançar', 'Motivo: Não é compra · por Diego, 15/11', 'Cancelada pelo fornecedor. Não precisa lançar.',
+    'Recusada pela SEFAZ (denegada). Esta nota não vale.', 'Já lançada por XML em 03/11', 'Parece a NF 880 que você lançou por foto em 15/11', 'Falta lançar',
+  ]) check(`sefaz aba: situação "${t}"`, (await lista.getByText(t).count()) >= 1);
+  check('sefaz aba: "Só o resumo chegou." aparece em K880', (await cartao(880).getByText('Só o resumo chegou.').count()) === 1);
+  check('sefaz aba: "Por quê?" existe 1 vez (details)', (await page.locator('details', { hasText: 'A SEFAZ entrega só o resumo' }).count()) === 1);
+  check('sefaz aba: K880 tem "É a mesma nota" e "Lançar mesmo assim"', (await cartao(880).getByRole('button', { name: 'É a mesma nota' }).count()) === 1 && (await cartao(880).getByRole('button', { name: 'Lançar mesmo assim' }).count()) === 1);
+  check('sefaz aba: K990 tem "Conferir"', (await cartao(990).getByRole('button', { name: 'Conferir', exact: true }).count()) === 1);
+  await page.getByRole('button', { name: /^A conferir/ }).click();
+
+  // 4) Medidas em 360 + captura.
+  const l360 = await quemPassaDaBorda(page, 360);
+  check('sefaz aba: sem rolagem lateral em 360', l360.scroll <= 360, JSON.stringify(l360));
+  const altBuscar = (await page.getByRole('button', { name: 'Buscar agora' }).boundingBox())?.height ?? 0;
+  const altAba1 = (await abaLancar.boundingBox())?.height ?? 0;
+  const altAba2 = (await abaSefaz.boundingBox())?.height ?? 0;
+  check('sefaz aba: "Buscar agora" e as abas têm ao menos 44 px', altBuscar >= 44 && altAba1 >= 44 && altAba2 >= 44, `${altBuscar}/${altAba1}/${altAba2}`);
+  await page.screenshot({ path: join(SHOTS, 'admin-notas-sefaz-aba-360.png'), fullPage: true });
+
+  // 5) Ignorar: motivo obrigatório, "Outro motivo", sucesso com Desfazer.
+  await cartao(990).getByRole('button', { name: 'Ignorar…' }).click();
+  const dlg = page.getByRole('alertdialog');
+  check('sefaz aba: diálogo "Ignorar esta nota?"', await sim(dlg.getByText('Ignorar esta nota?')));
+  await dlg.getByRole('button', { name: 'Ignorar nota' }).click();
+  check('sefaz aba: sem motivo mostra "Escolha o motivo."', await sim(dlg.getByText('Escolha o motivo.'), 10_000));
+  await dlg.getByRole('radio', { name: 'Outro motivo' }).click();
+  check('sefaz aba: "Outro motivo" abre "Escreva o motivo"', await sim(dlg.getByText('Escreva o motivo', { exact: true }), 10_000));
+  await dlg.getByRole('radio', { name: 'Não é compra' }).click();
+  await dlg.getByRole('button', { name: 'Ignorar nota' }).click();
+  check('sefaz aba: toast "Nota ignorada." com Desfazer', await sim(page.getByText('Nota ignorada.').first(), 20_000) && (await page.getByRole('button', { name: 'Desfazer' }).count()) >= 1);
+  check('sefaz aba: K990 sai da lista "A conferir"', await page.waitForFunction(() => document.querySelectorAll('ul[aria-label="Notas da SEFAZ"] > li').length === 2, null, { timeout: 20_000 }).then(() => true, () => false));
+  await page.getByRole('button', { name: 'Desfazer' }).first().click();
+  check('sefaz aba: Desfazer devolve K990', await page.waitForFunction(() => document.querySelectorAll('ul[aria-label="Notas da SEFAZ"] > li').length === 3, null, { timeout: 20_000 }).then(() => true, () => false));
+  check('sefaz aba: Desfazer chamou "reabrir"', OPS.some((o) => o.endsWith('/reabrir')));
+
+  // 6) Marcar como visto (faixa some) e Desfazer (faixa volta).
+  await cartao(77).getByRole('button', { name: 'Marcar como visto' }).click();
+  check('sefaz aba: "Marcar como visto" mostra toast com Desfazer', await sim(page.getByText('Nota marcada como vista.').first(), 20_000) && (await page.getByRole('button', { name: 'Desfazer' }).count()) >= 1);
+  check('sefaz aba: a faixa some depois de marcar como visto', await page.waitForFunction((f) => !document.body.innerText.includes(f), FRASE_FAIXA, { timeout: 20_000 }).then(() => true, () => false));
+  await page.getByRole('button', { name: 'Desfazer' }).first().click();
+  check('sefaz aba: Desfazer traz a faixa de volta', await sim(page.getByText(FRASE_FAIXA), 20_000));
+  // "Ver" da faixa leva à aba, filtro "A conferir", foco no cartão.
+  await abaLancar.click();
+  await page.getByRole('button', { name: 'Ver', exact: true }).click();
+  check('sefaz aba: "Ver" abre a aba SEFAZ', await page.waitForFunction(() => [...document.querySelectorAll('[role=tab]')].find((t) => t.textContent.startsWith('Notas da SEFAZ'))?.getAttribute('aria-selected') === 'true', null, { timeout: 10_000 }).then(() => true, () => false));
+  check('sefaz aba: "Ver" põe o foco no cartão da NF 77', await page.waitForFunction((id) => document.activeElement?.getAttribute('data-nota-id') === id, UID(77), { timeout: 10_000 }).then(() => true, () => false));
+
+  // 7) Buscar agora: buscando (desabilitado) e depois o toast.
+  await page.getByRole('button', { name: 'Buscar agora' }).click();
+  const buscando = page.getByRole('button', { name: 'Buscando na SEFAZ…' });
+  check('sefaz aba: "Buscando na SEFAZ…" aparece desabilitado', await sim(buscando, 10_000) && (await buscando.isDisabled()));
+  check('sefaz aba: toast "Busca feita: 2 notas novas."', await sim(page.getByText('Busca feita: 2 notas novas.').first(), 30_000));
+  check('sefaz aba: o botão volta a "Buscar agora"', await sim(page.getByRole('button', { name: 'Buscar agora' }), 20_000));
+
+  // 8) Espera: próxima busca no futuro.
+  proxima = minutos(40);
+  await page.reload({ waitUntil: 'networkidle', timeout: 180_000 });
+  await abaSefaz.click();
+  const esperaFrase = `Próxima busca a partir das ${hhmm(proxima)}. A SEFAZ não deixa buscar antes.`;
+  check('sefaz aba: espera mostra a hora e a frase', await sim(page.getByText(esperaFrase)));
+  check('sefaz aba: espera deixa "Buscar agora" desabilitado', await page.getByRole('button', { name: 'Buscar agora' }).isDisabled());
+  proxima = minutos(-1);
+
+  // 9) Vazio e erro da lista.
+  listaModo = 'vazia';
+  await page.reload({ waitUntil: 'networkidle', timeout: 180_000 });
+  await abaSefaz.click();
+  check('sefaz aba: lista vazia mostra "Nenhuma nota chegou ainda"', await sim(page.getByText('Nenhuma nota chegou ainda')));
+  listaModo = 'erro';
+  await page.reload({ waitUntil: 'networkidle', timeout: 180_000 });
+  await abaSefaz.click();
+  check('sefaz aba: erro da lista mostra a frase e "Tentar de novo"', await sim(page.getByText('Não consegui ver as notas da SEFAZ agora. Toque em Tentar de novo.'), 30_000) && (await page.getByRole('button', { name: 'Tentar de novo' }).count()) === 1);
+  listaModo = 'normal';
+
+  // 10) Conferir K990: a mesma conferência de hoje, com origem "sefaz".
+  await page.reload({ waitUntil: 'networkidle', timeout: 180_000 });
+  await abaSefaz.click();
+  await cartao(990).getByRole('button', { name: 'Conferir', exact: true }).click();
+  check('sefaz aba: Conferir seleciona "Lançar nota"', await page.waitForFunction(() => [...document.querySelectorAll('[role=tab]')].find((t) => t.textContent === 'Lançar nota')?.getAttribute('aria-selected') === 'true', null, { timeout: 30_000 }).then(() => true, () => false));
+  check('sefaz aba: Conferir abre "2. Dados da nota"', await sim(page.getByText('2. Dados da nota'), 60_000));
+  await page.screenshot({ path: join(SHOTS, 'admin-notas-sefaz-conferir-360.png'), fullPage: true });
+  await page.getByRole('button', { name: 'Dar entrada' }).click();
+  check('sefaz aba: toast "Entrada lançada no estoque"', await sim(page.getByText(/Entrada lançada no estoque/).first(), 60_000));
+  check('sefaz aba: a chamada levou origem sefaz e a chave de K990', OPS.includes(`POST /v1/notas origem=sefaz chave=${chaveK(990)}`), OPS.filter((o) => o.startsWith('POST /v1/notas')).join(' | '));
+  check('sefaz aba: "Notas lançadas" mostra a tag SEFAZ', await sim(page.locator('table').getByText('SEFAZ', { exact: true }), 30_000));
+
+  // 11) Computador: tabela com as colunas.
+  await page.setViewportSize({ width: 1366, height: 900 });
+  await abaSefaz.click();
+  await page.getByRole('button', { name: 'Todas', exact: true }).click();
+  for (const c of ['Fornecedor', 'NF / série', 'Emissão', 'Valor', 'Situação']) {
+    check(`sefaz aba: tabela tem a coluna "${c}"`, await sim(page.getByRole('columnheader', { name: c, exact: true }), 20_000));
+  }
+  await page.screenshot({ path: join(SHOTS, 'admin-notas-sefaz-aba-desktop.png'), fullPage: true });
+  await page.setViewportSize({ width: 360, height: 800 });
+
+  // 12) Link direto, storage, console e banco.
+  await page.goto(`${BASE}/painel`, { waitUntil: 'domcontentloaded', timeout: 180_000 });
+  await page.goto(`${BASE}/notas#notas-sefaz`, { waitUntil: 'networkidle', timeout: 180_000 });
+  check('sefaz aba: link #notas-sefaz abre a aba SEFAZ', await page.waitForFunction(() => [...document.querySelectorAll('[role=tab]')].find((t) => t.textContent.startsWith('Notas da SEFAZ'))?.getAttribute('aria-selected') === 'true', null, { timeout: 30_000 }).then(() => true, () => false));
+  const guardado = await page.evaluate(() => ({ local: Object.keys(localStorage), sessao: sessionStorage.length }));
+  check('sefaz aba: localStorage só com authUser e sessionStorage vazio', guardado.local.length === 1 && guardado.local[0] === 'authUser' && guardado.sessao === 0, JSON.stringify(guardado));
+  const reaisAba = erros.filter((e) => !/Failed to load resource/.test(e));
+  check('sefaz aba: sem erro de console', reaisAba.length === 0, reaisAba.join(' | '));
+  const consultasAba = execFileSync('docker', ['exec', 'erp-freela-postgres', 'psql', '-U', 'erpfreela', '-d', PGDB, '-t', '-A', '-c', 'select count(*) from sefaz_distribuicao']).toString().trim();
+  check('sefaz aba: nenhuma consulta no banco (a busca nunca ligou de verdade)', consultasAba === '0', consultasAba);
+  await ctx.close();
+}
+
 // ---------------- LOJA (celular)
 {
   const { ctx, page, erros } = await sessao('loja@erpfreela.local', { width: 390, height: 844 });

@@ -218,3 +218,41 @@ export function linhasHistoricoSefaz(h: SituacaoSefazLigada["historico"]): strin
     return `Parou sozinha em ${quando}${e.c_stat !== null ? ` (código ${e.c_stat})` : ""}`;
   });
 }
+
+// ------------------------------------------------------------------------------------------------ ações de cada nota
+
+export type AcaoNota = "marcar_visto" | "voltar_lista" | "mesma_nota" | "lancar_mesmo_assim" | "conferir" | "lancar_por_arquivo" | "ignorar" | "copiar_chave";
+
+/** UX §3, coluna "Ações": o que cada situação oferece. Os componentes só desenham o que esta tabela devolve. */
+export function acoesDaNota(n: NotaSefaz): { primaria: AcaoNota | null; secundarias: AcaoNota[] } {
+  switch (n.situacao) {
+    case "cancelada_depois_de_lancada":
+      return { primaria: "marcar_visto", secundarias: [] };
+    case "ignorada":
+      return { primaria: "voltar_lista", secundarias: [] };
+    case "parece_lancada":
+      return { primaria: "mesma_nota", secundarias: ["lancar_mesmo_assim"] };
+    case "falta_lancar":
+      return { primaria: n.pode_conferir ? "conferir" : "lancar_por_arquivo", secundarias: ["ignorar", "copiar_chave"] };
+    default:
+      return { primaria: null, secundarias: [] };
+  }
+}
+
+export const TEXTO_ACAO: Record<AcaoNota, string> = {
+  marcar_visto: "Marcar como visto",
+  voltar_lista: "Voltar para a lista",
+  mesma_nota: "É a mesma nota",
+  lancar_mesmo_assim: "Lançar mesmo assim",
+  conferir: "Conferir",
+  lancar_por_arquivo: "Lançar por arquivo ou foto",
+  ignorar: "Ignorar…",
+  copiar_chave: "Copiar chave",
+};
+
+/** "14/11/2026" no fuso de Brasília; "—" sem data. */
+export function emissaoSp(iso: string | null): string {
+  if (!iso) return "—";
+  const p = partes(new Date(iso));
+  return `${p.day}/${p.month}/${p.year}`;
+}

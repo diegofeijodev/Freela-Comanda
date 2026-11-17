@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { NotaParecida, NotaSefaz, SituacaoBuscaSefaz, SituacaoSefazLigada } from "../erp-api";
 import {
-  contagemAba, estadoBuscar, linhasHistoricoSefaz, faixaCancelamento, horaSp, linhaEspera, linhaProxima, linhaUltimaBusca, quando, resumoPainel, tagDaNota, TEXTO_MOTIVO,
+  acoesDaNota, contagemAba, emissaoSp, estadoBuscar, linhasHistoricoSefaz, faixaCancelamento, horaSp, linhaEspera, linhaProxima, linhaUltimaBusca, quando, resumoPainel, tagDaNota, TEXTO_MOTIVO,
   toastBuscaFeita,
 } from "../notas-sefaz";
 
@@ -197,5 +197,36 @@ describe("linhasHistoricoSefaz", () => {
       { evento: "desligada", feito_por_nome: "Ana", feito_em: "2026-11-16T17:32:00Z", c_stat: null },
       { evento: "ligada", feito_por_nome: null, feito_em: "2026-11-15T17:32:00Z", c_stat: null },
     ])).toEqual(["Parou sozinha em 17/11/2026 às 14h05 (código 656)", "Desligada por Ana em 16/11/2026 às 14h32", "Ligada em 15/11/2026 às 14h32"]);
+  });
+});
+
+describe("acoesDaNota", () => {
+  const n = (p: Partial<NotaSefaz>): NotaSefaz => ({
+    id: "n", chave: "1".repeat(44), emitente_cnpj: "1", emitente_nome: "ATACADÃO", numero: "4411", serie: "1", emitida_em: null, autorizada_em: null, valor_total: 1,
+    situacao_sefaz: "autorizada", cancelada_em: null, situacao: "falta_lancar", lancada: null, parecidas: [], pode_conferir: true, nao_parece_compra: false, ignorada: null, ...p,
+  });
+  it("cancelada depois de lançada: só marcar como visto", () => {
+    expect(acoesDaNota(n({ situacao: "cancelada_depois_de_lancada" }))).toEqual({ primaria: "marcar_visto", secundarias: [] });
+  });
+  it("ignorada: voltar para a lista", () => {
+    expect(acoesDaNota(n({ situacao: "ignorada" }))).toEqual({ primaria: "voltar_lista", secundarias: [] });
+  });
+  it("cancelada, denegada e já lançada: nenhuma ação", () => {
+    for (const situacao of ["cancelada", "denegada", "ja_lancada"] as const) expect(acoesDaNota(n({ situacao }))).toEqual({ primaria: null, secundarias: [] });
+  });
+  it("parece lançada: é a mesma nota, com ou sem nota completa", () => {
+    expect(acoesDaNota(n({ situacao: "parece_lancada", pode_conferir: true }))).toEqual({ primaria: "mesma_nota", secundarias: ["lancar_mesmo_assim"] });
+    expect(acoesDaNota(n({ situacao: "parece_lancada", pode_conferir: false }))).toEqual({ primaria: "mesma_nota", secundarias: ["lancar_mesmo_assim"] });
+  });
+  it("falta lançar: Conferir só com nota completa; senão lançar por arquivo ou foto", () => {
+    expect(acoesDaNota(n({ pode_conferir: true }))).toEqual({ primaria: "conferir", secundarias: ["ignorar", "copiar_chave"] });
+    expect(acoesDaNota(n({ pode_conferir: false }))).toEqual({ primaria: "lancar_por_arquivo", secundarias: ["ignorar", "copiar_chave"] });
+  });
+});
+
+describe("emissaoSp", () => {
+  it("data no fuso de Brasília, traço sem data", () => {
+    expect(emissaoSp("2026-11-15T01:30:00Z")).toBe("14/11/2026");
+    expect(emissaoSp(null)).toBe("—");
   });
 });
