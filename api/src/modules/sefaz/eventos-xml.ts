@@ -59,11 +59,16 @@ export type Justificativa = { ok: true; texto: string } | { ok: false; erro: 'cu
 
 /**
  * `xJust` do 210240 (TString de 15 a 255, só U+0020–U+00FF, sem espaço nas pontas): aspas e travessões do teclado do celular viram
- * `'`, `"` e `-`; espaços repetidos e quebras de linha viram um espaço; pontas aparadas. Pura e sem import: a do web é CÓPIA desta
- * (`web/src/lib/notas-sefaz.ts`): mudar uma = mudar a outra.
+ * `'`, `"` e `-`; espaços repetidos e quebras de linha (também U+0085, U+2028 e U+2029, que a assinatura recusa crus) viram um
+ * espaço; pontas aparadas. Pura e sem import: a do web é CÓPIA desta (`web/src/lib/notas-sefaz.ts`): mudar uma = mudar a outra.
  */
 export function normalizarJustificativa(t: string): Justificativa {
-  const texto = t.replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/[–—]/g, '-').replace(/\s+/g, ' ').trim();
+  const texto = t
+    .replace(/[‘’]/g, "'")
+    .replace(/[“”]/g, '"')
+    .replace(/[–—]/g, '-')
+    .replace(/[\s\u0085]+/g, ' ') // \s já pega U+2028 e U+2029; U+0085 (NEL) não
+    .trim();
   const tamanho = Array.from(texto).length; // caracteres, não unidades UTF-16
   if (tamanho < 15) return { ok: false, erro: 'curta' };
   if (tamanho > 255) return { ok: false, erro: 'longa' };

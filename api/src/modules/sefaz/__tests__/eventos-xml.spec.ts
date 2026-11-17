@@ -121,6 +121,12 @@ describe('normalizarJustificativa', () => {
     expect(r.ok && r.texto).toMatch(PADRAO.xJust);
     if (r.ok) expect(normalizarJustificativa(r.texto)).toEqual(r);
   });
+  it('U+0085, U+2028 e U+2029 viram espaço, e o texto assina (a assinatura recusa os três crus)', () => {
+    const [nel, ls, ps] = [0x85, 0x2028, 0x2029].map((c) => String.fromCharCode(c)); // NEL, separador de linha e de parágrafo
+    const r = normalizarJustificativa(`Pedido${nel}cancelado${ls}pelo${ps}fornecedor`);
+    expect(r).toEqual({ ok: true, texto: 'Pedido cancelado pelo fornecedor' });
+    if (r.ok) expect(() => eventoAssinado(dados('210240', { xJust: r.texto }), CLIENTE)).not.toThrow();
+  });
 });
 
 describe('montarEvento: padrões dos esquemas, para os 4 tipos e a chave VETOR (com letras)', () => {

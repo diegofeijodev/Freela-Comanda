@@ -32,7 +32,12 @@ export class SefazEventosFalso implements SefazEventosPort {
   proximas: (RespostaLoteEventos | SefazErro)[] = [];
   aoChamar?: () => void;
 
-  async enviarLote(_cert: CertificadoEmUso, ambiente: AmbienteSefaz, idLote: bigint, eventosAssinados: string[]): Promise<RespostaLoteEventos> {
+  async enviarLote(
+    _cert: CertificadoEmUso,
+    ambiente: AmbienteSefaz,
+    idLote: bigint,
+    eventosAssinados: string[],
+  ): Promise<RespostaLoteEventos> {
     this.chamadas.push({ ambiente, idLote, eventos: [...eventosAssinados] });
     this.aoChamar?.();
     const proxima = this.proximas.shift();

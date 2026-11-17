@@ -41,7 +41,8 @@ const dados = (tpEvento: TipoEvento, chave: string, xJust: string | null = null)
 // dois eventos DIFERENTES (o Id de cada um é único no documento)
 const EVENTOS = [
   eventoAssinado(dados('210210', VETOR), CLIENTE),
-  eventoAssinado(dados('210240', K880, 'Pedido cancelado pelo fornecedor'), CLIENTE),
+  // com acento: o Content-Length (bytes) e a conferência no envelope veem caractere de 2 bytes
+  eventoAssinado(dados('210240', K880, 'Pedido cancelado pelo fornecedor, não chegou à loja'), CLIENTE),
 ];
 
 describe('SefazEventosAdapter', () => {

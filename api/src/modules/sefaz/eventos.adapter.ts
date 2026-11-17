@@ -16,7 +16,12 @@ export class SefazEventosAdapter implements SefazEventosPort {
     @Inject(CHAMAR_SOAP12) private readonly chamar: ChamarSoap12,
   ) {}
 
-  async enviarLote(cert: CertificadoEmUso, ambiente: AmbienteSefaz, idLote: bigint, eventosAssinados: string[]): Promise<RespostaLoteEventos> {
+  async enviarLote(
+    cert: CertificadoEmUso,
+    ambiente: AmbienteSefaz,
+    idLote: bigint,
+    eventosAssinados: string[],
+  ): Promise<RespostaLoteEventos> {
     const corpoHttp = await this.chamar({
       url: URL_EVENTOS[ambiente],
       action: ACTION_EVENTOS,
