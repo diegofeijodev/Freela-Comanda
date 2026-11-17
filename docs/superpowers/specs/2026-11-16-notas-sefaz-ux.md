@@ -154,7 +154,7 @@ Tratamento "você"; verbos no imperativo; códigos da SEFAZ só entre parêntese
 8. Aba por teclado (setas, Enter); zoom 200%; nenhum dado da nota nem chave em `localStorage`/`sessionStorage`.
 
 ## 8. Respostas à SEFAZ (etapa 2, entrega 3; desligadas até o OK do contador)
-Complementa a Etapa 2 do desenho (17/11). Na tela nunca aparecem "ciência", "manifestação", "desconhecimento" nem códigos de evento (§5). Tudo desta seção só existe com o servidor em `SEFAZ_MANIFESTACAO=ligada`; sem ela, a tela é a da entrega 2 (o painel mostra só a linha "não estão ativadas neste servidor").
+Complementa a Etapa 2 do desenho (17/11). Na tela nunca aparecem "ciência", "manifestação", "desconhecimento" nem códigos de evento (§5). Tudo desta seção só existe com o servidor em `SEFAZ_MANIFESTACAO=ligada` (`respostas.disponivel`); sem ela, a tela é a da entrega 2, com uma diferença: o painel mostra a linha "não estão ativadas neste servidor", e a abertura do §4 e o "Por quê?" usam a coluna "Desligadas" abaixo (as frases antigas ficam falsas de qualquer jeito, porque o sistema agora sabe responder).
 
 **Frases da entrega 2 que mudam** (com as respostas ligadas; desligadas, valem as novas da coluna do meio):
 | Onde | Desligadas | Ligadas |
@@ -187,7 +187,7 @@ Complementa a Etapa 2 do desenho (17/11). Na tela nunca aparecem "ciência", "ma
 
 **Aba "Notas da SEFAZ":**
 - **Faixa do prazo** (âmbar, `role="status"`, acima das abas, abaixo da de cancelamento; só com `prazo_perto` > 0): uma nota: "A NF 4411 de ATACADÃO S.A. precisa de uma resposta à SEFAZ até 15/02/2027. Lance a nota, toque em Não reconheço ou escolha um motivo em Ignorar." Várias: "N notas precisam de uma resposta à SEFAZ. A primeira vence em 15/02/2027." [Ver] abre "A conferir" com foco na primeira.
-- **Prazo no cartão** (notas com o aviso de chegada registrado e sem resposta final): linha "Responder à SEFAZ até 15/02/2027" (neutra); do 80º dia em diante, âmbar com `CircleAlert`: "Faltam 6 dias para responder à SEFAZ (até 15/02/2027)."; no último dia "Último dia para responder à SEFAZ."; passado: muted "Passou o prazo: a SEFAZ considera esta compra confirmada." (sem ações de resposta).
+- **Prazo no cartão:** em toda nota com `pode_responder`, a linha neutra "Responder à SEFAZ até 15/02/2027". Só nas notas com o aviso de chegada registrado e sem resposta final (`prazo_perto`), do 80º dia em diante, âmbar com `CircleAlert`: "Faltam 6 dias para responder à SEFAZ (até 15/02/2027)."; no último dia "Último dia para responder à SEFAZ.". Passado o prazo, nessas mesmas notas: muted "Passou o prazo: a SEFAZ considera esta compra confirmada." (sem ações de resposta).
 - **Linha da resposta** (discreta, sob a situação; ícone + texto, `aria-live="polite"` quando muda):
 | Estado | Texto |
 |---|---|

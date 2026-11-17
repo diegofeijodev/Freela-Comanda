@@ -108,7 +108,7 @@ Onde a UX fixa um texto, ele vale literalmente.
 - **Justificativa:** "Mercadoria devolvida — “recusada” na porta’" → "Mercadoria devolvida - \"recusada\" na porta'"; "  pedido\ncancelado pelo
   fornecedor  " → "pedido cancelado pelo fornecedor"; "Pedido cancelad" (15) ok; 14 = `curta`; 256 = `longa`; "Devolvido 🍅 inteiro" = `caractere`.
 - **Retornos fictícios** (fixtures, montadas no formato do `retEnvEvento_v1.00.xsd`): `ret-evento-128.xml` (VETOR 135 com `nProt` de 15 dígitos e K880
-  573 sem protocolo), `ret-evento-128-17.xml` (`cStat` 1234 no lote não; um evento 135 com `nProt` de 17 dígitos), `ret-evento-108.xml`.
+  573 sem protocolo), `ret-evento-128-17.xml` (lote 128 com dois `retEvento`: VETOR 135 com `nProt` de 17 dígitos e K77 com `cStat` de 4 dígitos, 1234), `ret-evento-108.xml`.
 
 ---
 
@@ -244,7 +244,8 @@ Onde a UX fixa um texto, ele vale literalmente.
   - `corpoEnvEvento(1763399100000n, [a, b])` começa com `<nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4"><envEvento
     xmlns="http://www.portalfiscal.inf.br/nfe" versao="1.00"><idLote>1763399100000</idLote>`, não tem `<?xml` nem `nfeRecepcaoEvento>` (sem
     elemento da operação); 0 e 21 eventos e `idLote` 10^15 lançam;
-  - `lerRetornoEventos`: as 3 fixtures (128 com 135 + 573; 17 dígitos; 108 sem `retEvento`); corpo sem `retEnvEvento` → `SEFAZ_RESPOSTA_INVALIDA`
+  - `lerRetornoEventos`: as 3 fixtures (128 com 135 + 573; 17 dígitos e o `cStat` 1234 lido como número; 108 sem `retEvento`); um lote inline com `cStat`
+    `1234` lido sem erro; corpo sem `retEnvEvento` → `SEFAZ_RESPOSTA_INVALIDA`
     passo `soap`; `<!DOCTYPE` → passo `xml`; `cStat` `12345` → passo `cStat`; 21 `retEvento` → passo `retEvento`.
   - `eventos.adapter.spec.ts`: com um `chamar` falso, o pedido usa `URL_EVENTOS[ambiente]`, `ACTION_EVENTOS`, `confiancaSefaz(icp)`, `TEMPO_LIMITE_MS`,
     `TETO_RESPOSTA_BYTES` e o corpo de `corpoEnvEvento`; a resposta passa por `lerRetornoEventos`; `SefazErro` do transporte sobe igual.
@@ -261,7 +262,7 @@ Onde a UX fixa um texto, ele vale literalmente.
 - Test: `api/src/modules/notas-sefaz/__tests__/respostas-agenda.spec.ts`
 
 **Interfaces:**
-- Consumes: `CodigoSefazErro`; `TipoEvento`; `RECUO_FALHA_MIN` e `horaSp` (entrega 2).
+- Consumes: `CodigoSefazErro` e `CodigoFault` (`sefaz-erro.ts`; o serviço passa o `fault` do `SefazErro`); `TipoEvento`; `RECUO_FALHA_MIN` e `horaSp` (entrega 2).
 - Produces:
   ```ts
   export type SituacaoRespostas = 'ok' | 'parada_certificado' | 'parada_configuracao' | 'parada_656' | 'parada_relogio';
@@ -270,7 +271,7 @@ Onde a UX fixa um texto, ele vale literalmente.
   export const PAUSA_FORA_DO_AR_MS = 60 * 60_000, PAUSA_656_MS = 65 * 60_000, PAUSA_CURTA_MS = 15 * 60_000, PAUSA_RELOGIO_MS = 60 * 60_000;
   export type ChamadaLote =
     | { tipo: 'retorno'; cStat: number; retornos: { chave: string | null; tpEvento: string | null; nSeq: number | null; cStat: number; nProt: string | null }[] }
-    | { tipo: 'erro'; code: CodigoSefazErro; enviado: boolean; httpStatus?: number };
+    | { tipo: 'erro'; code: CodigoSefazErro; enviado: boolean; httpStatus?: number; fault?: CodigoFault };
   export interface EntradaLote {
     agora: Date; eventos: { id: string; chave: string; tpEvento: TipoEvento; tentativas: number /* já com o +1 da T1 */ }[];
     falhasSeguidas: number; semRespostaSeguidas: number; vezes656Em24h: number; relogioNoLoteAnterior: boolean; chamada: ChamadaLote;
@@ -297,6 +298,8 @@ Onde a UX fixa um texto, ele vale literalmente.
   - 577 com `relogioNoLoteAnterior` → `parada_relogio`; sem ele → pausa +60 e `relogio = true`;
   - 656 com `vezes656Em24h = 1` → `parada_656`;
   - lote 1234 (4 dígitos, desconhecido) → `parada_configuracao` com "(código 1234)"; evento 1234 → `recusada` "código 1234";
+  - HTTP 500 sem `fault` e com `fault: 'Receiver'` → voltam sem gastar, pausa +60, `foraDoAr`; o mesmo com `semRespostaSeguidas = 2` → `parada_configuracao`;
+  - HTTP 500 com `fault` `Sender`, `VersionMismatch`, `MustUnderstand` e `DataEncodingUnknown` → voltam sem gastar e `parada_configuracao` (`outroCodigo(500)`);
   - `derivaRelogio('2026-11-17T14:08:00-03:00', AGORA) === 180_000`; `derivaRelogio('lixo', AGORA) === null`.
 - [ ] **Step 2:** `../scripts/run-capped.sh 1500 npx jest --runInBand src/modules/notas-sefaz/__tests__/respostas-agenda.spec.ts`. Esperado: FAIL.
 - [ ] **Step 3:** implementar.
@@ -496,7 +499,8 @@ Onde a UX fixa um texto, ele vale literalmente.
     `na_fila` 3 → "3 respostas na fila"; `pausa_ate` futura → "Esperando a SEFAZ" + caixa âmbar com `mensagem`; `parada_656` → "Paradas", caixa vermelha,
     botão `ligar_de_novo`;
   - **Review Focus 5:** `linhaPrazo` com `prazo_final = 2027-02-16T02:30:00Z` → "…até 15/02/2027"; com `prazo_perto` e faltando 6 dias → "Faltam 6 dias
-    para responder à SEFAZ (até …)"; no dia → "Último dia para responder à SEFAZ."; `prazo_passou` → muted "Passou o prazo: …";
+    para responder à SEFAZ (até …)"; no dia → "Último dia para responder à SEFAZ."; `prazo_passou` com ciência registrada e sem final → muted "Passou o
+    prazo: …"; **nota sem ciência** com `pode_responder` → neutra "Responder à SEFAZ até …" (nunca âmbar); sem `pode_responder` e sem prazo passado → `null`;
   - `linhaResposta`: uma asserção por linha da tabela da UX §8 (inclui `tentarDeNovo` só em `falhou`);
   - `faixaPrazo`: 0 → `null`; 1 → a frase com "A NF 4411 de ATACADÃO S.A."; 3 → "3 notas precisam… A primeira vence em …";
   - `avisoDoMotivo`: os 5 motivos com e sem `podeResponder` (botão "Avisar a SEFAZ e ignorar" em `nao_reconheco` e `compra_nao_aconteceu`);
@@ -591,8 +595,9 @@ o dono acompanha. Pressupõe a busca da entrega 2 já testada (o roteiro dela) e
      Falhou a assinatura = OpenSSL da imagem recusa SHA-1: parar.
 2. **Homologação (1º "eu autorizo").**
    - A caixa de homologação quase nunca tem nota (ninguém emite NF-e de teste para o CNPJ). O dono escolhe **uma** chave de nota real recente da empresa;
-     ela é semeada por SQL em `notas_sefaz` com `ambiente = 'homologacao'` (o evento de homologação não vale nada na produção; nota de homologação nunca
-     chega ao "Dar entrada").
+     ela é semeada por SQL em `notas_sefaz` com `ambiente = 'homologacao'`, `cnpj_destinatario` = o da empresa, `situacao_sefaz = 'autorizada'`, `tp_nf = 1`,
+     `autorizada_em = now() - interval '1 day'` (o planejador só manda ciência até 9 dias), emitente, número e série tirados da chave (o evento de
+     homologação não vale nada na produção; nota de homologação nunca chega ao "Dar entrada").
    - `SEFAZ_MANIFESTACAO=ligada` (com `SEFAZ_DFE_AMBIENTE=homologacao`), recriar só a API (`docker compose -f docker-compose.prod.yml up -d --no-deps api`),
      "Ligar as respostas". O próximo tique manda um lote de **1** (a única elegível).
    - **Esperado:** lote 128 e evento 135 ou 136 (chave sem NF-e no AN de teste). Registrar a linha de `sefaz_eventos_lotes`, a de `sefaz_manifestacoes`
@@ -603,7 +608,8 @@ o dono acompanha. Pressupõe a busca da entrega 2 já testada (o roteiro dela) e
      "Já lancei de outro jeito" (210200).
 3. **Produção (2º "eu autorizo", depois do OK do contador).**
    - Desligar as respostas, `SEFAZ_DFE_AMBIENTE=producao` e `SEFAZ_MANIFESTACAO=ligada`, recriar só a API.
-   - **Lote de 1:** antes de ligar, ignorar com "Outro motivo: teste" as notas elegíveis (até 9 dias, falta lançar) menos a escolhida; ligar; esperar o 135
+   - **Lote de 1:** antes de ligar, ignorar com "Outro motivo: teste" as notas elegíveis (até 9 dias, em "Falta lançar" ou "Parece já
+     lançada") menos a escolhida; ligar; esperar o 135
      dela; só então "Voltar para a lista" das outras (elas saem no tique seguinte).
    - Registrar o emissor do certificado TLS de `www.nfe.fazenda.gov.br` no dia (Let's Encrypt, troca a cada ~90 dias).
    - Esperar o XML completo: anotar quanto tempo levou entre o 135 e o "Conferir" acender (nenhuma NT fixa; fecha o ponto aberto).

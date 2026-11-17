@@ -488,10 +488,12 @@ até o 1º teste real (roteiro no fim do plano da entrega 3). Na tela, "manifest
 6. **Fila própria.** Uma remessa (lote) de até 20 eventos por tique de 5 min, sob a trava `CHAVE_TRAVA_SEFAZ_EVENTOS = 7_011_171_202`, com o diário em
    `sefaz_eventos_lotes` (nunca em `sefaz_consultas`, cuja agenda conta toda linha do (ambiente, CNPJ)). Volume: 60 notas por mês ≈ 120 eventos.
 7. **Código desconhecido nunca repete:** no evento = recusa definitiva daquela nota; no lote = as respostas param (desligam).
-8. **Sem validador de XSD.** `libxmljs2` é nativo e pesado; `xmllint` não está na máquina nem na imagem. Os testes conferem o XML montado contra os
-   padrões copiados dos esquemas (lista em "Montagem").
-9. **Prazo e aviso:** prazo final = `autorizada_em` (ou `emitida_em`, se faltar) + 90 dias; aviso a partir do 80º dia (faltam 10 ou menos) para as notas
-   com **ciência nossa registrada** e sem resposta final registrada; passado o prazo, a nota mostra "a SEFAZ considera a compra confirmada" e não aceita
+8. **Sem validador de XSD obrigatório.** `libxmljs2` é nativo e pesado; `xmllint` não está instalado nesta máquina (conferido em 17/11) e não é garantido
+   na imagem. Os testes conferem o XML montado contra os padrões copiados dos esquemas (lista em "Montagem"). O desenho do cupom usa o `xmllint` como
+   oráculo opcional, quando instalado; aqui não.
+9. **Prazo e aviso:** prazo final = `autorizada_em` (ou `emitida_em`, se faltar) + 90 dias; a data aparece em **toda nota respondível** (o silêncio vira
+   Confirmação com ou sem ciência); o aviso (âmbar no cartão, faixa e painel) só a partir do 80º dia (faltam 10 ou menos) e só para as notas com
+   **ciência nossa registrada** e sem resposta final registrada (decisão 4); passado o prazo, a nota mostra "a SEFAZ considera a compra confirmada" e não aceita
    mais resposta (o servidor recusa com `SEFAZ_PRAZO_PASSOU`).
 
 ### Planejador (puro, `notas-sefaz/respostas-plano.ts`)
@@ -533,7 +535,9 @@ volta à fila e gasta tentativa. Frases exatas na UX §8.
 | Situação | Ação |
 |---|---|
 | 128 | lê cada `retEvento` |
-| 108, 109, HTTP 5xx | todos voltam à fila sem gastar tentativa; `pausa_ate` +60 min; "fora do ar" |
+| 108, 109 | todos voltam à fila sem gastar tentativa; `pausa_ate` +60 min; "fora do ar" |
+| HTTP 5xx sem SOAP Fault, ou com Fault `Receiver` | como 108/109, mas conta na sequência de lotes sem resposta útil (o 3º seguido para, `parada_configuracao`) |
+| HTTP 5xx com Fault `Sender`, `VersionMismatch`, `MustUnderstand` ou `DataEncodingUnknown` | a SEFAZ recusou o nosso pedido (action ou corpo): voltam sem gastar; param (`parada_configuracao`) |
 | 656 (*precaução*: a NT 2020.001 não lista para eventos) | voltam sem gastar; `pausa_ate` +65; o 2º em 24 h para (`parada_656`) |
 | falha antes de enviar (DNS, TLS, recusa) | voltam sem gastar; recuo 15, 30 e 60 min (`falhas_seguidas`) |
 | enviado sem resposta útil (tempo, queda, ilegível, teto) | voltam **gastando** tentativa (o reenvio de um registrado volta 573); `pausa_ate` +15; o 3º lote seguido assim para (`parada_configuracao`) |
