@@ -1,8 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { NotaParecida, NotaSefaz, SituacaoBuscaSefaz, SituacaoSefazLigada } from "../erp-api";
 import {
   acoesDaNota, contagemAba, precisaConfirmarTroca, emissaoSp, estadoBuscar, linhasHistoricoSefaz, faixaCancelamento, horaSp, linhaEspera, linhaProxima, linhaUltimaBusca, quando, resumoPainel, tagDaNota, TEXTO_MOTIVO,
-  toastBuscaFeita,
+  semToqueDuplo, toastBuscaFeita, toastBuscaLigada,
 } from "../notas-sefaz";
 
 const AGORA = new Date("2026-11-17T17:05:00Z"); // 14h05 em Brasília
@@ -39,6 +39,43 @@ describe("última busca e toast", () => {
     expect(toastBuscaFeita(2)).toBe("Busca feita: 2 notas novas.");
     expect(toastBuscaFeita(1)).toBe("Busca feita: 1 nota nova.");
     expect(toastBuscaFeita(0)).toBe("Busca feita: nada novo.");
+  });
+  it("toastBuscaLigada: até 5 minutos só quando a próxima busca permitida está a 5 min ou menos", () => {
+    const cinco = "Busca ligada. A primeira busca sai em até 5 minutos.";
+    expect(toastBuscaLigada(com({ proxima_consulta_em: null }), AGORA)).toBe(cinco);
+    expect(toastBuscaLigada(com({ proxima_consulta_em: "2026-11-17T17:00:00Z" }), AGORA)).toBe(cinco); // já passou
+    expect(toastBuscaLigada(com({ proxima_consulta_em: "2026-11-17T17:10:00Z" }), AGORA)).toBe(cinco); // 5 min exatos
+    expect(toastBuscaLigada(com({ proxima_consulta_em: "2026-11-17T17:10:01Z" }), AGORA)).toBe("Busca ligada. A próxima busca sai às 14h10.");
+  });
+  it("toastBuscaLigada: senão, a hora de Brasília da próxima busca permitida (e o dia, se for outro)", () => {
+    expect(toastBuscaLigada(base, AGORA)).toBe("Busca ligada. A próxima busca sai às 15h10.");
+    // 02h30 UTC do dia 18 ainda é dia 17 em Brasília
+    expect(toastBuscaLigada(com({ proxima_consulta_em: "2026-11-18T02:30:00Z" }), AGORA)).toBe("Busca ligada. A próxima busca sai às 23h30.");
+    expect(toastBuscaLigada(com({ proxima_consulta_em: "2026-11-18T12:30:00Z" }), AGORA)).toBe("Busca ligada. A próxima busca sai em 18/11 às 09h30.");
+    // bloqueio da SEFAZ (656) mais tarde que a próxima: vale o bloqueio
+    expect(toastBuscaLigada(com({ proxima_consulta_em: "2026-11-17T17:00:00Z", bloqueado_ate: "2026-11-17T19:10:00Z" }), AGORA)).toBe(
+      "Busca ligada. A próxima busca sai às 16h10.",
+    );
+  });
+});
+
+describe("semToqueDuplo", () => {
+  it("o 2º toque antes de a 1ª chamada terminar é ignorado; ao terminar (mesmo com erro), a trava solta", async () => {
+    const trava = { current: false };
+    let soltar = () => {};
+    const acao = vi.fn(() => new Promise<void>((ok) => { soltar = ok; }));
+    const primeiro = semToqueDuplo(trava, acao);
+    await semToqueDuplo(trava, acao); // toque duplo, antes de o botão desabilitar
+    expect(acao).toHaveBeenCalledTimes(1);
+    soltar();
+    await primeiro;
+    expect(trava.current).toBe(false);
+    await expect(semToqueDuplo(trava, async () => { throw new Error("falhou"); })).rejects.toThrow("falhou");
+    expect(trava.current).toBe(false);
+    const depois = semToqueDuplo(trava, acao);
+    expect(acao).toHaveBeenCalledTimes(2);
+    soltar();
+    await depois;
   });
 });
 
@@ -134,6 +171,15 @@ describe("resumoPainel", () => {
     const x = r(desligada({ cnpj: null, certificado: { ok: false, code: "EMPRESA_SEM_CNPJ", mensagem: "Preencha o CNPJ.", avisos: [] } }));
     expect(x.botaoDesabilitado).toBe(true);
     expect(x.caixas[0]).toEqual({ tom: "bad", texto: "Preencha o CNPJ." });
+  });
+  it("código do certificado sem o prefixo CERTIFICADO_ não é reconhecido (a API sempre manda o prefixo)", () => {
+    const x = r(desligada({ certificado: { ok: false, code: "NAO_CADASTRADO", mensagem: "Envie o certificado.", avisos: [] } }));
+    expect(x.caixas[0]).toEqual({ tom: "bad", texto: "Envie o certificado." });
+  });
+  it("lacuna de 1 nota no singular", () => {
+    expect(r(com({ lacunas: 1 })).caixas.map((c) => c.texto)).toEqual([
+      "Uma resposta da SEFAZ se perdeu e até 1 nota pode não ter chegado. Essas entram pelo arquivo ou pela foto.",
+    ]);
   });
   it("CNPJ mudou, lacuna, aviso e avisos do certificado", () => {
     const x = r(desligada({ outro_cnpj_ou_modo: true, lacunas: 4, aviso: "Aviso D1.", certificado: { ok: true, code: null, mensagem: null, avisos: ["Aviso 280."] } }));

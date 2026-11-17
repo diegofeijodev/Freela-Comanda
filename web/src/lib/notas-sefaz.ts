@@ -72,6 +72,33 @@ export function toastBuscaFeita(novas: number): string {
   return novas <= 0 ? "Busca feita: nada novo." : `Busca feita: ${novas} ${plural(novas, "nota nova", "notas novas")}.`;
 }
 
+const CINCO_MIN_MS = 5 * 60_000;
+
+/**
+ * Toast depois de Ligar (com a situação que o PUT devolve). A busca sai no tique de 5 min, mas nunca antes da próxima busca permitida:
+ * religar não antecipa a agenda nem o bloqueio da SEFAZ. Hora de Brasília; outro dia leva "em DD/MM".
+ */
+export function toastBuscaLigada(s: SituacaoBuscaSefaz, agora: Date): string {
+  const t = s.ambiente === "desligado" ? null : liberaEm(s);
+  if (!t || new Date(t).getTime() - agora.getTime() <= CINCO_MIN_MS) return "Busca ligada. A primeira busca sai em até 5 minutos.";
+  const dia = diaSp(new Date(t)) === diaSp(agora) ? "" : `em ${ddmm(t)} `;
+  return `Busca ligada. A próxima busca sai ${dia}às ${horaSp(t)}.`;
+}
+
+/**
+ * Trava de toque duplo por `ref`: o `disabled={ocupado}` só vale depois do re-render, e um 2º toque no mesmo instante mandaria a mesma
+ * gravação duas vezes. Ignora a chamada enquanto a anterior não terminou; solta a trava ao terminar, com ou sem erro.
+ */
+export async function semToqueDuplo(trava: { current: boolean }, acao: () => Promise<void>): Promise<void> {
+  if (trava.current) return;
+  trava.current = true;
+  try {
+    await acao();
+  } finally {
+    trava.current = false;
+  }
+}
+
 export const contagemAba = (s: SituacaoSefazLigada): number => s.contagem.falta_lancar + s.contagem.parece_lancada;
 
 export function faixaCancelamento(c: SituacaoSefazLigada["canceladas_depois"]): string | null {
@@ -103,9 +130,6 @@ export type ResumoPainelSefaz = {
 const FRASE_SERVIDOR_DESLIGADO = "A busca de notas na SEFAZ não está ativada neste servidor. Fale com o suporte do Freela Comanda se quiser usá-la.";
 const FRASE_60_DIAS = "Com a busca desligada por mais de 60 dias, a SEFAZ para de guardar as notas deste CNPJ para você, e as desse período não voltam.";
 
-/** O código do certificado chega como `CERTIFICADO_VENCIDO`; aceita também o nome curto. */
-const codigoCurto = (c: string | null) => (c ?? "").replace(/^CERTIFICADO_/, "");
-
 export function resumoPainel(s: SituacaoBuscaSefaz, agora: Date): ResumoPainelSefaz {
   if (s.ambiente === "desligado") {
     return { tag: null, botao: null, botaoDesabilitado: false, caixas: [{ tom: "neutro", texto: FRASE_SERVIDOR_DESLIGADO }], linhas: [] };
@@ -127,13 +151,14 @@ export function resumoPainel(s: SituacaoBuscaSefaz, agora: Date): ResumoPainelSe
   if (parada && s.mensagem) caixas.push({ tom: "bad", texto: s.mensagem });
   else if (s.situacao === "ok" && s.mensagem) caixas.push({ tom: "warn", texto: s.mensagem });
   if (!s.certificado.ok && s.certificado.mensagem) {
-    const c = codigoCurto(s.certificado.code);
-    const ir = c === "NAO_CADASTRADO" || c === "VENCIDO" || c === "ILEGIVEL";
-    caixas.push({ tom: c === "NAO_CADASTRADO" ? "neutro" : "bad", texto: s.certificado.mensagem, ...(ir ? { irParaCertificado: true as const } : {}) });
+    const c = s.certificado.code; // a API manda CERTIFICADO_NAO_CADASTRADO, CERTIFICADO_VENCIDO etc. (ou EMPRESA_SEM_CNPJ)
+    const ir = c === "CERTIFICADO_NAO_CADASTRADO" || c === "CERTIFICADO_VENCIDO" || c === "CERTIFICADO_ILEGIVEL";
+    caixas.push({ tom: c === "CERTIFICADO_NAO_CADASTRADO" ? "neutro" : "bad", texto: s.certificado.mensagem, ...(ir ? { irParaCertificado: true as const } : {}) });
   }
   if (s.outro_cnpj_ou_modo) caixas.push({ tom: "warn", texto: "O CNPJ da empresa mudou desde a última vez. Ligue a busca de novo." });
   if (s.lacunas > 0) {
-    caixas.push({ tom: "warn", texto: `Uma resposta da SEFAZ se perdeu e até ${s.lacunas} notas podem não ter chegado. Essas entram pelo arquivo ou pela foto.` });
+    const podem = plural(s.lacunas, "nota pode", "notas podem");
+    caixas.push({ tom: "warn", texto: `Uma resposta da SEFAZ se perdeu e até ${s.lacunas} ${podem} não ter chegado. Essas entram pelo arquivo ou pela foto.` });
   }
   if (s.aviso) caixas.push({ tom: "warn", texto: s.aviso });
   for (const a of s.certificado.avisos) caixas.push({ tom: "warn", texto: a });

@@ -2,7 +2,7 @@
 
 import { useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { CheckCircle2, CircleAlert, Loader2 } from "lucide-react";
 import { configurarBuscaSefaz, type SituacaoBuscaSefaz } from "@/lib/erp-api";
@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { errMsg } from "@/lib/db";
 import { SITUACAO_SEFAZ_KEY, useSituacaoSefaz } from "@/hooks/use-notas-sefaz";
-import { linhasHistoricoSefaz, resumoPainel } from "@/lib/notas-sefaz";
+import { linhasHistoricoSefaz, resumoPainel, semToqueDuplo, toastBuscaLigada } from "@/lib/notas-sefaz";
 
 const ABERTURA =
   "Traz para a Entrada de Notas as notas emitidas para a sua empresa, para você ver o que falta lançar e saber se um fornecedor cancelou uma nota. " +
@@ -37,25 +37,28 @@ export function NotasSefazPainel() {
   const [confirmar, setConfirmar] = useState(false);
   const [ocupado, setOcupado] = useState(false);
   const [erroAcao, setErroAcao] = useState<string | null>(null);
+  // toque duplo: o `disabled={ocupado}` só vale depois do re-render; a trava por ref barra o 2º toque na hora (sem 2 "ligada" no histórico)
+  const emCurso = useRef(false);
 
   const guardar = (r: SituacaoBuscaSefaz) => qc.setQueryData<SituacaoBuscaSefaz>(SITUACAO_SEFAZ_KEY, r);
 
-  async function ligar() {
+  const ligar = () => semToqueDuplo(emCurso, async () => {
     setOcupado(true);
     setErroAcao(null);
     try {
-      guardar(await configurarBuscaSefaz(true));
+      const r = await configurarBuscaSefaz(true);
+      guardar(r);
       setConfirmar(false);
-      toast.success("Busca ligada. A primeira busca sai em até 5 minutos.");
+      toast.success(toastBuscaLigada(r, new Date()));
     } catch (e) {
       setConfirmar(false);
       setErroAcao(errMsg(e));
     } finally {
       setOcupado(false);
     }
-  }
+  });
 
-  async function desligar() {
+  const desligar = () => semToqueDuplo(emCurso, async () => {
     setOcupado(true);
     setErroAcao(null);
     try {
@@ -73,7 +76,7 @@ export function NotasSefazPainel() {
     } finally {
       setOcupado(false);
     }
-  }
+  });
 
   const resumo = data ? resumoPainel(data, new Date()) : null;
   const ligadaInfo = data && data.ambiente !== "desligado" ? data : null;
