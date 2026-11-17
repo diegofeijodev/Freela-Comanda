@@ -155,6 +155,14 @@ async function abrir(page, erros, caminho, texto, nome) {
   await ctx.close();
 }
 
+// Diagnóstico de rolagem lateral: elementos que passam da borda direita e NÃO estão dentro de um contêiner com rolagem/corte próprio.
+const quemPassaDaBorda = (page, limite) => page.evaluate((lim) => {
+  const cortado = (el) => { for (let p = el.parentElement; p; p = p.parentElement) { const o = getComputedStyle(p).overflowX; if (o !== 'visible') return true; } return false; };
+  const desc = (el) => `${el.tagName.toLowerCase()}${el.id ? '#' + el.id : ''}.${String(el.className && el.className.baseVal !== undefined ? el.className.baseVal : el.className).slice(0, 70)}@${Math.round(el.getBoundingClientRect().right)}`;
+  return { scroll: document.documentElement.scrollWidth,
+    culpados: [...document.querySelectorAll('body *')].filter((el) => el.getBoundingClientRect().right > lim + 1 && !cortado(el)).slice(0, 6).map(desc) };
+}, limite);
+
 // ---------------- ADMIN: certificado digital (A1) em Configurações, celular 360x800
 {
   const fx = (nome) => fileURLToPath(new URL(`../../api/src/modules/certificado-digital/__tests__/fixtures/${nome}`, import.meta.url));
@@ -162,6 +170,7 @@ async function abrir(page, erros, caminho, texto, nome) {
   await page.goto(`${BASE}/configuracoes`, { waitUntil: 'networkidle', timeout: 180_000 });
   const painel = page.locator('#certificado-digital');
   check('certificado: painel aparece', await painel.getByText('Nenhum certificado guardado').waitFor({ timeout: 60_000 }).then(() => true, () => false));
+  check('certificado: Configurações sem rolagem lateral em 360 ao abrir', (await quemPassaDaBorda(page, 360)).scroll <= 360, JSON.stringify(await quemPassaDaBorda(page, 360)));
   // O CNPJ conferido é o SALVO: grava pelo quadro Empresa + "Salvar" do topo.
   await page.getByPlaceholder('00.000.000/0000-00').fill('12.345.678/0001-95');
   await page.getByRole('button', { name: 'Salvar', exact: true }).first().click();
@@ -190,8 +199,9 @@ async function abrir(page, erros, caminho, texto, nome) {
   check('certificado: mostra o CNPJ', await painel.getByText('CNPJ 12.345.678/0001-95', { exact: true }).isVisible());
   check('certificado: aviso da cadeia', await painel.getByText('não consegui conferir a emissora').isVisible());
   check('certificado: senha não está no HTML', !(await page.content()).includes('senha-de-teste'));
-  check('certificado: sem rolagem lateral em 360', await page.evaluate(() => document.documentElement.scrollWidth <= 360));
-  const caixas = await Promise.all(['Substituir certificado', 'Remover'].map((n) => painel.getByRole('button', { name: n, exact: true }).boundingBox()));
+  const largura = await quemPassaDaBorda(page, 360);
+  check('certificado: sem rolagem lateral em 360', largura.scroll <= 360, JSON.stringify(largura));
+const caixas = await Promise.all(['Substituir certificado', 'Remover'].map((n) => painel.getByRole('button', { name: n, exact: true }).boundingBox()));
   check('certificado: botões de ação empilhados e dentro de 360 px', caixas.every((c) => c && c.x >= 0 && c.x + c.width <= 360) && caixas[1].y > caixas[0].y, JSON.stringify(caixas));
   await painel.getByText('Ver histórico').click();
   check('certificado: histórico mostra "Enviado por"', await painel.locator('details li').first().getByText('Enviado por').isVisible());

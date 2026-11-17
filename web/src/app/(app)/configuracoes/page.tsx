@@ -107,16 +107,16 @@ export default function Config() {
           ))}
         </div>
       </Panel>
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <Panel title="Fornecedores">
-          <div className="mb-3 flex gap-2"><Input placeholder="Nome" value={nf.nome} onChange={(e) => setNf({ ...nf, nome: e.target.value })} /><Input placeholder="Telefone" value={nf.telefone} onChange={(e) => setNf({ ...nf, telefone: e.target.value })} />
+          <div className="mb-3 flex gap-2"><Input className="min-w-0" placeholder="Nome" value={nf.nome} onChange={(e) => setNf({ ...nf, nome: e.target.value })} /><Input className="min-w-0" placeholder="Telefone" value={nf.telefone} onChange={(e) => setNf({ ...nf, telefone: e.target.value })} />
             <Button onClick={async () => { if (!nf.nome) return; try { await criarFornecedor(nf); } catch (error) { toast.error(errMsg(error)); } setNf({ nome: "", telefone: "" }); rF(); }}>Adicionar</Button></div>
           {(forn ?? []).map((x) => <div key={x.id} className="flex justify-between border-t py-1.5 text-sm"><span>{x.nome} <span className="text-muted-foreground">{x.telefone}</span></span><button aria-label="Remover" onClick={async () => { try { await excluirFornecedor(x.id); } catch (error) { toast.error(errMsg(error)); } rF(); }}><Trash2 className="h-4 w-4 text-muted-foreground" /></button></div>)}
           {!forn?.length && <p className="text-sm text-muted-foreground">Nenhum fornecedor ainda.</p>}
         </Panel>
         <Panel title="Subgrupos">
-          <div className="mb-3 flex gap-2"><Input placeholder="Nome" value={ns.nome} onChange={(e) => setNs({ ...ns, nome: e.target.value })} />
-            <select className="h-9 rounded-md border bg-background px-2" value={ns.grupo} onChange={(e) => setNs({ ...ns, grupo: e.target.value })}><option>Insumos</option><option>Produtos de venda</option></select>
+          <div className="mb-3 flex gap-2"><Input className="min-w-0" placeholder="Nome" value={ns.nome} onChange={(e) => setNs({ ...ns, nome: e.target.value })} />
+            <select className="h-9 min-w-0 rounded-md border bg-background px-2" value={ns.grupo} onChange={(e) => setNs({ ...ns, grupo: e.target.value })}><option>Insumos</option><option>Produtos de venda</option></select>
             <Button onClick={async () => { if (!ns.nome) return; try { await criarSubgrupo({ ...ns, ordem: (subs?.length ?? 0) + 1 }); } catch (error) { toast.error(errMsg(error)); } setNs({ nome: "", grupo: "Insumos" }); rSub(); }}>Adicionar</Button></div>
           {(subs ?? []).map((x) => <div key={x.id} className="flex justify-between border-t py-1.5 text-sm"><span>{x.nome} <span className="text-muted-foreground">· {x.grupo}</span></span><button aria-label="Remover" onClick={async () => { try { await excluirSubgrupo(x.id); } catch (error) { toast.error(errMsg(error)); } rSub(); }}
 ><Trash2 className="h-4 w-4 text-muted-foreground" /></button></div>)}
