@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chaveValida, cnpjValido, cpfValido, documentoConfere, normalizarChave, normalizarCnpj, normalizarNumeroSerie } from "../fiscal";
+import { chaveValida, cnpjValido, cpfValido, documentoConfere, gtinValido, mascararCpf, normalizarChave, normalizarCnpj, normalizarNumeroSerie } from "../fiscal";
 
 const VETOR = "35261112ABC34501DE35550010000044111000044116";
 
@@ -50,5 +50,20 @@ describe("cpf e documento", () => {
     expect(documentoConfere("")).toBe(true);
     expect(documentoConfere("12345678909")).toBe(true);
     expect(documentoConfere("123")).toBe(false);
+  });
+});
+
+describe("máscara do CPF e GTIN", () => {
+  it("mascara o CPF", () => {
+    expect(mascararCpf("52998224725")).toBe("***.982.247-**");
+    expect(mascararCpf("529.982.247-25")).toBe("***.982.247-**");
+    expect(mascararCpf("123")).toBe("***.***.***-**");
+  });
+  it("valida o GTIN", () => {
+    expect(gtinValido("7891000315507")).toBe(true);
+    expect(gtinValido("7891000315508")).toBe(false);
+    expect(gtinValido("96385074")).toBe(true);
+    expect(gtinValido("123")).toBe(false);
+    expect(gtinValido("78910003155A7")).toBe(false);
   });
 });
