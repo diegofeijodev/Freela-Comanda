@@ -103,6 +103,8 @@ async function abrir(page, erros, caminho, texto, nome) {
   await page.setInputFiles('input[type=file]', xmlPath);
   await page.getByText('2. Dados da nota').waitFor();
   check('XML lido (fornecedor)', (await page.locator('input[value="FRIGORIFICO SA"]').count()) === 1);
+  check('CNPJ do XML com DV errado avisa', await page.getByText('CNPJ/CPF não confere').isVisible());
+  check('número e série em campos separados', (await page.getByLabel('Número', { exact: true }).inputValue()) === '1234' && (await page.getByLabel('Série', { exact: true }).inputValue()) === '1');
   check('insumo sugerido pelo nome', (await page.getByText('sugestão — confira').count()) === 1);
   // Linha 1 vira insumo novo (nome editado); linha 2 vai a "Cadastrar novo" e volta a "não lançar": não cria nada.
   const linha1 = page.locator('tbody tr', { hasText: 'PICANHA BOVINA KG' }).first();
@@ -172,6 +174,13 @@ const quemPassaDaBorda = (page, limite) => page.evaluate((lim) => {
   check('certificado: painel aparece', await painel.getByText('Nenhum certificado guardado').waitFor({ timeout: 60_000 }).then(() => true, () => false));
   check('certificado: Configurações sem rolagem lateral em 360 ao abrir', (await quemPassaDaBorda(page, 360)).scroll <= 360, JSON.stringify(await quemPassaDaBorda(page, 360)));
   // O CNPJ conferido é o SALVO: grava pelo quadro Empresa + "Salvar" do topo.
+  await page.getByPlaceholder('00.000.000/0000-00').fill('12.abc.345/01de-35');
+  await page.getByRole('button', { name: 'Salvar', exact: true }).first().click();
+  check('CNPJ com letras salvo', await page.getByText('Configurações salvas').first().waitFor({ timeout: 20_000 }).then(() => true, () => false));
+  check('CNPJ com letras volta formatado', await page.waitForFunction(() => document.querySelector('input[placeholder="00.000.000/0000-00"]')?.value === '12.ABC.345/01DE-35', null, { timeout: 20_000 }).then(() => true, () => false));
+  await page.getByPlaceholder('00.000.000/0000-00').fill('12.345.678/0001-94');
+  await page.getByRole('button', { name: 'Salvar', exact: true }).first().click();
+  check('CNPJ inválido recusado com a frase', await page.getByText('CNPJ inválido. Confira os 14 caracteres (pode ter letras).').first().waitFor({ timeout: 20_000 }).then(() => true, () => false));
   await page.getByPlaceholder('00.000.000/0000-00').fill('12.345.678/0001-95');
   await page.getByRole('button', { name: 'Salvar', exact: true }).first().click();
   check('certificado: CNPJ da empresa salvo', await page.getByText('Configurações salvas').first().waitFor({ timeout: 20_000 }).then(() => true, () => false));

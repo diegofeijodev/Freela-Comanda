@@ -19,6 +19,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PlanoContas } from "@/components/plano-contas";
 import { IaChavePanel } from "@/components/ia-chave-panel";
 import { CertificadoPanel } from "@/components/certificado-panel";
+import { formatarCnpj } from "@/lib/certificado";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { CERTIFICADO_QUERY_KEY } from "@/hooks/use-certificado";
 import { useMe } from "@/lib/auth";
@@ -47,7 +48,7 @@ export default function Config() {
   useEffect(() => {
     if (!cfg) return;
     setF(Object.fromEntries(CAMPOS.map(([k]) => [k, num((cfg as unknown as Record<string, number>)[k], 3)])));
-    setEmpresa({ razao_social: cfg.razao_social, nome_fantasia: cfg.nome_fantasia, cnpj: cfg.cnpj, endereco: cfg.endereco });
+    setEmpresa({ razao_social: cfg.razao_social, nome_fantasia: cfg.nome_fantasia, cnpj: formatarCnpj(cfg.cnpj), endereco: cfg.endereco });
     setDia(cfg.dia_inventario); setLojaAbre(cfg.loja_pode_abrir);
   }, [cfg]);
 
@@ -75,7 +76,7 @@ export default function Config() {
         <div className="grid gap-3 sm:grid-cols-2">
           <div><Label className="text-xs text-muted-foreground">Razão social</Label><Input value={empresa.razao_social} onChange={(e) => setEmpresa({ ...empresa, razao_social: e.target.value })} /></div>
           <div><Label className="text-xs text-muted-foreground">Nome fantasia</Label><Input value={empresa.nome_fantasia} onChange={(e) => setEmpresa({ ...empresa, nome_fantasia: e.target.value })} /></div>
-          <div><Label className="text-xs text-muted-foreground">CNPJ</Label><Input inputMode="numeric" placeholder="00.000.000/0000-00" value={empresa.cnpj} onChange={(e) => setEmpresa({ ...empresa, cnpj: e.target.value })} /></div>
+          <div><Label className="text-xs text-muted-foreground">CNPJ</Label><Input autoCapitalize="characters" autoComplete="off" spellCheck={false} className="uppercase" placeholder="00.000.000/0000-00" value={empresa.cnpj} onChange={(e) => setEmpresa({ ...empresa, cnpj: e.target.value.toUpperCase() })} onBlur={() => setEmpresa((x) => ({ ...x, cnpj: formatarCnpj(x.cnpj) }))} /></div>
           <div><Label className="text-xs text-muted-foreground">Endereço completo</Label><Input value={empresa.endereco} onChange={(e) => setEmpresa({ ...empresa, endereco: e.target.value })} /></div>
         </div>
       </Panel>

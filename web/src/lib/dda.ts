@@ -1,4 +1,5 @@
 import { parseNum } from "./format";
+import { normalizarCnpj } from "./fiscal";
 import type { Row } from "./parse";
 
 export type BoletoDDA = { beneficiario: string; cnpj: string | null; vencimento: string; valor: number; linha_digitavel: string | null };
@@ -28,7 +29,7 @@ const acha = (r: Row, ...chaves: string[]) => {
 export function boletosDePlanilha(linhas: Row[]): BoletoDDA[] {
   return linhas.map((r) => ({
     beneficiario: acha(r, "benefici", "cedente", "favorecido", "sacador", "empresa", "nome"),
-    cnpj: acha(r, "cnpj", "cpf").replace(/\D/g, "") || null,
+    cnpj: normalizarCnpj(acha(r, "cnpj", "cpf")) || null,
     vencimento: dataISO(acha(r, "venc")),
     valor: parseNum(acha(r, "valor")) ?? 0,
     linha_digitavel: acha(r, "linha", "código de barras", "codigo de barras", "barras").replace(/\D/g, "") || null,

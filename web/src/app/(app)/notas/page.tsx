@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
-import { Plus, Trash2 } from "lucide-react";
+import { CircleAlert, Plus, Trash2 } from "lucide-react";
 import { lancarNota, lerFotoNota, lerPdfNota, listarItensEstoque, listarSubgrupos, notaExiste, notasRecentes, vinculos } from "@/lib/erp-api";
 import { MAX_FOTOS, pareceImagem, reduzirImagem } from "@/lib/imagem";
 import { PageHeader, Panel, Tag } from "@/components/ui-kit";
@@ -16,6 +16,7 @@ import { A_VISTA, FORMAS, parseNFeXML, sugerirInsumo, type FormaPgto, type NotaL
 
 import { brl, dataBR, isoDate, num, parseNum } from "@/lib/format";
 import { errMsg } from "@/lib/db";
+import { documentoConfere, normalizarCnpj } from "@/lib/fiscal";
 
 
 type NovoInsumo = { nome: string; unidade: string; subgrupo: string };
@@ -141,8 +142,12 @@ export default function Notas() {
           <Panel title="2. Dados da nota">
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <div><Label>Fornecedor</Label><Input value={nota.emitente_nome} onChange={(e) => setNota({ ...nota, emitente_nome: e.target.value })} /></div>
-              <div><Label>CNPJ</Label><Input value={nota.emitente_cnpj ?? ""} onChange={(e) => setNota({ ...nota, emitente_cnpj: e.target.value.replace(/\D/g, "") || null })} /></div>
-              <div><Label>Número / série</Label><Input value={`${nota.numero ?? ""}${nota.serie ? " / " + nota.serie : ""}`} onChange={(e) => setNota({ ...nota, numero: e.target.value.split("/")[0].trim() })} /></div>
+              <div><Label>CNPJ</Label><Input autoCapitalize="characters" autoComplete="off" spellCheck={false} className="uppercase" value={nota.emitente_cnpj ?? ""} onChange={(e) => setNota({ ...nota, emitente_cnpj: normalizarCnpj(e.target.value) || null })} />
+                {!documentoConfere(nota.emitente_cnpj) && <p className="mt-1 flex items-center gap-1 text-xs text-warning"><CircleAlert className="h-3.5 w-3.5 shrink-0" aria-hidden />CNPJ/CPF não confere</p>}</div>
+              <div><Label>Número / série</Label><div className="flex gap-2">
+                <Input aria-label="Número" placeholder="Número" value={nota.numero ?? ""} onChange={(e) => setNota({ ...nota, numero: e.target.value })} />
+                <Input aria-label="Série" placeholder="Série" className="w-20 shrink-0" value={nota.serie ?? ""} onChange={(e) => setNota({ ...nota, serie: e.target.value || null })} />
+              </div></div>
               <div><Label>Emissão</Label><Input type="date" value={nota.data_emissao ?? ""} onChange={(e) => setNota({ ...nota, data_emissao: e.target.value })} /></div>
               <div><Label>Data de entrada</Label><Input type="date" value={entrada} onChange={(e) => setEntrada(e.target.value)} /></div>
               <div><Label>Valor total</Label><Input value={String(nota.valor_total).replace(".", ",")} onChange={(e) => setNota({ ...nota, valor_total: parseNum(e.target.value) ?? 0 })} /></div>
