@@ -11,6 +11,6 @@ import { CertificadoDigitalService } from './certificado-digital.service';
     { provide: CERTIFICADO_DIGITAL, useExisting: CertificadoDigitalService },
     { provide: CADEIA_ICP, useFactory: carregarCadeiaIcp },
   ],
-  exports: [CERTIFICADO_DIGITAL],
+  exports: [CERTIFICADO_DIGITAL, CADEIA_ICP],
 })
 export class CertificadoDigitalModule {}

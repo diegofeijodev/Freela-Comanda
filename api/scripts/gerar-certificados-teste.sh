@@ -1,6 +1,34 @@
 #!/usr/bin/env bash
 # api/scripts/gerar-certificados-teste.sh <pasta>: .pfx de TESTE (ACs falsas, CNPJs fictícios com DV válido)
+# api/scripts/gerar-certificados-teste.sh --tls <pasta>: só os PEM do servidor HTTPS LOCAL do teste do transporte da SEFAZ
+#   (ac-teste assina servidor e cliente; ac-estranha assina servidor-estranho, que fica fora da confiança). Tudo fictício.
 set -euo pipefail
+if [ "${1:-}" = "--tls" ]; then
+  mkdir -p "${2:?pasta de saída}"; OUT=$(cd "$2" && pwd)
+  cd "$(mktemp -d)"
+  k() { openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$1.key" 2>/dev/null; }
+  ac() {
+    k "$1"; openssl req -new -x509 -key "$1.key" -out "$1.pem" -days 7300 -subj "$2" \
+      -addext "basicConstraints=critical,CA:TRUE" -addext "keyUsage=critical,keyCertSign,cRLSign"
+  }
+  # folha <nome> <CN> <EKU> <emissor> [SAN]
+  folha() {
+    k "$1"; openssl req -new -key "$1.key" -out "$1.csr" -subj "/C=BR/O=TESTE NAO CONFIAVEL/CN=$2"
+    printf 'basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=%s\n%s' \
+      "$3" "${5:+subjectAltName=$5}" > "$1.ext"
+    openssl x509 -req -in "$1.csr" -CA "$4.pem" -CAkey "$4.key" -CAcreateserial -days 7300 -sha256 -extfile "$1.ext" \
+      -out "$1.pem" 2>/dev/null
+  }
+  SAN_LOCAL=IP:127.0.0.1,DNS:localhost
+  ac ac-teste "/C=BR/O=TESTE NAO CONFIAVEL/CN=AC de Teste do Transporte"
+  ac ac-estranha "/C=BR/O=TESTE NAO CONFIAVEL/CN=AC Estranha de Teste"
+  folha servidor localhost serverAuth ac-teste "$SAN_LOCAL"
+  folha cliente cliente-teste clientAuth ac-teste
+  folha servidor-estranho localhost serverAuth ac-estranha "$SAN_LOCAL"
+  cp ac-teste.pem servidor.pem servidor.key cliente.pem cliente.key ac-estranha.pem servidor-estranho.pem servidor-estranho.key "$OUT/"
+  ls "$OUT"
+  exit 0
+fi
 mkdir -p "${1:?pasta de saída}"; OUT=$(cd "$1" && pwd)
 cd "$(mktemp -d)"; mkdir db; : > db/index.txt; echo 1000 > db/serial
 P=pass:senha-de-teste; A1=2.16.76.1.2.1.999; CNPJ_SAN='otherName:2.16.76.1.3.3;OCTETSTRING:'

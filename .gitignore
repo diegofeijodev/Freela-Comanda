@@ -11,3 +11,4 @@ uploads/
 *.pfx
 *.p12
 !api/src/modules/certificado-digital/__tests__/fixtures/*
+!api/src/modules/sefaz/__tests__/fixtures/tls/*
