@@ -37,7 +37,7 @@ export const FRASE_RESPOSTA = {
     'As respostas pararam: a SEFAZ respondeu 3 vezes de um jeito que o sistema não entende. Fale com o suporte do Freela Comanda.',
   outroCodigo: (n: number) =>
     `As respostas pararam por um problema que o sistema não resolve sozinho (código ${n}). Fale com o suporte do Freela Comanda e informe este código.`,
-  // Nenhum evento do lote pôde ser assinado (nada saiu). Frases da T6 (correção 1), fora da tabela da UX §8: revisar com a UX.
+  // Nenhum evento do lote pôde ser assinado (nada saiu). Frases da T6 (correção 1); já constam na UX §8.
   assinaturaCertificado:
     'As respostas pararam: não foi possível assinar as respostas com o certificado digital. Confira o certificado digital em Configurações e ligue as respostas de novo.',
   assinaturaConfiguracao: 'As respostas pararam: não foi possível montar as respostas à SEFAZ. Fale com o suporte do Freela Comanda.',
