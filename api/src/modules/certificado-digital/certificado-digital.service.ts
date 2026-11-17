@@ -5,7 +5,7 @@ import type { Prisma } from '@prisma/client';
 import { cifrar, decifrar } from '../../common/cripto/cripto';
 import { PrismaService } from '../../common/database/prisma.service';
 import { CADEIA_ICP, type CadeiaIcp } from './cadeia';
-import { compararCnpj } from './cnpj';
+import { compararCnpj } from '../../common/fiscal/cnpj';
 import { conferirCertificado } from './conferencia';
 import { CertificadoErro, type CertificadoDigitalPort, type CertificadoEmUso, MSG_USO } from './certificado-digital.port';
 import { CertificadoRecusado, MSG_CERTIFICADO, msgOutroCnpj } from './mensagens';

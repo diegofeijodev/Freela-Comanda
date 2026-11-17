@@ -1,6 +1,6 @@
 import type { KeyObject, X509Certificate } from 'node:crypto';
 import { caminhoDoPfx, type CadeiaIcp, impressaoDigital, montarCadeia } from './cadeia';
-import { compararCnpj, escolherCnpj, titularDoCn } from './cnpj';
+import { compararCnpj, escolherCnpj, titularDoCn } from '../../common/fiscal/cnpj';
 import {
   CertificadoRecusado,
   MSG_CERTIFICADO,

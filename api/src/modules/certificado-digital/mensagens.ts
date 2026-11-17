@@ -1,5 +1,5 @@
 import { dataBrSp } from '../../common/time/dates';
-import { formatarCnpj, normalizarCnpj } from './cnpj';
+import { formatarCnpj, normalizarCnpj } from '../../common/fiscal/cnpj';
 
 /** Os `code` 400 do cadastro de certificado (frases do plano/UX §6; o 503 de segredo ausente fica no serviço). */
 export type CodigoRecusa =
