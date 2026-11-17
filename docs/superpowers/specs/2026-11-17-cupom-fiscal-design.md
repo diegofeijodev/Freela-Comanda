@@ -147,7 +147,8 @@ Pode cancelar até 14:34                         [Imprimir] [Ver XML] [Cancelar]
 **Aba Produtos:**
 
 - Grade dos itens ativos do cardápio, com NCM, CEST, GTIN, origem e perfil.
-- Etiquetas: "falta NCM", "falta perfil" e "sem preço de venda".
+- Etiquetas: "falta NCM", "falta perfil", "sem preço de venda" e "perfil não vale no regime atual".
+- Os perfis fiscais são editados aqui, no topo da aba; Configurações fica só com a empresa, a numeração e o caixa de hoje (UX 5.6 e 10.18).
 
 ### 2.2 O que fica para a fase "trocar o caixa"
 
@@ -321,6 +322,7 @@ Nesses casos, a venda chega duas vezes: pela importação e pelo cupom. Não dá
 1. **`cupom_lanca_venda` sem valor de fábrica** (nulo = não respondido).
    - Ligar a emissão em produção exige responder: "As vendas emitidas aqui também ficam registradas no outro sistema? — **Não**: lançar no estoque pelo cupom / **Sim**: não lançar (a importação já conta)".
    - Grava quem respondeu e quando. É a pergunta 1 (§9.2).
+   - Cada cupom fotografa a resposta na T1 (`nfce_cupons.lanca_venda`). Mudar a resposta depois não mexe nos cupons já emitidos.
 2. **Aviso na importação.** Ao ler um arquivo de vendas, a tela chama `GET /v1/cupom-fiscal/vendas-no-periodo?ini=&fim=`. Se houver cupons lançados no período, mostra:
    - "Neste período o Comanda já lançou N cupons (R$ X). Se essas vendas também estão neste arquivo, vão contar duas vezes no estoque."
    - O aviso não bloqueia.
@@ -460,8 +462,9 @@ O 656 pode parar também o caixa da loja por até 1 hora (B.6). Todas as regras 
 **"Enviar de novo":**
 
 - remonta o XML com `dhEmi` novo (sem 704), o mesmo número e o mesmo `cNF`; a chave só muda se o mês virou;
-- relê do cadastro só os códigos fiscais;
-- mantém itens, quantidades, preços e pagamentos.
+- relê do cadastro os códigos fiscais dos produtos **e os dados do emitente** (IE, CRT, endereço, natureza, texto adicional, responsável técnico; UX 10.14);
+- mantém itens, quantidades, preços, pagamentos e consumidor;
+- se o CNPJ da empresa mudou, recusa com `NFCE_SITUACAO`, porque a emissão desliga com a troca de CNPJ (§7.1).
 
 **Imutável:** com o cupom em `autorizado`, `denegado` ou `cancelado`, um gatilho no banco recusa mudança nas colunas fiscais, nos itens e nos pagamentos.
 
@@ -494,10 +497,17 @@ Valores do XML (detalhe em B.3):
 3. Calcula o QR e insere `<infNFeSupl>` logo antes de `<Signature`.
    - O QR v2 on-line não depende da assinatura; o off-line da fase 2 usa o `digVal` dela, por isso a ordem é assinar antes.
    - A assinatura cobre só o `infNFe`, então o `infNFeSupl` fora dela não a quebra.
-   - **Premissa sobre a função fixa:** ela devolve a `Signature` como irmã do elemento assinado, no fim do pai, como o MOC pede. Se a entrega 3 não fizer assim, isso vira uma pergunta para a entrega 3; esta interface não muda.
+   - **Conferido no código** (`api/src/modules/sefaz/assinatura-xml.ts`, commits b5ac622 e 98656b1): a função põe a `Signature` logo depois do `</infNFe>`. Ela também recusa U+0085, U+2028 e U+2029 literais.
+     - Por isso todo texto livre que entra no XML passa por `textoFiscal()` antes de assinar: nome e descrição do produto, natureza, `infCpl`, dados do emitente e do responsável técnico, documento do consumidor.
+     - `textoFiscal()` troca esses três caracteres por espaço, tira os de controle, junta espaços e apara as pontas.
 4. Embrulha em `<enviNFe versao="4.00"><idLote>…</idLote><indSinc>1</indSinc><NFe…/></enviNFe>`.
    - `idLote` = sequência do banco, até 15 dígitos.
    - Antes de enviar, confere o teto de 500 KB (rejeição 214).
+   - **Envelope sem prefixo**: a chamada usa `ChamadaSoap12.envelope: 'sem_prefixo'` (`envelopeSoap12SemPrefixo`, `<Envelope xmlns="…soap-envelope"><Body>`), como os eventos da entrega 3.
+     - Com o envelope da distribuição (`xmlns:soap12`, `xmlns:xsi`, `xmlns:xsd` no `Envelope`), a C14N inclusiva leva esses namespaces para o elemento assinado.
+     - O resultado: o `xml-crypto` recusa a assinatura no corpo real (provado na entrega 3, commit cec0d6b).
+     - Vale para a autorização e para o cancelamento.
+     - Um teste confere a assinatura do `infNFe` (e a do `infEvento`) com o `xml-crypto`, no **envelope inteiro** que o transporte envia.
 5. Ao autorizar, guarda o `nfeProc` (a `NFe` enviada, byte a byte, mais o `protNFe` como veio) em `nfce_cupons.xml_autorizado`. É o XML de guarda.
 
 **Validação antes de enviar.** O `api/package.json` não tem validador de XSD, e não entra dependência nova em produção. *minha*
@@ -837,7 +847,10 @@ Entra já na fase 1, porque o 1º cupom real de produção tem de chegar ao cont
   - `situacao CHECK IN ('enviando','nao_enviado','sem_resposta','nao_consta','rejeitado','autorizado','cancelando','denegado','cancelado','descartado')`;
   - `numero_reaproveitavel boolean NOT NULL DEFAULT true`: falso no 539;
   - `envios smallint NOT NULL DEFAULT 0 CHECK ≤ 3`;
-- **idempotência:** `chave_idempotencia uuid NOT NULL UNIQUE`;
+- **idempotência:**
+  - `chave_idempotencia uuid NOT NULL UNIQUE`;
+  - `pedido_hash char(64)`: SHA-256 do corpo normalizado (itens na ordem enviada, desconto, pagamentos, documento). A mesma chave com outro hash = 409 `NFCE_CHAVE_REUSADA` (UX 10.2);
+- **venda fotografada:** `lanca_venda boolean NOT NULL` (o `cupom_lanca_venda` da T1; em homologação, sempre falso);
 - **consumidor:** `consumidor_doc varchar(14)` (CPF ou CNPJ, pode ter letras);
 - **valores:** `valor_produtos`, `valor_desconto`, `valor_total`, `valor_troco`, com CHECK ≥ 0 e `valor_total = valor_produtos − valor_desconto`;
 - **autorização:** `autorizada_em` (`dhRecbto`), `n_prot varchar(17)`, `c_stat`, `x_motivo`, `alerta_c_msg`, `alerta_x_msg`, `dig_val`, `xml_autorizado text` (o `nfeProc`);
@@ -897,15 +910,34 @@ Entra já na fase 1, porque o 1º cupom real de produção tem de chegar ao cont
 
 **Leitura e cadastro** (funcionam com o servidor `desligado`):
 
-- `GET /v1/cupom-fiscal/situacao` → `{ ambiente, emissao_ligada, situacao, mensagem, bloqueado_ate, serie, proximo_numero, falta: string[], certificado: { ok, mensagem }, pendentes }`.
+- `GET /v1/cupom-fiscal/situacao` → `{ ambiente, agora, emissao_ligada, situacao, mensagem, bloqueado_ate, serie, proximo_numero, falta, certificado: { ok, mensagem }, pendentes }`.
+  - `falta`: `{ codigo, texto }[]`, com `codigo` em `ie`, `crt`, `endereco`, `serie`, `csc`, `certificado`, `cnpj`, `produto_pronto`, `teste_homologacao`, `lanca_venda`, `series_outro_sistema` (UX 10.5).
+  - `pendentes`: `{ total, primeiro: { id, serie, numero, tipo } | null }`, com `tipo` em `sem_resposta` (inclui `enviando` vencido e `cancelando`), `nao_saiu` (`nao_enviado`, `nao_consta`), `recusado` e `venda_pendente` (UX 10.7).
 - `GET | PUT /v1/cupom-fiscal/emitente`.
-- `GET | PUT /v1/cupom-fiscal/ambientes/:ambiente`: `serie`, `proximo_numero`, `id_csc` e `csc?` (só escrita; a resposta traz `csc_dica`).
-- `GET | POST /v1/cupom-fiscal/perfis` e `PATCH /v1/cupom-fiscal/perfis/:id`.
-- `GET /v1/cupom-fiscal/produtos`, `PUT /v1/cupom-fiscal/produtos/:itemCardapioId` e `POST /v1/cupom-fiscal/produtos/importar` (fatia opcional).
+- `GET | PUT /v1/cupom-fiscal/ambientes/:ambiente`:
+  - campos `serie`, `proximo_numero`, `id_csc` e `csc?` (só escrita; a resposta traz `csc_dica`);
+  - o GET traz `historico`, as 5 últimas linhas de `nfce_ambientes_historico` (`evento`, `campos`, `mensagem`, `feito_por_nome`, `feito_em`; UX 10.11).
+- `GET | POST /v1/cupom-fiscal/perfis` e `PATCH /v1/cupom-fiscal/perfis/:id`. A tela fica na aba Produtos do Cupom Fiscal (UX 10.18).
+- `GET /v1/cupom-fiscal/produtos?prontos=true|false` (UX 10.17): é a mesma rota para a grade e para a busca da aba Emitir.
+  - Cada linha: `{ item_cardapio_id, nome, categoria, preco_venda, ativo, ncm, cest, gtin, origem, descricao_cupom, unidade, perfil_fiscal_id, perfil_nome, pronto, motivos }`.
+  - `motivos` ⊂ `falta_ncm`, `falta_perfil`, `sem_preco`, `inativo`, `perfil_inativo`, `perfil_fora_do_regime`.
+  - "Pronto" exige perfil compatível com o CRT atual (UX 10.12).
+- `PUT /v1/cupom-fiscal/produtos/perfil` com `{ itens: uuid[] (1–500), perfil_fiscal_id }`: numa transação só, antes da rota `:itemCardapioId` (UX 10.10).
+- `PUT /v1/cupom-fiscal/produtos/:itemCardapioId` e `POST /v1/cupom-fiscal/produtos/importar` (fatia opcional).
 - `GET /v1/cupom-fiscal/vendas-no-periodo?ini=&fim=`.
 - `GET /v1/cupom-fiscal/xml-do-mes?mes=&ambiente=`.
-- `GET /v1/cupom-fiscal/cupons?ini=&fim=&situacao=&limite=` (padrão 100, máximo 500).
-- `GET /v1/cupom-fiscal/cupons/:id`: com o resumo dos envios, sem XML.
+- `GET /v1/cupom-fiscal/cupons?ambiente=&ini=&fim=&situacao=a,b&atencao=true&chave_idempotencia=&limite=` (UX 10.6 e 10.2b):
+  - `ambiente` tem como padrão o do servidor (com o servidor desligado, `producao`);
+  - `atencao=true` = situações pendentes + venda pendente no estoque;
+  - `chave_idempotencia` só lê, nunca emite: devolve `[]` ou o cupom;
+  - limite padrão 100, máximo 500;
+  - nas linhas, o CPF vem mascarado (`***.456.789-**`) e o CNPJ inteiro, que é de empresa (UX 10.15).
+- `GET /v1/cupom-fiscal/cupons/:id`: o cupom com o resumo dos envios, sem XML, mais os campos calculados no servidor (UX 10.3, 10.4, 10.8):
+  - `agora`, `consultar_a_partir_de`, `cancelar_ate`, `envios`;
+  - `acoes` ⊂ `enviar_de_novo`, `consultar`, `cancelar`, `descartar`, `lancar_venda`, `imprimir`;
+  - `recusa: { codigo, familia, frase } | null`, com `familia` em `produto`, `empresa`, `consumidor`, `valores`, `hora` ou `outra`;
+  - `venda_estoque`: `lancada`, `pendente`, `desfeita`, `desfazer_pendente`, `teste` ou `nao_lanca` (nulo fora de `autorizado`, `cancelando` e `cancelado`).
+  - O POST de emissão devolve o mesmo formato.
 - `GET /v1/cupom-fiscal/cupons/:id/danfe`.
 - `GET /v1/cupom-fiscal/cupons/:id/xml?tipo=nota|cancelamento`: `text/xml`, com o cabeçalho posto por `res.header` depois das checagens, nunca `@Header` (regra do CLAUDE.md).
 
@@ -914,9 +946,10 @@ Entra já na fase 1, porque o 1º cupom real de produção tem de chegar ao cont
 - `PUT /v1/cupom-fiscal/ambientes/:ambiente/emissao` com `{ ligada, confirmado? }`; só para o ambiente do servidor.
 - `POST /v1/cupom-fiscal/testar-conexao`.
 - `POST /v1/cupom-fiscal/cupons`:
-  - corpo `{ chave_idempotencia, itens: [{ item_cardapio_id, quantidade }], desconto?, pagamentos: [{ t_pag, valor }], consumidor_doc? }`;
+  - corpo `{ chave_idempotencia, itens: [{ item_cardapio_id, quantidade }], desconto?, pagamentos: [{ t_pag, valor }], consumidor_doc?, total_esperado }`. Os valores são em centavos (inteiros);
+  - `total_esperado` diferente do total que o servidor calcula = 409 `NFCE_TOTAL_MUDOU`, antes da T1 e sem reservar número (UX 10.1);
   - responde 201 com o cupom em qualquer situação final desta tentativa: autorizado, rejeitado, sem resposta etc.;
-  - a mesma chave responde 200 com o mesmo cupom, sem novo envio;
+  - a mesma chave com o mesmo corpo responde 200 com o mesmo cupom, sem novo envio; com outro corpo, 409 `NFCE_CHAVE_REUSADA`;
   - os erros HTTP (§8.4) são só da validação antes de enviar.
 - `POST /v1/cupom-fiscal/cupons/:id/consultar`, `…/reenviar`, `…/descartar` com `{ motivo }` e `…/cancelar` com `{ motivo }`.
 - `POST /v1/cupom-fiscal/cupons/:id/lancar-venda`: refaz a T3 (lançar ou desfazer a venda, conforme a situação). Não fala com a SEFAZ, então funciona também com o servidor desligado.
@@ -948,7 +981,7 @@ export interface SefazNfcePort {
 **Adaptador** `modules/sefaz/nfce.adapter.ts`:
 
 - conhece as URLs de SP, as actions e o `nfeDadosMsg`;
-- chama `chamarSoap12` com 20 s de prazo e teto de resposta de 2 MB (*minha*: as respostas da NFC-e são pequenas);
+- chama `chamarSoap12` com `envelope: 'sem_prefixo'` (§5.2), 20 s de prazo e teto de resposta de 2 MB (*minha*: as respostas da NFC-e são pequenas);
 - lê as respostas com `xml-leitura.ts`;
 - lança `SefazErro` como hoje: o `enviado` decide entre número livre e número preso;
 - tem uma porta falsa para os testes.
@@ -1006,7 +1039,9 @@ Formato `{ error: { code, message } }`, com a frase pt-BR em `message`.
 | `NFCE_CONSULTA_CEDO` | 409 | "Espere até HH:MM para consultar (a SEFAZ bloqueia consultas repetidas)." |
 | `NFCE_LIMITE_ENVIOS` | 409 | "Este cupom já foi enviado 3 vezes. Descarte e emita outro." |
 | `NFCE_CANCELAMENTO_FORA_DO_PRAZO` | 409 | "Passaram 30 minutos da autorização (às HH:MM). A SEFAZ não aceita mais o cancelamento deste cupom; fale com o contador." |
-| `NFCE_MOTIVO` | 400 | "Escreva o motivo com 15 a 255 caracteres." (no descarte: "Escreva o motivo do descarte.") |
+| `NFCE_MOTIVO` | 400 | Cancelamento: "Escreva o motivo com 15 a 255 caracteres, sem emoji." (regra `normalizarJustificativa` das notas: U+0020–U+00FF, aspas e travessões trocados; UX 10.13). Descarte: "Escreva o motivo do descarte (3 a 255 letras)." (UX 10.16) |
+| `NFCE_TOTAL_MUDOU` | 409 | "O preço de <produto> mudou para R$ X. O total agora é R$ Y: confira antes de emitir." (vários = o 1º + "e mais N"; os preços novos a tela relê em `GET /produtos`) |
+| `NFCE_CHAVE_REUSADA` | 409 | "Esta venda já foi enviada com outros dados. Abra o cupom emitido ou comece uma venda nova." |
 | `NFCE_SERIE_INVALIDA` | 422 | "A série vai de 0 a 889 e não pode ser uma das séries do outro sistema." |
 | `NFCE_SERIE_COM_PENDENTES` | 409 | "Há cupons pendentes nesta série. Resolva-os antes de trocar a série." |
 | `NFCE_NUMERO_INVALIDO` | 422 | "O próximo número tem de ser maior que N, o último já usado na série S." |
@@ -1158,7 +1193,10 @@ Formato `{ error: { code, message } }`, com a frase pt-BR em `message`.
   - números sempre como texto;
   - texto 373 só em homologação;
   - `xmllint` opcional contra o 010h.
-- **Assinatura sobre a `NFe`:** verificada pelo oráculo da entrega 3; o `infNFeSupl` inserido depois não a quebra.
+- **Assinatura sobre a `NFe`:**
+  - verificada pelo oráculo da entrega 3 (`xml-crypto` 6.4.0) no envelope inteiro com `sem_prefixo`;
+  - o `infNFeSupl` inserido depois não a quebra;
+  - texto com U+2028 no nome do produto sai como espaço, e a assinatura passa.
 - **QR v2:**
   - vetor do Manual DANFE v6.0 (§4.3, exemplo das p. 26–27);
   - IdCSC sem zeros à esquerda;
@@ -1203,6 +1241,32 @@ Formato `{ error: { code, message } }`, com a frase pt-BR em `message`.
 
 - Emitir, Emitidos e Produtos em 390 px e no desktop;
 - prévia de impressão do DANFE em 80 mm (captura).
+
+## 11. Respostas aos pontos da UX (§10 de `2026-11-17-cupom-fiscal-ux.md`, 17/11/2026)
+
+Regra da conciliação: em conflito, vale o desenho técnico, salvo quando a UX aponta um risco real para quem usa. As mudanças já estão nas seções citadas.
+
+| Ponto | Decisão | Onde |
+|---|---|---|
+| 10.1 `total_esperado` | **Aceito.** É risco real: troco errado sem aviso. **Recusado** só o corpo do 409 trazer os preços novos: o filtro manda só `{ code, message }` (a mesma decisão da nota repetida). A frase diz o produto e o preço; a tela relê `GET /produtos`. | §8.2, §8.4 |
+| 10.2a mesma chave com outro corpo | **Aceito:** `pedido_hash` + 409 `NFCE_CHAVE_REUSADA`. | §8.1, §8.2 |
+| 10.2b ler pela chave sem emitir | **Aceito:** filtro `chave_idempotencia` em `GET /cupons`. Só lê o nosso banco e funciona com o servidor desligado. | §8.2 |
+| 10.3 horas e ações pelo servidor | **Aceito:** `agora`, `consultar_a_partir_de`, `cancelar_ate`, `envios` e `acoes`, saídos de uma função pura (`acoesDoCupom`). | §8.2 |
+| 10.4 família da recusa | **Aceito**, por código, em `retornos.ts`. Lista fixa agora, só com os códigos da pesquisa; código fora dela = `outra`, e o 1º teste completa a lista:<br>• `produto`: 386, 725<br>• `valores`: 391, 436, 610, 629, 780, 857, 869, 899, 963<br>• `consumidor`: 786, 787, 788<br>• `hora`: 704<br>• `empresa`: nenhum código confirmado ainda | §5.3, §8.2 |
+| 10.5 `falta` com código | **Aceito**, com os 11 códigos da UX. | §8.2 |
+| 10.6 filtro de ambiente e "precisa de você" | **Aceito**; o padrão é o ambiente do servidor. | §8.2 |
+| 10.7 forma de `pendentes` | **Aceito.** `cancelando` conta como `sem_resposta`. | §8.2 |
+| 10.8 `venda_estoque` | **Aceito.** Para isso, o cupom passa a fotografar `lanca_venda` na T1. | §3.4, §8.1, §8.2 |
+| 10.9 `tpImp` vindo da tela | **Pergunta ao dono e ao contador** (UX 9.1). Até a resposta, `tpImp` 4, e o POST recusa o campo `entrega` (`forbidNonWhitelisted`). | §5.6 |
+| 10.10 perfil em lote | **Aceito:** `PUT /produtos/perfil`, até 500 itens, numa transação. | §8.2 |
+| 10.11 histórico do ambiente | **Aceito:** as 5 últimas linhas no `GET /ambientes/:ambiente`. | §8.2 |
+| 10.12 "pronto" olha o regime | **Aceito:** `perfil_fora_do_regime` tira o produto do cupom. | §8.2 |
+| 10.13 caracteres do motivo | **Aceito:** a mesma `normalizarJustificativa` das notas, importada de `modules/sefaz/eventos-xml.ts` (o web usa a cópia de `web/src/lib/notas-sefaz.ts`). | §8.4 |
+| 10.14 reenvio relê o emitente | **Aceito.** É risco real: uma recusa por IE ou endereço não teria conserto sem descartar. | §5.1 |
+| 10.15 CPF mascarado na lista | **Aceito** para CPF. O CNPJ vai inteiro, por ser de empresa. | §8.2 |
+| 10.16 motivo do descarte | **Aceito:** 3 a 255 caracteres. | §8.4 |
+| 10.17 `GET /produtos` para Emitir | **Aceito:** a mesma rota, com `?prontos=true`. | §8.2 |
+| 10.18 onde se editam os perfis | **Aceito:** na aba Produtos; as rotas não mudam. | §2.1 |
 
 ## Fora do escopo
 

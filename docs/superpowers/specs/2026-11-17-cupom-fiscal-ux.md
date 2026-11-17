@@ -1094,32 +1094,50 @@ O `browser-check.sh` força `NFCE_AMBIENTE` vazia. Por isso este roteiro só vê
    - A tela mostra o preço lido ao abrir, e o servidor lê de novo no envio (§3.1).
    - Se o preço subiu e o dinheiro cobre a diferença, o cupom sai autorizado com outro total e outro troco do que o caixa entregou. Só a falta de pagamento vira erro (`NFCE_PAGAMENTO_INSUFICIENTE`).
    - Pedido: o POST levar `total_esperado` (centavos). Se for diferente, 409 `NFCE_TOTAL_MUDOU` com os preços novos, antes da T1 (sem reservar número).
+   - **Resposta do desenho (17/11):** Aceito: o POST leva `total_esperado` (centavos); diferente = 409 `NFCE_TOTAL_MUDOU` antes da T1, sem reservar número. Recusado só o corpo do 409 trazer os preços: o filtro manda só `{ code, message }`, a frase diz o produto e o preço novo, e a tela relê `GET /produtos` (desenho §8.2, §8.4, §11).
 2. **Idempotência:**
    - (a) A mesma `chave_idempotencia` com outro corpo devolve o cupom antigo calado (§4.2): pedir a comparação de um resumo do corpo e 409 `NFCE_CHAVE_REUSADA` se diferir.
    - (b) Para "não sei se saiu" (2.7), uma leitura pela chave que **não** emite, por exemplo `GET /v1/cupom-fiscal/cupons?chave_idempotencia=`. Hoje a única forma de saber é reenviar, e isso emite se o 1º não chegou.
+   - **Resposta do desenho (17/11):** Aceito as duas: (a) `pedido_hash` do corpo, e a mesma chave com outro corpo = 409 `NFCE_CHAVE_REUSADA`; (b) `GET /v1/cupom-fiscal/cupons?chave_idempotencia=` só lê o nosso banco, devolve `[]` ou o cupom, e funciona com o servidor desligado (desenho §8.1, §8.2).
 3. **Horas e ações calculadas pelo servidor.** O `GET /cupons/:id` (e o retorno do POST) devem trazer:
    - `consultar_a_partir_de`, `cancelar_ate` e `acoes: string[]` (o que pode agora: enviar de novo, consultar, cancelar, descartar, lançar venda);
    - `envios`, para a "Tentativa 2 de 3";
    - `agora` (hora do servidor), para a contagem não depender do relógio do celular.
    - Sem isso a tela repete as regras da §4.4 e da §5.4 e erra quando o relógio do aparelho está adiantado.
+   - **Resposta do desenho (17/11):** Aceito: `GET /cupons/:id` e o POST trazem `agora`, `consultar_a_partir_de`, `cancelar_ate`, `envios` e `acoes` (`enviar_de_novo`, `consultar`, `cancelar`, `descartar`, `lancar_venda`, `imprimir`), da função pura `acoesDoCupom` (desenho §8.2).
 4. **Família da recusa no servidor.** `frases.ts` deveria devolver, junto da frase, `familia: 'produto' | 'empresa' | 'consumidor' | 'valores' | 'hora' | 'outra'` (por código). É ela que escolhe a ação na tela (6.1). Classificar pelo texto do `xMotivo` na tela é frágil.
+   - **Resposta do desenho (17/11):** Aceito: `recusa: { codigo, familia, frase }`, com família por código em `retornos.ts`. Lista só com os códigos da pesquisa: `produto` 386 e 725; `valores` 391, 436, 610, 629, 780, 857, 869, 899 e 963; `consumidor` 786–788; `hora` 704; `empresa` ainda sem código confirmado (o 1º teste completa); fora da lista = `outra` (desenho §11).
 5. **`falta: string[]` sem âncora.** Pedir `{ codigo, texto }[]` (`ie`, `crt`, `endereco`, `serie`, `csc`, `certificado`, `cnpj`, `produto_pronto`, `teste_homologacao`, `lanca_venda`, `series_outro_sistema`), para cada item levar ao campo certo (5.1).
+   - **Resposta do desenho (17/11):** Aceito: `falta: { codigo, texto }[]` com os 11 códigos listados (desenho §8.2).
 6. **`GET /cupons` sem filtro de ambiente nem de "precisa de você".**
    - Sem `ambiente`, os cupons de teste e os valendo se misturam em Emitidos e nos pendentes.
    - Pedir `ambiente` (padrão: o do servidor), `situacao` com lista e `atencao=true` (as situações pendentes + venda pendente no estoque, que não é situação).
+   - **Resposta do desenho (17/11):** Aceito: `ambiente` (padrão: o do servidor; desligado = `producao`), `situacao=a,b` e `atencao=true` (pendentes + venda pendente) (desenho §8.2).
 7. **`pendentes` da `/situacao` sem forma definida.** Para a faixa (4.2), pedir `{ total, primeiro: { id, numero, tipo } }`, sendo `tipo` sem resposta, não saiu, recusado ou venda pendente.
+   - **Resposta do desenho (17/11):** Aceito: `{ total, primeiro: { id, serie, numero, tipo } | null }`; `tipo` = `sem_resposta` (inclui `enviando` vencido e `cancelando`), `nao_saiu`, `recusado` ou `venda_pendente` (desenho §8.2).
 8. **Venda no estoque calculada.** Pedir um campo `venda_estoque: 'lancada' | 'pendente' | 'desfeita' | 'desfazer_pendente' | 'teste' | 'nao_lanca'` no cupom. Hoje a tela teria de combinar `venda_lancada_em`, `venda_desfeita_em`, `venda_erro`, o ambiente e `cupom_lanca_venda` (3.2).
+   - **Resposta do desenho (17/11):** Aceito: `venda_estoque` calculado no servidor; para isso o cupom fotografa `lanca_venda` na T1, e mudar a resposta depois não mexe em cupons antigos (desenho §3.4, §8.1).
 9. **`tpImp` fixo em 4 e quem usa está no celular sem impressora.** Ver a decisão 9.1: se a entrega só digital for aceita, o `tpImp` passa a vir da tela no POST (campo novo `entrega: 'impresso' | 'digital'`).
+   - **Resposta do desenho (17/11):** Pergunta ao dono e ao contador (decisão 9.1). Até a resposta, `tpImp` 4, e o POST recusa um campo `entrega` (DTO com `forbidNonWhitelisted`).
 10. **Perfil em vários produtos de uma vez.** São cerca de 100 produtos para 3 a 5 perfis. Pedir `PUT /v1/cupom-fiscal/produtos/perfil` com `{ itens: uuid[], perfil_fiscal_id }`, numa transação. Sem ela, a tela faria 100 chamadas (e esbarraria no limite de pedidos).
+    - **Resposta do desenho (17/11):** Aceito: `PUT /v1/cupom-fiscal/produtos/perfil` `{ itens: uuid[] (1–500), perfil_fiscal_id }`, numa transação, declarada antes da rota `:itemCardapioId` (desenho §8.2).
 11. **Histórico do ambiente sem rota.** O `nfce_ambientes_historico` existe, mas nenhuma rota o lê. Pedir as 5 últimas linhas em `GET /situacao` ou em `GET /ambientes/:ambiente` (`evento`, `campos`, `mensagem`, `feito_por_nome`, `feito_em`), como no certificado.
+    - **Resposta do desenho (17/11):** Aceito: `GET /ambientes/:ambiente` traz `historico` com as 5 últimas linhas (desenho §8.2).
 12. **"Pronto para o cupom" não olha o regime.**
     - O derivado é ativo + preço + NCM + perfil ativo (§8.1). Um perfil com CSOSN depois que o regime vira normal (ou o contrário) conta como pronto e só falha no envio (`NFCE_PERFIL_INVALIDO`).
     - Pedir que o perfil incompatível com o CRT conte como "perfil não vale no regime atual" e tire o produto do cupom.
+    - **Resposta do desenho (17/11):** Aceito: perfil incompatível com o CRT atual = motivo `perfil_fora_do_regime`, e o produto sai do cupom (desenho §8.2).
 13. **Caracteres aceitos no motivo do cancelamento** (`xJust`). O desenho só fixa 15 a 255. Definir o conjunto aceito (sem emoji nem caracteres de controle) igual no servidor e na tela, como na resposta à SEFAZ das notas.
+    - **Resposta do desenho (17/11):** Aceito: a mesma `normalizarJustificativa` das respostas à SEFAZ (U+0020–U+00FF, 15–255, aspas e travessões trocados); a tela usa a cópia de `web/src/lib/notas-sefaz.ts` (desenho §8.4).
 14. **"Enviar de novo" relê os dados da empresa?** O desenho diz que relê "só os códigos fiscais" dos produtos (§5.1).
     - Uma recusa por IE ou endereço seria corrigida em Configurações, mas o reenvio sairia com o dado velho.
     - Pedir que o reenvio releia também o emitente (IE, endereço, regime, natureza); senão, a frase 6.1 da família "empresa" vira "descarte e emita de novo".
+    - **Resposta do desenho (17/11):** Aceito (risco real): o reenvio relê também o emitente (IE, CRT, endereço, natureza, texto adicional, responsável técnico); se o CNPJ mudou, recusa (desenho §5.1).
 15. **CPF na lista.** Pedir o documento já mascarado em `GET /cupons` (`***.456.789-**`), e completo só no cupom e no DANFE. A lista é a tela mais aberta no celular.
+    - **Resposta do desenho (17/11):** Aceito para CPF (`***.456.789-**` na lista; completo no cupom e no DANFE). O CNPJ vai inteiro: é de empresa (desenho §8.2).
 16. **Motivo do descarte.** O desenho não fixa o tamanho ("Escreva o motivo do descarte."). A tela manda um dos 3 motivos prontos ou um texto livre: aceitar de 3 a 255 letras.
+    - **Resposta do desenho (17/11):** Aceito: 3 a 255 caracteres depois de aparar (desenho §8.4).
 17. **`GET /produtos` para a aba Emitir.** A busca precisa de `categoria`, `preco_venda`, `pronto` e `motivos: ('falta_ncm' | 'falta_perfil' | 'sem_preco' | 'perfil_inativo' | 'perfil_fora_do_regime')[]`. Confirmar que a mesma rota da grade serve, ou criar uma leve, só de leitura.
+    - **Resposta do desenho (17/11):** Aceito: a mesma rota, `GET /v1/cupom-fiscal/produtos?prontos=true`, com `categoria`, `preco_venda`, `pronto` e `motivos` (inclui `inativo` e `perfil_fora_do_regime`) (desenho §8.2).
 18. **Onde se editam os perfis.** O desenho não diz em que tela os perfis são editados. Ficou na aba Produtos do Cupom Fiscal (5.6), e Configurações tem só os dados da empresa e do ambiente. As rotas do desenho servem sem mudança.
+    - **Resposta do desenho (17/11):** Aceito: perfis na aba Produtos; o desenho §2.1 foi ajustado e as rotas não mudam.
