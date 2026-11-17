@@ -41,6 +41,19 @@ describe('decidir (tabela do desenho)', () => {
   it('4b: 138 com ultNSU menor também não recua', () => {
     expect(decidir(entrada(ret(138, 90n, 300n))).ultNsu).toBe(100n);
   });
+  it('1c: 138 sem avanço do NSU, com maxNSU maior, não continua na hora (espera do 137)', () => {
+    const a = decidir(entrada(ret(138, 100n, 300n)));
+    expect(a).toMatchObject({ ultNsu: 100n, proximaConsultaEm: MAIS65, maisPaginas: false, situacao: 'ok' });
+    expect(a.alerta).not.toBeNull();
+  });
+  it('13b: resposta perdida com 656 nas últimas 24 h para a busca', () => {
+    const a = decidir(entrada(ret(656, 130n), { anteriorEnviada: 'sem_resposta', vezes656Em24h: 1 }));
+    expect(a).toMatchObject({ ultNsu: 130n, situacao: 'parada_656', mensagem: FRASE.bloqueouDuasVezes, lacuna: { causa: 'resposta_perdida' } });
+  });
+  it('15c: 1ª consulta com NSU nosso > 0 e pulo registra a lacuna', () => {
+    const a = decidir(entrada(ret(656, 130n), { primeiraConsulta: true, anteriorEnviada: null }));
+    expect(a).toMatchObject({ situacao: 'parada_conflito', lacuna: { nsuDe: 101n, nsuAte: 130n, causa: 'outro_sistema' } });
+  });
   it('5: 1ª consulta com 138 e documentos traz o aviso D1 e não para', () => {
     const a = decidir(entrada(ret(138, 40n, 40n, 40), { primeiraConsulta: true, ultNsuNosso: 0n, anteriorEnviada: null }));
     expect(a).toMatchObject({ ultNsu: 40n, proximaConsultaEm: MAIS65, situacao: 'ok', aviso: FRASE.indicioD1 });

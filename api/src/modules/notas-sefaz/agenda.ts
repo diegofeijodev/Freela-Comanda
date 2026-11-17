@@ -93,8 +93,11 @@ export function decidir(e: EntradaAgenda): AcaoAgenda {
   if (cStat === 138 || cStat === 137) {
     const devolveuMenor = ultNsu !== null && ultNsu < e.ultNsuNosso;
     const adotado = ultNsu !== null && ultNsu > e.ultNsuNosso ? ultNsu : e.ultNsuNosso;
-    const alerta = devolveuMenor ? 'ultNSU devolvido menor que o nosso' : null;
-    const maisPaginas = cStat === 138 && ultNsu !== null && maxNsu !== null && ultNsu < maxNsu;
+    const semAvanco = cStat === 138 && ultNsu !== null && ultNsu === e.ultNsuNosso && maxNsu !== null && maxNsu > ultNsu;
+    const alerta = devolveuMenor ? 'ultNSU devolvido menor que o nosso' : semAvanco ? '138 sem avanço do NSU, com maxNSU maior' : null;
+    // Só continua na hora se o NSU realmente avançou; 138 sem avanço é tratado como sem novidade (espera do 137).
+    const avancou = ultNsu !== null && ultNsu > e.ultNsuNosso;
+    const maisPaginas = cStat === 138 && avancou && maxNsu !== null && ultNsu < maxNsu;
     const aviso =
       cStat === 138 && e.primeiraConsulta && e.ultNsuNosso === 0n && documentos > 0 ? FRASE.indicioD1 : null;
     return { ...comMax, ultNsu: adotado, proximaConsultaEm: maisPaginas ? e.agora : mais65, maisPaginas, aviso, alerta };
@@ -118,9 +121,13 @@ function decidir656(e: EntradaAgenda, ultNsu: bigint | null, comMax: AcaoAgenda,
     return { ...comMax, ...bloqueio, mensagem: FRASE.esperar(horaSp(mais65)) };
   }
   // A sequência andou sem a gente: adota o valor devolvido.
-  const lacuna = e.primeiraConsulta ? null : { nsuDe: e.ultNsuNosso + 1n, nsuAte: ultNsu };
-  const respostaPerdida = !e.primeiraConsulta && (e.anteriorEnviada === 'sem_resposta' || e.anteriorEnviada === 'interrompida');
+  const semHistorico = e.primeiraConsulta && e.ultNsuNosso === 0n;
+  const lacuna = semHistorico ? null : { nsuDe: e.ultNsuNosso + 1n, nsuAte: ultNsu };
+  const respostaPerdida = !semHistorico && (e.anteriorEnviada === 'sem_resposta' || e.anteriorEnviada === 'interrompida');
   if (respostaPerdida && lacuna) {
+    if (e.vezes656Em24h >= 1) {
+      return { ...comMax, ...bloqueio, ultNsu, situacao: 'parada_656', mensagem: FRASE.bloqueouDuasVezes, lacuna: { ...lacuna, causa: 'resposta_perdida' } };
+    }
     return { ...comMax, ...bloqueio, ultNsu, lacuna: { ...lacuna, causa: 'resposta_perdida' } };
   }
   return {
