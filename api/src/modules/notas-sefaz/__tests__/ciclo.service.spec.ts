@@ -8,12 +8,14 @@ import type { ConfigService } from '@nestjs/config';
 import { Prisma, type sefaz_distribuicao } from '@prisma/client';
 import { CertificadoErro, MSG_USO, type CertificadoEmUso } from '../../certificado-digital/certificado-digital.port';
 import type { CadeiaIcp } from '../../certificado-digital/cadeia';
+import type { NotasService } from '../../notas/notas.service';
 import { SefazDfeAdapter, URL_DISTRIBUICAO } from '../../sefaz/distribuicao.adapter';
 import type { DocumentoDistribuido, SefazDfePort } from '../../sefaz/distribuicao.port';
 import { sefazErro } from '../../sefaz/sefaz-erro';
 import { chamarSoap12 } from '../../sefaz/transporte-soap12';
 import { faultSoap12, retornoSoap, SENTINELA_FAULT } from '../../sefaz/__tests__/retorno-falso';
 import { resposta, SefazDfeFalso } from '../../sefaz/__tests__/sefaz-dfe.falso';
+import { CaixaSefazService } from '../caixa.service';
 import { CicloSefazService } from '../ciclo.service';
 import { FRASE } from '../frases';
 import { linhaCom, montarPrismaSefaz, type TabelasSefaz } from './prisma-sefaz.falso';
@@ -291,10 +293,10 @@ describe('CicloSefazService', () => {
         bloqueado_ate: null,
         em_andamento_desde: null,
       });
-      expect(t.sefaz_consultas.map((c) => [c.resultado, c.ult_nsu_enviado])).toEqual([
-        ['interrompida', 100n],
-        ['interrompida', 100n],
-        ['interrompida', 100n],
+      expect(t.sefaz_consultas.map((c) => [c.resultado, c.erro_code, c.ult_nsu_enviado])).toEqual([
+        ['interrompida', 'GRAVACAO_FALHOU', 100n],
+        ['interrompida', 'GRAVACAO_FALHOU', 100n],
+        ['interrompida', 'GRAVACAO_FALHOU', 100n],
       ]);
       expect(t.sefaz_consultas[2].terminada_em).toEqual(min(130));
       expect(t.sefaz_distribuicao_historico).toHaveLength(1);
@@ -312,29 +314,34 @@ describe('CicloSefazService', () => {
       expect(sefaz.chamadas).toHaveLength(3);
     });
 
-    it('só conta as interrompidas IMEDIATAMENTE antes e com o MESMO NSU', async () => {
-      const casos: { anteriores: ReturnType<typeof consultaAnterior>[]; para: boolean }[] = [
-        { anteriores: [consultaAnterior('interrompida', { iniciada_em: min(-140) }), consultaAnterior('interrompida')], para: true },
+    it('só conta falhas de GRAVAÇÃO imediatamente antes, com o MESMO NSU e depois do último "Ligar"', async () => {
+      // `falhou` = interrompida por falha ao gravar (marca GRAVACAO_FALHOU); a interrompida sem marca é queda da API e não conta
+      const falhou = (x: Record<string, unknown> = {}) => consultaAnterior('interrompida', { erro_code: 'GRAVACAO_FALHOU', ...x });
+      const ligada = (feito_em: Date) =>
+        linhaCom('sefaz_distribuicao_historico', { ambiente: 'producao', cnpj: NOSSO, evento: 'ligada', situacao: 'ok', feito_em });
+      const casos: { anteriores: ReturnType<typeof consultaAnterior>[]; historico?: ReturnType<typeof ligada>[]; para: boolean }[] = [
+        { anteriores: [falhou({ iniciada_em: min(-140) }), falhou()], para: true },
+        { anteriores: [falhou({ iniciada_em: min(-140) }), falhou()], historico: [ligada(min(-200))], para: true },
+        { anteriores: [falhou({ iniciada_em: min(-140), ult_nsu_enviado: 90n }), falhou()], para: false },
         {
           anteriores: [
-            consultaAnterior('interrompida', { iniciada_em: min(-140), ult_nsu_enviado: 90n }),
-            consultaAnterior('interrompida'),
-          ],
-          para: false,
-        },
-        {
-          anteriores: [
-            consultaAnterior('interrompida', { iniciada_em: min(-210) }),
+            falhou({ iniciada_em: min(-210) }),
             consultaAnterior('respondida', { iniciada_em: min(-140), c_stat: 137 }),
-            consultaAnterior('interrompida'),
+            falhou(),
           ],
           para: false,
         },
-        { anteriores: [consultaAnterior('sem_resposta', { iniciada_em: min(-140) }), consultaAnterior('interrompida')], para: false },
+        { anteriores: [consultaAnterior('sem_resposta', { iniciada_em: min(-140) }), falhou()], para: false },
+        // queda da API no meio da consulta (interrompida SEM a marca): não é falha de gravação
+        { anteriores: [consultaAnterior('interrompida', { iniciada_em: min(-140) }), consultaAnterior('interrompida')], para: false },
+        { anteriores: [falhou({ iniciada_em: min(-140) }), consultaAnterior('interrompida')], para: false },
+        // religar zera: as falhas de antes do último "Ligar" não contam
+        { anteriores: [falhou({ iniciada_em: min(-140) }), falhou()], historico: [ligada(min(-100))], para: false },
       ];
-      for (const { anteriores, para } of casos) {
+      for (const { anteriores, historico, para } of casos) {
         const { svc, t, sefaz, prisma } = montar();
         t.sefaz_consultas.push(...anteriores);
+        t.sefaz_distribuicao_historico.push(...(historico ?? []));
         jest.spyOn(prisma.sefaz_documentos, 'createMany').mockRejectedValue(recusada());
         sefaz.responder(pagina());
         await expect(svc.ciclo('agendada', null, em(AGORA))).rejects.toThrow('valor recusado pelo banco');
@@ -343,8 +350,33 @@ describe('CicloSefazService', () => {
             ? { busca_ligada: false, situacao: 'parada_configuracao' }
             : { busca_ligada: true, situacao: 'ok', proxima_consulta_em: MAIS65 },
         );
-        expect(t.sefaz_distribuicao_historico).toHaveLength(para ? 1 : 0);
+        expect(t.sefaz_distribuicao_historico.filter((h) => h.evento === 'parada_automatica')).toHaveLength(para ? 1 : 0);
       }
+    });
+
+    it('religar ("Ligar a busca") zera a contagem: 3 falhas param; religada, a próxima falha não para; mais 2, para de novo', async () => {
+      const { svc, t, sefaz, prisma, certificados } = montar();
+      const notas = { notasLancadas: jest.fn(async () => []) } as unknown as NotasService;
+      const caixa = new CaixaSefazService(prisma, svc, notas, certificados);
+      jest.spyOn(prisma.sefaz_documentos, 'createMany').mockRejectedValue(recusada());
+      sefaz.responder(...Array.from({ length: 6 }, pagina));
+      const falha = (m: number) => expect(svc.ciclo('agendada', null, em(min(m)))).rejects.toThrow('valor recusado pelo banco');
+
+      for (const m of [0, 65, 130]) await falha(m);
+      expect(linhaDe(t)).toMatchObject({ busca_ligada: false, situacao: 'parada_configuracao', mensagem: FRASE.gravacaoFalhou });
+
+      await caixa.configurar(true, QUEM, min(140)); // o admin religa
+      expect(linhaDe(t)).toMatchObject({ busca_ligada: true, situacao: 'ok', mensagem: null, proxima_consulta_em: min(195) });
+
+      await falha(195); // conta 1
+      expect(linhaDe(t)).toMatchObject({ busca_ligada: true, situacao: 'ok', proxima_consulta_em: min(260) });
+      await falha(260); // conta 2
+      expect(linhaDe(t)).toMatchObject({ busca_ligada: true, situacao: 'ok', proxima_consulta_em: min(325) });
+      await falha(325); // 3ª depois de religar: para de novo
+      expect(linhaDe(t)).toMatchObject({ busca_ligada: false, situacao: 'parada_configuracao', mensagem: FRASE.gravacaoFalhou });
+      expect(t.sefaz_distribuicao_historico.map((h) => h.evento)).toEqual(['parada_automatica', 'ligada', 'parada_automatica']);
+      expect(sefaz.chamadas).toHaveLength(6);
+      expect(sefaz.chamadas.every((c) => c.ultNsu === 100n)).toBe(true);
     });
   });
 

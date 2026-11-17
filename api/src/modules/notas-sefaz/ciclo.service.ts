@@ -76,6 +76,8 @@ export const TENTATIVAS_CLASSIFICACAO = 3;
 const TENTATIVA = /Tentativa (\d+) de \d+\.$/;
 /** Falhas SEGUIDAS ao gravar a resposta da mesma página (mesmo NSU enviado) que param a busca; antes disso vale a reserva de 65 min. */
 export const FALHAS_GRAVACAO_PARA = 3;
+/** `erro_code` da consulta cuja resposta não pôde ser gravada (a T2 caiu). Só esta marca conta para FALHAS_GRAVACAO_PARA. */
+export const ERRO_GRAVACAO = 'GRAVACAO_FALHOU';
 /** Decisão 5: `anteriorEnviada` é a mais recente em que a pergunta pode ter chegado à SEFAZ (sem `falha_antes_de_enviar`). */
 const ENVIADAS: ResultadoConsulta[] = ['respondida', 'sem_resposta', 'interrompida'];
 const TX1 = { maxWait: 5_000, timeout: 10_000 };
@@ -473,22 +475,30 @@ export class CicloSefazService {
   }
 
   /**
-   * A T2 caiu e foi desfeita (nada da resposta ficou gravado). Nas 2 primeiras vezes nada muda: vale a reserva de 65 min da T1 e a
-   * próxima T1 fecha a consulta como `interrompida`. Na 3ª seguida com o mesmo NSU (as 2 consultas imediatamente anteriores
-   * `interrompida` com o mesmo `ult_nsu_enviado`), a mesma página falharia para sempre: a busca para (desligada, `parada_configuracao`,
-   * histórico) e o admin religa. Uma `interrompida` por queda da API no meio da consulta também conta (as duas querem dizer "enviada,
-   * sem resposta gravada"). Não mexe em NSU, próxima consulta nem bloqueio. Nunca lança.
+   * A T2 caiu e foi desfeita (nada da resposta ficou gravado). A consulta ganha a marca `erro_code` = ERRO_GRAVACAO e, nas 2 primeiras
+   * vezes, nada mais muda: vale a reserva de 65 min da T1 e a próxima T1 fecha a consulta como `interrompida`. Na 3ª seguida com o
+   * mesmo NSU (as 2 consultas imediatamente anteriores `interrompida` COM a marca e o mesmo `ult_nsu_enviado`), a mesma página
+   * falharia para sempre: a busca para (desligada, `parada_configuracao`, histórico). Uma `interrompida` sem a marca (queda da API no
+   * meio da consulta) não é falha de gravação e quebra a sequência. Religar ("Ligar a busca") zera a contagem: só contam as consultas
+   * iniciadas depois do último `ligada` do histórico. Não mexe em NSU, próxima consulta nem bloqueio. Nunca lança.
    */
   private async gravacaoFalhou(p: Preparo, r: Reserva, cStat: number | null, agora: Date): Promise<void> {
     try {
       const parou = await this.prisma.$transaction(async (tx) => {
         await esperarTrava(tx);
         const onde = { ambiente: p.ambiente, cnpj: p.cnpj };
+        await tx.sefaz_consultas.update({ where: { id: r.consultaId }, data: { erro_code: ERRO_GRAVACAO } });
+        const [ligada] = await tx.sefaz_distribuicao_historico.findMany({
+          where: { ...onde, evento: 'ligada' },
+          orderBy: { feito_em: 'desc' },
+          take: 1,
+        });
         const recentes = await tx.sefaz_consultas.findMany({ where: onde, orderBy: { iniciada_em: 'desc' }, take: 10 });
         let seguidas = 1; // esta
         for (const c of recentes) {
           if (c.id === r.consultaId) continue;
-          if (c.resultado !== 'interrompida' || c.ult_nsu_enviado !== r.contexto.ultNsuNosso) break;
+          if (ligada && c.iniciada_em < ligada.feito_em) break; // de antes do último "Ligar": religar zera
+          if (c.resultado !== 'interrompida' || c.erro_code !== ERRO_GRAVACAO || c.ult_nsu_enviado !== r.contexto.ultNsuNosso) break;
           if (++seguidas >= FALHAS_GRAVACAO_PARA) break;
         }
         if (seguidas < FALHAS_GRAVACAO_PARA) return false;
