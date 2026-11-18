@@ -79,13 +79,13 @@ Na máquina do dono, sempre pelo teto de memória (`scripts/run-capped.sh`, ver 
   1. A venda emitida no Comanda também é lançada no sistema do caixa de hoje? (se for, o estoque conta em dobro)
   2. Qual a série e o CSC do caixa de hoje? (o Comanda usa outra série)
   3. Regime tributário (CRT), IE, NCM, CEST, GTIN e o perfil fiscal (CFOP, CSOSN/CST, PIS/COFINS) de cada produto. O CRT 2 pede CSOSN ou CST? Por ora estão barrados o CST 20 (sem o campo de redução) e o CST de PIS/COFINS com alíquota.
-  4. O que fazer com número pulado? (SP não tem inutilização; o zip do mês traz `numeros-nao-usados.csv` para o contador)
+  4. O que fazer com número pulado? (SP não tem inutilização; o zip do mês traz `numeros-nao-usados.csv` para o contador, inclusive a faixa pulada à mão em Configurações)
   5. A taxa de serviço entra no cupom?
   6. Quer o responsável técnico no XML (CNPJ, contato, e-mail, telefone)?
   7. O cupom pode ser só digital (QR/link), sem papel?
   8. O Pix do balcão é o código 17 (dinâmico) ou 20 (estático)? (hoje só o 17 está aceito)
   9. Reforma tributária: quais os códigos do Simples para 2027 (`cAtivSN`/`gTribSN`)? (hoje só o cadastro; nada sai no XML)
-  Conferência no navegador antes de usar: abrir Cupom → Emitir com a emissão desligada e ler a faixa de aviso; imprimir um DANFE de teste no papel de 80 mm (o CSS não fixa o papel).
+  Conferência no navegador antes de usar: abrir Cupom → Emitir com a emissão desligada e ler a faixa de aviso. A impressão do DANFE no papel de 80 mm só existe com um cupom autorizado: é passo do roteiro de homologação (`docs/deploy.md`).
 
 ## Migração dos dados (pendente)
 

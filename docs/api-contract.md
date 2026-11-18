@@ -254,7 +254,8 @@ Dias e horas são de Brasília; o servidor manda as horas e as ações prontas (
 **Tudo nasce desligado, em duas chaves:** (1) `NFCE_AMBIENTE` (ausente ou vazia = `desligado`; `homologacao`; `producao`; outro valor derruba a subida) — separada de `SEFAZ_DFE_AMBIENTE`;
 (2) o botão "Emitir cupons" de cada ambiente (`nfce_ambientes.emissao_ligada`, nasce `false`). Com `NFCE_AMBIENTE` desligada, as rotas que falam com a SEFAZ (`POST cupons`, `reenviar`, `consultar`, `cancelar`, `descartar`,
 `testar-conexao`, `PUT ambientes/:ambiente/emissao`) respondem **503 `NFCE_DESLIGADA`** "A emissão de cupom fiscal não está ativada neste servidor." e nenhuma conexão sai. Cadastro, leitura (lista, cupom, DANFE, XML, zip, vendas do período) e
-`lancar-venda` funcionam com o servidor desligado (nenhum fala com a SEFAZ). A emissão pelo cupom nunca é reenviada sozinha: só o clique em "Enviar de novo" (até 3 envios) manda de novo o mesmo número.
+`lancar-venda` funcionam com o servidor desligado (nenhum fala com a SEFAZ). Com o servidor ligado no OUTRO ambiente (trocou entre o modo de teste e o valendo com o cupom pendente), `reenviar`, `consultar` e `cancelar`
+desse cupom respondem **409 `NFCE_OUTRO_AMBIENTE`** com frase própria (nunca o "não está ativada"), sem conexão. A emissão pelo cupom nunca é reenviada sozinha: só o clique em "Enviar de novo" (até 3 envios) manda de novo o mesmo número.
 `:id` é UUID e `:ambiente` é `homologacao | producao`; outro valor = 404 `NOT_FOUND` "Não encontrado.". Corpo de DTO fora do tipo ou do tamanho = 400 `VALIDATION_ERROR`; as faixas e os formatos fiscais são do serviço (422, mesma frase para texto ou número).
 
 | Método e caminho | Corpo / filtros | Resposta |
@@ -291,6 +292,7 @@ A mesma `chave_idempotencia` com o mesmo corpo devolve o cupom (200); com outro 
 **`CupomDetalhe`** (mesmo formato no GET e no POST; sem XML): `id, ambiente, serie, numero, chave, situacao, dh_emi, envios, numero_reaproveitavel, consumidor_doc` (**CPF completo só aqui e no DANFE**), `valor_produtos_centavos, valor_desconto_centavos, valor_total_centavos, valor_troco_centavos, itens[], pagamentos[], autorizada_em, n_prot, c_stat, x_motivo, alerta{ c_msg, x_msg }|null, cancelado_em, cancelamento_motivo, cancelamento_n_prot, cancelamento_pedido_em, venda_estoque, venda_erro, descartado_em, descarte_motivo, descartado_por_nome, emitido_por_nome, criado_em, agora, consultar_a_partir_de, cancelar_ate, acoes[], recusa{ codigo, familia, frase, x_motivo }|null, atalho, mensagem`.
 - `situacao` ∈ `enviando | nao_enviado | sem_resposta | nao_consta | rejeitado | autorizado | cancelando | denegado | cancelado | descartado` (o `enviando` de 2 min ou mais já sai como `sem_resposta`; "enviado sem resposta" NUNCA leva a reenvio, só à consulta).
 - `acoes` ⊆ `enviar_de_novo | consultar | cancelar | descartar | lancar_venda | imprimir`, calculadas no servidor. `cancelar_ate` = autorização + 29 min (a SEFAZ aceita 30).
+  `autorizada_em` = o `dhRecbto` do protocolo (sem fuso = horário de Brasília, −03:00); ilegível = `null`: sem prazo conhecido, sem `cancelar` (nunca a hora do servidor).
 - `venda_estoque` ∈ `lancada | pendente | desfeita | desfazer_pendente | teste | nao_lanca`.
 - `atalho` ∈ `certificado | csc | empresa | serie | produtos | null`: o conserto da `recusa` (a tela só mostra o que vier, sem tabela de códigos). `recusa.familia` ∈ `produto | empresa | consumidor | valores | hora | outra`.
 - `CupomLinha` (a lista) é o mesmo cupom sem itens e sem XML, com o **CPF mascarado** (`***.982.247-**`; CNPJ inteiro) e `valor_total_centavos`.
@@ -301,7 +303,7 @@ A mesma `chave_idempotencia` com o mesmo corpo devolve o cupom (200); com outro 
 `ProdutoCupom` = `item_cardapio_id, nome, categoria, unidade_venda, preco_venda_centavos` (`null` = sem preço que sirva), os dados fiscais, `perfil_nome`, `pronto` e `motivos[]` (o que falta).
 
 **Ligar a emissão** (`PUT ambientes/:ambiente/emissao`): só o ambiente do servidor (outro = 404). Em `producao`, `confirmado: true` (as 3 marcações; sem elas 400 `VALIDATION_ERROR` "Marque as três confirmações.").
-Confere a lista `falta` da situação (`certificado`, `cnpj`, `ie`, `crt`, `endereco`, `serie`, `csc`, `produto_pronto`; em produção também `teste_homologacao` e `lanca_venda`); o que falta = 422 `NFCE_CONFIG_INCOMPLETA` "Falta configurar o cupom fiscal: …" (inclui **ligar sem certificado**); valendo ainda pede um teste em homologação (422 `NFCE_PRODUCAO_SEM_TESTE`)
+Confere a lista `falta` da situação (`certificado`, `cnpj`, `ie`, `crt`, `endereco`, `serie`, `csc`, `produto_pronto`; em produção também `teste_homologacao`, `lanca_venda` e `series_outro_sistema`: as séries do caixa de hoje, ou "nenhum outro sistema", diferentes da série daqui); o que falta = 422 `NFCE_CONFIG_INCOMPLETA` "Falta configurar o cupom fiscal: …" (inclui **ligar sem certificado**); valendo ainda pede um teste em homologação (422 `NFCE_PRODUCAO_SEM_TESTE`)
 e a resposta de quem conta as vendas no estoque (422 `NFCE_LANCA_VENDA_PENDENTE`). Mudou o CNPJ ou a série desde que foi ligada = 409 `NFCE_EMISSAO_DESLIGADA` "O CNPJ ou a série mudou desde que a emissão foi ligada. Ligue de novo."
 
 ### Códigos de erro do cupom fiscal
@@ -320,6 +322,7 @@ e a resposta de quem conta as vendas no estoque (422 `NFCE_LANCA_VENDA_PENDENTE`
 | 409 | `NFCE_LIMITE_ENVIOS` | 3 envios do mesmo cupom: "Descarte e emita outro." |
 | 409 | `NFCE_CANCELAMENTO_FORA_DO_PRAZO` | passaram 30 min da autorização |
 | 409 | `NFCE_SITUACAO` | a ação não vale para a situação do cupom ("Este cupom … ; não dá para …") |
+| 409 | `NFCE_OUTRO_AMBIENTE` | `reenviar`, `consultar` ou `cancelar` de um cupom do outro ambiente ("Este é um cupom de teste, e o Freela Comanda agora emite cupons valendo; não dá para …" / "Este cupom vale como documento fiscal, e o Freela Comanda agora está no modo de teste da SEFAZ; … Fale com o suporte do Freela Comanda.") |
 | 409 | `NFCE_CHAVE_REUSADA` | mesma `chave_idempotencia` com outro corpo |
 | 409 | `NFCE_TOTAL_MUDOU` | o preço de algum produto mudou: a frase diz o total novo; a tela relê `GET /produtos` |
 | 409 | `NFCE_SERIE_COM_PENDENTES` | trocar a série com cupom pendente nela |
@@ -339,6 +342,7 @@ e a resposta de quem conta as vendas no estoque (422 `NFCE_LANCA_VENDA_PENDENTE`
 | 422 | `NFCE_PERFIL_INVALIDO` · `NFCE_PRODUTO_INVALIDO` | perfil ou dados do produto fora do formato (CSOSN × CFOP, NCM de 8 dígitos…) |
 | 404 | `NOT_FOUND` | cupom, perfil, produto ou ambiente inexistente; XML de cancelamento que não existe |
 
-O cupom é **documento fiscal** depois de autorizado: o banco o trava (gatilho `nfce_gatilho`) e só deixa mudar os campos de cancelamento, venda e descarte. O número é da nota para sempre (539 e SP sem inutilização: número pulado vai para o `numeros-nao-usados.csv` do zip do contador).
+O cupom é **documento fiscal** depois de autorizado: o banco o trava (gatilhos `nfce_cupons_imutavel` no cupom e `nfce_filhos_imutaveis` nos itens e pagamentos, da migração `20261119120000_nfce`; a `20261119120100_nfce_gatilho` aperta a passagem do ON DELETE SET NULL dos itens). Em `autorizado`, `cancelando`, `denegado` e `cancelado` ele só deixa mudar a situação (autorizado → cancelando ou cancelado; cancelando → autorizado ou cancelado), a venda no estoque (`venda_lancada_em`, `venda_desfeita_em`, `venda_erro`) e `atualizado_em`, e, em `autorizado`/`cancelando`, os campos do cancelamento; os do descarte não (o descarte só existe fora dessas situações). Nunca apaga.
+O número é da nota para sempre (539 e SP sem inutilização): o `numeros-nao-usados.csv` do zip do mês traz cada número que não virou cupom, com o motivo, e a faixa pulada à mão em Configurações numa linha só (`serie;42 a 999;pulado à mão em DD/MM por <nome>`, no mês do pulo; voltar o número tira a faixa).
 A venda no estoque nasce do cupom (`nfce_lancar_venda`/`nfce_desfazer_venda`, só com `cupom_lanca_venda = true` e em produção); em homologação a venda nunca baixa estoque.
 **Porta interna** (sem rota): `SEFAZ_NFCE` (`modules/sefaz/nfce.port.ts`: autorizar, consultar, status e o registro do evento de cancelamento), sempre com o envelope SOAP `sem_prefixo`; só o certificado em `CERTIFICADO_DIGITAL` assina.
