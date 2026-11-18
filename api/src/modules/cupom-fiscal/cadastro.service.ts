@@ -1041,7 +1041,10 @@ export class CupomCadastroService {
         ),
       );
       if (comLinha.size > 0) {
-        await tx.nfce_itens.updateMany({ where: { item_cardapio_id: { in: [...comLinha] } }, data: { perfil_fiscal_id: perfil.id, ...autoria } });
+        await tx.nfce_itens.updateMany({
+          where: { item_cardapio_id: { in: [...comLinha] } },
+          data: { perfil_fiscal_id: perfil.id, ...autoria },
+        });
       }
       const novos = ids.filter((id) => !comLinha.has(id));
       if (novos.length > 0) {

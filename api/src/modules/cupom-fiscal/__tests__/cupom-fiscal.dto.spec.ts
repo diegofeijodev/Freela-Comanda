@@ -59,7 +59,9 @@ describe('SalvarEmitenteDto (PUT emitente)', () => {
   });
   it('regime fora de 1–4 falha com a frase; séries têm de ser números', () => {
     expect(frases(erros(SalvarEmitenteDto, { crt: 5 }))).toContain(FRASES_CADASTRO.crt);
-    expect(erros(SalvarEmitenteDto, { crt: 3, series_outro_sistema: [1, 2], sem_outro_sistema: false, cupom_lanca_venda: true })).toHaveLength(0);
+    expect(
+      erros(SalvarEmitenteDto, { crt: 3, series_outro_sistema: [1, 2], sem_outro_sistema: false, cupom_lanca_venda: true }),
+    ).toHaveLength(0);
     expect(erros(SalvarEmitenteDto, { series_outro_sistema: ['1'] }).map((x) => x.property)).toEqual(['series_outro_sistema']);
     expect(erros(SalvarEmitenteDto, { cupom_lanca_venda: 'sim' }).map((x) => x.property)).toEqual(['cupom_lanca_venda']);
   });

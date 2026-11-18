@@ -84,7 +84,10 @@ export class PerfilFiscalDto {
 
 /** Mudar um perfil (PATCH perfis/:id): os mesmos campos, todos opcionais. Desativar = `{ ativo: false }` (perfil em uso nunca é apagado). */
 export class AtualizarPerfilDto {
-  @IsOptional() @IsString({ message: FRASES_CADASTRO.perfilSemNome }) @MaxLength(60, { message: FRASES_CADASTRO.perfilNomeLongo }) nome?: string;
+  @IsOptional()
+  @IsString({ message: FRASES_CADASTRO.perfilSemNome })
+  @MaxLength(60, { message: FRASES_CADASTRO.perfilNomeLongo })
+  nome?: string;
   @IsOptional() @IsString({ message: FRASES_VALIDACAO.semCfop }) @MaxLength(10, { message: FRASES_VALIDACAO.semCfop }) cfop?: string;
   @IsOptional() @IsString() @MaxLength(10) csosn?: string | null;
   @IsOptional() @IsString() @MaxLength(10) cst_icms?: string | null;
