@@ -430,6 +430,12 @@ describe('cadastro: perfis fiscais', () => {
     await m.svc.atualizarPerfil(p.id, { csosn: '', cst_icms: '40' }, EU, AGORA);
     expect(m.t.nfce_perfis_fiscais[0]).toMatchObject({ csosn: null, cst_icms: '40' });
     expect((await erro(m.svc.atualizarPerfil('22222222-2222-4222-8222-222222222222', { ativo: true }, EU, AGORA))).status).toBe(404);
+    // `null` passa pelo @IsOptional() do DTO: o nome é obrigatório, então é 422 (não um 500 do .trim())
+    expect(await erro(m.svc.atualizarPerfil(p.id, { nome: null as unknown as string }, EU, AGORA))).toEqual({
+      status: 422,
+      code: 'NFCE_PERFIL_INVALIDO',
+      message: FRASES_CADASTRO.perfilSemNome,
+    });
   });
 
   it('a lista traz quantos produtos usam cada perfil e se ele vale no regime de agora', async () => {

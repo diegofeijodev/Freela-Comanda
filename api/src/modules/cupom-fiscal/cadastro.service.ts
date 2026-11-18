@@ -882,7 +882,7 @@ export class CupomCadastroService {
       const junto: PerfilFiscal = { ...perfilFiscalDe(atual), ...outros, ativo, cfop: (cfop !== undefined ? cfop : atual.cfop) ?? '' };
       crt = await this.conferirPerfil(junto);
     }
-    const nome = dto.nome !== undefined ? await this.nomeDoPerfil(dto.nome, id) : undefined;
+    const nome = dto.nome !== undefined ? await this.nomeDoPerfil(dto.nome ?? '', id) : undefined; // null = sem nome (422)
     try {
       const p = await this.prisma.nfce_perfis_fiscais.update({
         where: { id },
