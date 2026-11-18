@@ -1,10 +1,11 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { CircleAlert, Loader2 } from 'lucide-react';
-import { cancelarCupom, type CupomDetalhe } from '@/lib/erp-api';
+import { cancelarCupom, statusDoErro, type CupomDetalhe } from '@/lib/erp-api';
 import { errCode, errMsg } from '@/lib/db';
-import { linhaPrazoCancelar, reais } from '@/lib/cupom';
+import { CHAVES_CUPOM, falhaIncerta, linhaPrazoCancelar, reais } from '@/lib/cupom';
 import { horaSp, normalizarJustificativa, semToqueDuplo } from '@/lib/notas-sefaz';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -55,6 +56,7 @@ export function CancelarDialog({ cupom, aberto, agora, onFechar, onResultado }: 
 function Conteudo({ cupom, agora, preso, onResultado }: {
   cupom: CupomParaCancelar; agora: Date; preso: { current: boolean }; onResultado(c: CupomDetalhe): void;
 }) {
+  const qc = useQueryClient();
   const [motivo, setMotivo] = useState('');
   const [erroMotivo, setErroMotivo] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
@@ -108,6 +110,8 @@ function Conteudo({ cupom, agora, preso, onResultado }: {
     } catch (x) {
       if (errCode(x) === 'NFCE_CANCELAMENTO_FORA_DO_PRAZO') setForaDoPrazo(true);
       setErro(errMsg(x));
+      // sem resposta do nosso servidor o pedido pode ter saído: relê o cupom (pode já estar `cancelando`; leva pré-final, item 16)
+      if (falhaIncerta(statusDoErro(x), errCode(x))) void qc.invalidateQueries({ queryKey: CHAVES_CUPOM.cupom(cupom.id) });
     } finally {
       preso.current = false;
       setOcupado(false);

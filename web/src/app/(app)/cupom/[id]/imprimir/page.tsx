@@ -15,11 +15,14 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { DanfePapel } from '@/components/cupom/danfe';
 
 // Papel de 80 mm (desenho §5.6; UX 3.4). Só nesta página (no `globals.css` mudaria toda impressão do app): a margem do `main` sai e só o
-// DANFE vai para o papel (o menu, a barra e a ajuda já são `no-print`). Também imprime em A4.
+// DANFE vai para o papel (o menu, a barra e a ajuda já são `no-print`). O papel de 80 mm se escolhe no diálogo de impressão (vem do
+// driver da impressora): `size: 80mm auto` não é CSS válido e o Chromium o descarta (Ruling T16-2). Na impressora térmica de 80 mm a
+// largura útil é de 72 mm (as bordas não imprimem): margem 0 e o DANFE com 72 mm, no meio. Também imprime em A4.
 const CSS_IMPRESSAO = `
-@page { size: 80mm auto; margin: 2mm; }
+@page { margin: 0; }
 @media print {
   main { padding: 0 !important; max-width: none !important; }
+  section.danfe { width: 72mm !important; max-width: 72mm !important; margin: 0 auto !important; padding: 0 !important; }
 }
 `;
 

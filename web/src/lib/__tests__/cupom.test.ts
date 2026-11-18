@@ -60,6 +60,73 @@ describe('totais do cupom (centavos)', () => {
     expect(decimal4('2')).toBe('2.0000');
     expect(decimal4('0.35')).toBe('0.3500');
   });
+
+  // Leva pré-final, item 2 (Minor 1–3 e 6 da revisão da Tarefa 4): guardas e limites.
+  it('calcularTotais: entrada torta vira erro de regra (nunca BigInt lançando)', () => {
+    for (const q of ['0,350', 'abc', '', '1.', '0', '-1']) {
+      expect(calcularTotais([{ quantidade: q, precoCentavos: 100n }], 0n, pag)).toEqual({ erro: 'QUANTIDADE_INVALIDA' });
+    }
+    expect(calcularTotais([{ quantidade: '1', precoCentavos: -1n }], 0n, pag)).toEqual({ erro: 'PRECO_INVALIDO' });
+    expect(
+      calcularTotais(itens, 0n, [
+        { tPag: '01', valor: 100000n },
+        { tPag: '03', valor: -95000n },
+      ]),
+    ).toEqual({
+      erro: 'PAGAMENTO_INVALIDO',
+    });
+    expect(
+      calcularTotais(itens, 0n, [
+        { tPag: '01', valor: 6000n },
+        { tPag: '17', valor: 0n },
+      ]),
+    ).toEqual({ erro: 'PAGAMENTO_INVALIDO' });
+  });
+
+  it('calcularTotais: item que arredonda para 0 centavo = ITEM_SEM_VALOR (não DESCONTO_INVALIDO)', () => {
+    expect(calcularTotais([{ quantidade: '0.0001', precoCentavos: 1n }], 0n, pag)).toEqual({ erro: 'ITEM_SEM_VALOR' });
+    expect(calcularTotais([...itens, { quantidade: '0.0001', precoCentavos: 1n }], 0n, pag)).toEqual({ erro: 'ITEM_SEM_VALOR' });
+    expect(calcularTotais([{ quantidade: '1', precoCentavos: 0n }], 0n, pag)).toEqual({ erro: 'ITEM_SEM_VALOR' });
+  });
+
+  it('calcularTotais: limites do teto, do desconto e do pagamento exato', () => {
+    const um = (centavos: bigint) => [{ quantidade: '1', precoCentavos: centavos }];
+    expect(calcularTotais(um(19_999_999n), 0n, [{ tPag: '01', valor: 19_999_999n }])).toMatchObject({ total: 19_999_999n, troco: 0n });
+    expect(calcularTotais(um(20_000_000n), 0n, [{ tPag: '01', valor: 20_000_000n }])).toEqual({ erro: 'VALOR_MAXIMO' });
+    expect(calcularTotais(itens, 5369n, [{ tPag: '01', valor: 1n }])).toMatchObject({ produtos: 5370n, desconto: 5369n, total: 1n });
+    expect(calcularTotais(itens, 5370n, [{ tPag: '01', valor: 1n }])).toEqual({ erro: 'DESCONTO_INVALIDO' });
+    expect(calcularTotais(itens, 370n, [{ tPag: '03', valor: 5000n }])).toMatchObject({ total: 5000n, troco: 0n });
+  });
+
+  it('ratearDesconto: a soma das partes é o desconto, nenhuma parte passa do valor, a sobra vai para os maiores', () => {
+    const casos: [bigint[], bigint][] = [
+      [[2400n, 2970n], 370n],
+      [[1n, 1n, 1n], 2n],
+      [[333n, 333n, 334n], 999n],
+      [[7n, 13n, 101n, 999n], 1119n],
+      [[5000n, 1n], 4999n],
+    ];
+    for (const [valores, desconto] of casos) {
+      const partes = ratearDesconto(valores, desconto);
+      expect(partes.reduce((a, v) => a + v, 0n)).toBe(desconto);
+      partes.forEach((p, i) => expect(p <= valores[i]).toBe(true));
+    }
+    expect(ratearDesconto([100n, 300n, 300n], 2n)).toEqual([0n, 1n, 1n]);
+  });
+
+  it('quantidadeValida: "1." e "" recusadas', () => {
+    expect(quantidadeValida('1.')).toBe(false);
+    expect(quantidadeValida('')).toBe(false);
+  });
+
+  it('decimal2 recusa negativo; decimal4 valida a entrada e não sai com zero à esquerda', () => {
+    expect(() => decimal2(-1n)).toThrow();
+    expect(decimal2(0n)).toBe('0.00');
+    expect(decimal4('02')).toBe('2.0000');
+    expect(decimal4('007.5')).toBe('7.5000');
+    expect(decimal4('0.35')).toBe('0.3500');
+    for (const q of ['0,350', '', '1.', 'abc', '0', '-1']) expect(() => decimal4(q)).toThrow();
+  });
 });
 
 // ===================================================================================================== regras da tela (Tarefa 14)
@@ -88,6 +155,7 @@ import {
   mascaraCnpj,
   mascaraCpf,
   pagamentosDaTela,
+  podeDiminuir,
   quantidadeDaTela,
   quantidadeParaTela,
   reais,
@@ -136,6 +204,16 @@ describe('tela do cupom: dinheiro, quantidade e botão', () => {
     expect(erroQuantidade('0')).toBe('A quantidade tem de ser maior que zero.');
     expect(erroQuantidade('')).toBe('A quantidade tem de ser maior que zero.');
     expect(erroQuantidade('1,23456')).toBe('Use até 4 casas depois da vírgula.');
+  });
+
+  it('podeDiminuir: o "−" só fica ativo quando tira 1 unidade de verdade (leva pré-final, item 16)', () => {
+    expect(podeDiminuir('1,5')).toBe(false); // entre 1 e 2 o "−" não muda nada (nunca abaixo de 1)
+    expect(somarQuantidade('1,5', -1)).toBe('1,5');
+    expect(podeDiminuir('1')).toBe(false);
+    expect(podeDiminuir('0,350')).toBe(false);
+    expect(podeDiminuir('abc')).toBe(false);
+    expect(podeDiminuir('2')).toBe(true);
+    expect(podeDiminuir('2,5')).toBe(true);
   });
 
   it('reais e centavosDaTela', () => {
@@ -312,6 +390,7 @@ describe('tela do cupom: busca, conferir, situação e prazo', () => {
       cancelamento_motivo: null,
       descartado_em: null,
       descarte_motivo: null,
+      descartado_por_nome: null,
       numero_reaproveitavel: true,
       c_stat: null,
       x_motivo: null,
@@ -332,6 +411,16 @@ describe('tela do cupom: busca, conferir, situação e prazo', () => {
     expect(
       caixaDoCupom({ ...base, situacao: 'descartado', descartado_em: '2026-11-17T17:30:00.000Z', descarte_motivo: 'Emiti por engano' }).textos,
     ).toEqual(['Descartado em 17/11 às 14h30. Motivo: Emiti por engano. O número 12 vai para o próximo cupom.']);
+    // com quem descartou (UX 3.1, literal; leva pré-final, item 11)
+    expect(
+      caixaDoCupom({
+        ...base,
+        situacao: 'descartado',
+        descartado_em: '2026-11-17T17:30:00.000Z',
+        descarte_motivo: 'Emiti por engano',
+        descartado_por_nome: 'Diego',
+      }).textos,
+    ).toEqual(['Descartado em 17/11 às 14h30 por Diego. Motivo: Emiti por engano. O número 12 vai para o próximo cupom.']);
     expect(
       caixaDoCupom({ ...base, situacao: 'descartado', numero_reaproveitavel: false, descartado_em: '2026-11-17T17:30:00.000Z', descarte_motivo: 'x' })
         .textos[0],
@@ -373,6 +462,7 @@ describe('tela do cupom: caixa do topo e venda refeita', () => {
     situacao: 'ok',
     mensagem: null,
     bloqueado_ate: null,
+    recusas_ate: null,
     serie: 2,
     proximo_numero: 12,
     falta: [],
@@ -405,6 +495,21 @@ describe('tela do cupom: caixa do topo e venda refeita', () => {
     });
     expect(caixaDoTopo(sit({ bloqueado_ate: '2026-11-17T16:10:00.000Z' }), agora)).toBeNull();
     expect(caixaDoTopo(sit(), agora)).toBeNull();
+    // linha 7 (UX 2.1, literal): o teto de 10 recusas na hora, avisado ANTES de enviar (o servidor manda `recusas_ate`; leva item 11)
+    expect(caixaDoTopo(sit({ recusas_ate: '2026-11-17T18:10:00.000Z' }), agora)).toEqual({
+      linha: 7,
+      formulario: true,
+      tom: 'warn',
+      texto:
+        'Muitas recusas da SEFAZ na última hora. Para não bloquear o CNPJ, o envio volta às 15h10. Enquanto isso, confira os dados dos produtos.',
+      link: { rotulo: 'Ver os produtos', href: '/cupom?aba=produtos' },
+      botao: 'Envio volta às 15h10',
+    });
+    expect(caixaDoTopo(sit({ recusas_ate: '2026-11-17T16:59:00.000Z' }), agora)).toBeNull();
+    // o 656 (linha 6) vem antes do teto (linha 7)
+    expect(caixaDoTopo(sit({ bloqueado_ate: '2026-11-17T18:10:00.000Z', recusas_ate: '2026-11-17T18:20:00.000Z' }), agora)).toMatchObject({
+      linha: 6,
+    });
   });
 
   it('vendaDoCupom e linhasDosPagamentos: a venda volta para a aba Emitir', () => {
@@ -529,7 +634,7 @@ import {
   alvoDaFalta, avisoTrocaRegime, botaoDaEmissao, documentoNaLista, errosDoPerfil, filtrarProdutos, formDoPerfil, formDoProduto,
   intervaloDoPeriodo, linhaCscGuardado, linhaCupomDaFicha, linhaDoPerfil, linhasHistoricoCupom, linkPendentes, mascaraCep, mascaraCest, mascaraIe, mascaraNcm,
   mesesDoContador, mesPadraoContador, motivoCfopFora, nomeDoMes, ordenarFalta, perfilParaSalvar, periodoDoArquivo, produtoParaSalvar,
-  proximaAcao, quandoNaLista, tagDaEmissao, textoAvisoImportacao, textoPendentes, textoVendasPendentes,
+  proximaAcao, quandoNaLista, tagDaEmissao, textoAvisoImportacao, textoPendentes, textoVendasPendentes, NOME_OFICIAL_PAGAMENTO,
 } from '../cupom';
 import { ambienteDoContador, caixaDoTopo as caixaDoTopoT15, linkDaFalta as linkDaFaltaT15 } from '../cupom';
 
@@ -549,6 +654,24 @@ describe('Tarefa 15: faixa de pendentes, importação e inventário', () => {
       'O cupom nº 9 está autorizado, mas a venda não baixou o estoque.',
     );
     expect(textoPendentes({ total: 3, primeiro: { serie: 2, numero: 9, tipo: 'venda_pendente' } })).toBe('3 cupons precisam de você.');
+    // leva pré-final, item 13: os tipos que o servidor separa têm frase própria (as da UX 4.2 não servem para eles)
+    expect(textoPendentes({ total: 1, primeiro: { serie: 2, numero: 12, tipo: 'cancelando' } })).toBe(
+      'O cancelamento do cupom nº 12 ainda não foi confirmado pela SEFAZ. Consulte o cupom.',
+    );
+    expect(textoPendentes({ total: 1, primeiro: { serie: 2, numero: 9, tipo: 'venda_a_desfazer' } })).toBe(
+      'O cupom nº 9 foi cancelado, mas a venda continua no estoque.',
+    );
+  });
+
+  it('NOME_OFICIAL_PAGAMENTO = a "Tabela de Meios de pagamento" do Portal NF-e (06/03/2026; leva pré-final, item 12)', () => {
+    expect(NOME_OFICIAL_PAGAMENTO).toEqual({
+      '01': 'Dinheiro',
+      '03': 'Cartão de Crédito',
+      '04': 'Cartão de Débito',
+      '10': 'Vale Alimentação',
+      '11': 'Vale Refeição',
+      '17': 'Pagamento Instantâneo (PIX) - Dinâmico',
+    });
   });
 
   it('linkPendentes: um = "Ver o cupom" direto; vários = "Ver", em "Precisam de você"', () => {
@@ -735,8 +858,8 @@ describe('Tarefa 15: Configurações → Cupom fiscal', () => {
   const agora = new Date('2026-11-17T17:20:00Z');
   const s = (x: Record<string, unknown>) =>
     ({
-      ambiente: 'homologacao', agora: agora.toISOString(), emissao_ligada: false, situacao: 'ok', mensagem: null, bloqueado_ate: null, serie: 2,
-      proximo_numero: 1, falta: [], certificado: { ok: true, mensagem: null }, pendentes: { total: 0, primeiro: null }, ...x,
+      ambiente: 'homologacao', agora: agora.toISOString(), emissao_ligada: false, situacao: 'ok', mensagem: null, bloqueado_ate: null,
+      recusas_ate: null, serie: 2, proximo_numero: 1, falta: [], certificado: { ok: true, mensagem: null }, pendentes: { total: 0, primeiro: null }, ...x,
     }) as SituacaoCupomFiscal;
 
   it('ordenarFalta: a ordem da UX 5.1, mesmo que o servidor mande fora de ordem', () => {
@@ -790,7 +913,7 @@ describe('Tarefa 15: Configurações → Cupom fiscal', () => {
 describe('Tarefa 15, rodada de correção 1: âncoras dos atalhos (M2) e o zip do servidor (M7)', () => {
   const agora = new Date('2026-11-17T17:20:00Z');
   const sit = (x: Partial<SituacaoCupomFiscal>): SituacaoCupomFiscal => ({
-    ambiente: 'homologacao', agora: agora.toISOString(), emissao_ligada: true, situacao: 'ok', mensagem: 'Parou.', bloqueado_ate: null, serie: 2,
+    ambiente: 'homologacao', agora: agora.toISOString(), emissao_ligada: true, situacao: 'ok', mensagem: 'Parou.', bloqueado_ate: null, recusas_ate: null, serie: 2,
     proximo_numero: 1, falta: [], certificado: { ok: true, mensagem: null }, pendentes: { total: 0, primeiro: null }, ...x,
   });
 

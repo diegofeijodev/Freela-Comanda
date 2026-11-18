@@ -10,12 +10,13 @@ import {
   emitirCupom, listarCupons, produtosCupom, statusDoErro, type CupomDetalhe, type EmitirCupom, type ProdutoCupom, type SituacaoCupomFiscal,
 } from '@/lib/erp-api';
 import { errCode, errMsg } from '@/lib/db';
+import { useMe } from '@/lib/auth';
 import {
   atalhosDinheiro, buscarProdutos, caixaDoTopo, calcularTotais, centavosDaTela, CHAVES_CUPOM, DOC_OBRIGATORIO_A_PARTIR, documentoDoPost,
   depoisDoEnvio, desfechoDoErro, erroDocumento, erroQuantidade, FORMAS_DA_TELA, linkDaFalta, linhasDosPagamentos, MOTIVO_NA_FRASE, mascaraCnpj, mascaraCpf,
   NOME_PAGAMENTO, novaChaveIdempotencia, pagamentosDaTela, podeDiminuir, quantidadeDaTela, quantidadeValida, reais,
   rotuloBotaoEmitir, somarQuantidade, TAG_MOTIVO, tagDoCupom, textoCentavos, toqueNoBotao, valorItemCentavos, type DesfechoEnvio,
-  type EstadoEmitir, type LinhaPagamento, type TPag, type VendaEnvio, type VendaRefeita,
+  type ErroTotais, type EstadoEmitir, type LinhaPagamento, type TPag, type VendaEnvio, type VendaRefeita,
 } from '@/lib/cupom';
 import { horaSp, semToqueDuplo } from '@/lib/notas-sefaz';
 import { Button } from '@/components/ui/button';
@@ -29,8 +30,13 @@ import { ConferirSheet, type FaseConferir, type ResumoConferir } from './conferi
 /** Uma linha do carrinho: o preço visto ao entrar (para "Preço mudou: era …"); o preço que vale é o do cardápio relido. */
 type LinhaCarrinho = { id: string; nome: string; quantidade: string; precoVisto: bigint | null; erroQtd: string | null };
 type Doc = { tipo: 'cpf' | 'cnpj'; valor: string };
-const TEXTO_ERRO_TOTAIS: Record<string, string> = {
+/** Os erros de `calcularTotais` (um por código: o tsc acha o que faltar), com as frases do servidor (leva pré-final, item 2). */
+const TEXTO_ERRO_TOTAIS: Record<ErroTotais, string> = {
   SEM_ITENS: 'Adicione pelo menos um produto.',
+  QUANTIDADE_INVALIDA: 'Quantidade com até 4 casas, ponto como separador e maior que zero.',
+  PRECO_INVALIDO: 'O preço de algum produto não confere. Confira o preço de venda no cardápio.',
+  PAGAMENTO_INVALIDO: 'O valor de cada pagamento tem de ser maior que zero.',
+  ITEM_SEM_VALOR: 'Cada produto do cupom tem de valer pelo menos R$ 0,01. Confira a quantidade.',
   DESCONTO_INVALIDO: 'O desconto tem de ser menor que o valor dos produtos.',
   PAGAMENTO_INSUFICIENTE: 'A soma dos pagamentos é menor que o total.',
   TROCO_INVALIDO: 'Troco só sai do dinheiro, e no máximo o valor recebido em dinheiro.',
@@ -54,13 +60,17 @@ export function Emitir({ situacao, situacaoEm, situacaoErro, onTentarSituacao }:
 }) {
   const router = useRouter();
   const qc = useQueryClient();
+  // só o admin lê (a loja levaria dois 403 a cada visita enquanto o `me` carrega; leva pré-final, item 16)
+  const { data: me } = useMe();
+  const admin = me?.perfil === 'admin';
   const produtosQ = useQuery({
     queryKey: CHAVES_CUPOM.produtos,
     queryFn: () => produtosCupom(),
     refetchOnWindowFocus: true,
     refetchOnMount: 'always',
+    enabled: admin,
   });
-  const ultimoQ = useQuery({ queryKey: CHAVES_CUPOM.ultimo, queryFn: () => listarCupons({ limite: 1 }) });
+  const ultimoQ = useQuery({ queryKey: CHAVES_CUPOM.ultimo, queryFn: () => listarCupons({ limite: 1 }), enabled: admin });
 
   // ---------------------------------------------------------------------------------------------------------------- venda
   // a chave da venda e a trava do "não sei se saiu": só `depoisDoEnvio` as muda (a chave, só depois de uma resposta com cupom)
@@ -86,6 +96,8 @@ export function Emitir({ situacao, situacaoEm, situacaoErro, onTentarSituacao }:
   const [verCategorias, setVerCategorias] = useState(false);
   const [categoria, setCategoria] = useState<string | null>(null);
   const [recem, setRecem] = useState<string | null>(null);
+  /** A linha "Acabou de entrar" à vista; fora da busca ela fica invisível, mas ocupando o lugar (sem deslocar o layout). */
+  const [recemVisivel, setRecemVisivel] = useState(false);
   const [anuncio, setAnuncio] = useState('');
 
   const refBusca = useRef<HTMLInputElement>(null);
@@ -207,6 +219,7 @@ export function Emitir({ situacao, situacaoEm, situacaoErro, onTentarSituacao }:
     setCarrinho(nova);
     setForaDaVenda([]);
     setRecem(p.item_cardapio_id);
+    setRecemVisivel(true);
     setTermo('');
     setDestaque(0);
     anunciar(nova, p.item_cardapio_id);
@@ -320,7 +333,7 @@ export function Emitir({ situacao, situacaoEm, situacaoErro, onTentarSituacao }:
       pg.pagamentos,
     );
     if ('erro' in t) {
-      setConferir((c) => ({ ...c, fase: { fase: 'erro', mensagem: TEXTO_ERRO_TOTAIS[t.erro] ?? 'Confira a venda.', verEmitidos: false } }));
+      setConferir((c) => ({ ...c, fase: { fase: 'erro', mensagem: TEXTO_ERRO_TOTAIS[t.erro], verEmitidos: false } }));
       return null;
     }
     return {
@@ -468,7 +481,7 @@ export function Emitir({ situacao, situacaoEm, situacaoErro, onTentarSituacao }:
             <Panel title="Produtos" className="min-w-0">
               <div
                 className="space-y-2"
-                onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setRecem(null); }}
+                onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setRecemVisivel(false); }}
               >
                 <Label htmlFor="cupom-busca">Buscar produto</Label>
                 <Input
@@ -485,8 +498,13 @@ export function Emitir({ situacao, situacaoEm, situacaoErro, onTentarSituacao }:
                   Ver por categoria
                 </button>
 
+                {/* some sem deslocar o layout (o lugar fica reservado): sair da busca não move o que está embaixo, e o 1º toque no
+                    celular cai onde a pessoa mirou (leva pré-final, item 15) */}
                 {recemLinha && (
-                  <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/40 p-2 text-sm">
+                  <div
+                    aria-hidden={!recemVisivel}
+                    className={cn('flex flex-wrap items-center gap-2 rounded-lg border bg-muted/40 p-2 text-sm', !recemVisivel && 'invisible')}
+                  >
                     <span className="min-w-0 break-words">Acabou de entrar: {recemLinha.nome}</span>
                     <span className="ml-auto flex items-center gap-1">
                       <Button type="button" variant="outline" size="icon" className="h-11 w-11" aria-label={`Diminuir ${recemLinha.nome}`}

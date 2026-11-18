@@ -7,12 +7,12 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Ban, CheckCircle2, CircleAlert, Loader2 } from 'lucide-react';
 import {
-  consultarCupom, cupomFiscal, danfeCupom, lancarVendaCupom, reenviarCupom, situacaoCupomFiscal, xmlCupom, type CupomDetalhe,
+  consultarCupom, cupomFiscal, danfeCupom, lancarVendaCupom, reenviarCupom, situacaoCupomFiscal, statusDoErro, xmlCupom, type CupomDetalhe,
 } from '@/lib/erp-api';
 import { errCode, errMsg } from '@/lib/db';
 import { useMe } from '@/lib/auth';
 import {
-  caixaDoCupom, caixaDoTopo, CHAVES_CUPOM, documentoFormatado, linhaPrazoCancelar, linhasConferir, linkDoAtalho, NOME_PAGAMENTO, nomeDoArquivo,
+  caixaDoCupom, caixaDoTopo, CHAVES_CUPOM, documentoFormatado, falhaIncerta, linhaPrazoCancelar, linhasConferir, linkDoAtalho, NOME_PAGAMENTO, nomeDoArquivo,
   nomesDosPagamentos, quandoSp, quantidadeParaTela, reais, tagDoCupom, textoTentativa, toastDaConsulta, vendaDoCupom, type IconeCupom,
   type TPag,
 } from '@/lib/cupom';
@@ -168,6 +168,8 @@ export default function CupomPage() {
     } catch (e) {
       if (nome === 'lancar') setErroVenda(errMsg(e));
       else setErroAcao(errMsg(e));
+      // sem resposta do nosso servidor o "Enviar de novo" pode ter saído: relê o cupom (situação e ações novas; leva pré-final, item 16)
+      if (nome === 'reenviar' && falhaIncerta(statusDoErro(e), errCode(e))) void qc.invalidateQueries({ queryKey: CHAVES_CUPOM.cupom(id) });
     } finally {
       setOcupado(null);
     }

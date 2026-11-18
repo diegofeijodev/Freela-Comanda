@@ -254,7 +254,12 @@ function QuadroSituacao({ irPara }: { irPara(alvo: AlvoFalta): void }) {
             ) : (
               <Button
                 className="h-11 w-full whitespace-normal sm:w-auto" disabled={acao.ocupado || falta.length > 0} aria-describedby={falta.length > 0 ? 'cupom-ligar-ajuda' : undefined}
-                onClick={() => (ligado === 'producao' ? setValendo(true) : void ligar(ligado))}
+                onClick={() => {
+                  if (ligado !== 'producao') return void ligar(ligado);
+                  // um erro velho do quadro (do "Desligar", por exemplo) não aparece dentro do diálogo novo (leva pré-final, item 16)
+                  acao.setErro(null);
+                  setValendo(true);
+                }}
               >
                 {acao.ocupado ? <><Loader2 className="mr-2 h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden />Ligando…</>
                   : botao === 'ligar_de_novo' ? 'Ligar a emissão de novo' : 'Ligar a emissão de cupons'}

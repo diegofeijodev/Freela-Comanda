@@ -3,7 +3,16 @@
 
 export type TPag = '01' | '03' | '04' | '10' | '11' | '17';
 
-export type ErroTotais = 'SEM_ITENS' | 'DESCONTO_INVALIDO' | 'PAGAMENTO_INSUFICIENTE' | 'TROCO_INVALIDO' | 'VALOR_MAXIMO';
+export type ErroTotais =
+  | 'SEM_ITENS'
+  | 'QUANTIDADE_INVALIDA'
+  | 'PRECO_INVALIDO'
+  | 'PAGAMENTO_INVALIDO'
+  | 'ITEM_SEM_VALOR'
+  | 'DESCONTO_INVALIDO'
+  | 'PAGAMENTO_INSUFICIENTE'
+  | 'TROCO_INVALIDO'
+  | 'VALOR_MAXIMO';
 
 export type Totais = {
   produtos: bigint;
@@ -24,7 +33,7 @@ export function quantidadeValida(q: string): boolean {
   return quantidadeMilesimos(q) > 0n;
 }
 
-/** Quantidade em décimos de milésimo (4 casas). Assume `q` já validada. */
+/** Quantidade em décimos de milésimo (1/10000; 4 casas). Assume `q` já validada (`quantidadeValida`). */
 function quantidadeMilesimos(q: string): bigint {
   const [inteiro, frac = ''] = q.split('.');
   return BigInt(inteiro + frac.padEnd(4, '0'));
@@ -64,7 +73,13 @@ export function calcularTotais(
   pagamentos: { tPag: TPag; valor: bigint }[],
 ): Totais | { erro: ErroTotais } {
   if (itens.length === 0) return { erro: 'SEM_ITENS' };
+  // as guardas vêm antes de qualquer conta: entrada torta é erro de regra (com frase), nunca o BigInt lançando
+  if (itens.some((i) => !quantidadeValida(i.quantidade))) return { erro: 'QUANTIDADE_INVALIDA' };
+  if (itens.some((i) => typeof i.precoCentavos !== 'bigint' || i.precoCentavos < 0n)) return { erro: 'PRECO_INVALIDO' };
+  if (pagamentos.some((p) => typeof p.valor !== 'bigint' || p.valor <= 0n)) return { erro: 'PAGAMENTO_INVALIDO' };
   const brutos = itens.map((i) => valorItemCentavos(i.quantidade, i.precoCentavos));
+  // item que arredonda para 0 centavo não entra no cupom (a montagem recusa vProd zero): sem isto, todos zerados sairiam como desconto
+  if (brutos.some((b) => b <= 0n)) return { erro: 'ITEM_SEM_VALOR' };
   const produtos = brutos.reduce((a, v) => a + v, 0n);
   if (desconto < 0n || desconto >= produtos) return { erro: 'DESCONTO_INVALIDO' };
   const total = produtos - desconto;
@@ -78,17 +93,18 @@ export function calcularTotais(
   return { produtos, desconto, total, troco, itens: brutos.map((bruto, i) => ({ bruto, desconto: descontos[i] })) };
 }
 
-/** Centavos -> "24.00". */
+/** Centavos (0 ou mais) -> "24.00". Negativo não é valor de cupom: lança. */
 export function decimal2(c: bigint): string {
-  const neg = c < 0n;
-  const s = (neg ? -c : c).toString().padStart(3, '0');
-  return `${neg ? '-' : ''}${s.slice(0, -2)}.${s.slice(-2)}`;
+  if (c < 0n) throw new Error('Valor negativo não entra no cupom.');
+  const s = c.toString().padStart(3, '0');
+  return `${s.slice(0, -2)}.${s.slice(-2)}`;
 }
 
-/** Quantidade validada -> "2.0000". */
+/** Quantidade (`quantidadeValida`) -> "2.0000", sem zero à esquerda ("02" -> "2.0000": o esquema não aceita "02.0000"). Fora do formato: lança. */
 export function decimal4(q: string): string {
+  if (!quantidadeValida(q)) throw new Error('Quantidade fora do formato.');
   const [inteiro, frac = ''] = q.split('.');
-  return `${inteiro}.${frac.padEnd(4, '0')}`;
+  return `${BigInt(inteiro)}.${frac.padEnd(4, '0')}`;
 }
 
 
@@ -175,10 +191,9 @@ export function somarQuantidade(qTela: string, delta: 1 | -1): string {
   return quantidadeParaTela(`${s.slice(0, -4)}.${s.slice(-4)}`);
 }
 
-/** "−" só com mais de 1 unidade. */
+/** "−" só quando tira 1 unidade de verdade (2 ou mais): entre 1 e 2 ele não teria efeito (`somarQuantidade` nunca desce abaixo de 1). */
 export function podeDiminuir(qTela: string): boolean {
-  const q = quantidadeDaTela(qTela);
-  return quantidadeValida(q) && valorItemCentavos(q, 10000n) > 10000n;
+  return quantidadeValida(quantidadeDaTela(qTela)) && somarQuantidade(qTela, -1) !== qTela;
 }
 
 /** Erro do número da quantidade (no blur), ou null. */
@@ -249,14 +264,18 @@ const NA_FORMA: Record<TPag, string> = {
   '11': 'No vale-refeição',
   '10': 'No vale-alimentação',
 };
-/** O nome do DANFE: o da tabela de `tPag` do leiaute da NF-e (o `xPag` do XML, quando vem, ganha). */
+/**
+ * O nome do DANFE: o da "Tabela de Meios de pagamento" do Portal NF-e (publicada em 06/03/2026; leva pré-final, item 12), conferido na
+ * fonte; o `xPag` do XML, quando vem, ganha. O 17 é o PIX dinâmico (QR code dinâmico); o PIX por QR estático ou chave é o 20, que o
+ * Comanda ainda não usa (pergunta ao contador).
+ */
 export const NOME_OFICIAL_PAGAMENTO: Record<string, string> = {
   '01': 'Dinheiro',
   '03': 'Cartão de Crédito',
   '04': 'Cartão de Débito',
   '10': 'Vale Alimentação',
   '11': 'Vale Refeição',
-  '17': 'Pagamento Instantâneo (PIX)',
+  '17': 'Pagamento Instantâneo (PIX) - Dinâmico',
 };
 /** "Dinheiro" ou "Dinheiro + PIX" (sem repetir a forma). */
 export function nomesDosPagamentos(p: { t_pag: string }[]): string {
@@ -510,7 +529,7 @@ const semPontoFinal = (s: string) => s.trim().replace(/[\s.]+$/u, '');
 export type CupomParaCaixa = Pick<
   CupomDetalhe,
   | 'situacao' | 'numero' | 'dh_emi' | 'autorizada_em' | 'n_prot' | 'cancelado_em' | 'cancelamento_motivo' | 'descartado_em'
-  | 'descarte_motivo' | 'numero_reaproveitavel' | 'c_stat' | 'x_motivo' | 'mensagem'
+  | 'descarte_motivo' | 'descartado_por_nome' | 'numero_reaproveitavel' | 'c_stat' | 'x_motivo' | 'mensagem'
 > & { recusa: RecusaCupom | null };
 
 /**
@@ -573,11 +592,13 @@ export function caixaDoCupom(c: CupomParaCaixa): { tom: TomCupom; textos: string
       };
     case 'descartado': {
       const quando = c.descartado_em ? ` em ${diaMesSp(c.descartado_em)} às ${horaSp(c.descartado_em)}` : '';
+      // "por Diego" (UX 3.1): o servidor manda quem descartou (leva pré-final, item 11); os descartes antigos vêm sem o nome
+      const por = c.descartado_por_nome ? ` por ${c.descartado_por_nome}` : '';
       const motivo = c.descarte_motivo ? ` Motivo: ${semPontoFinal(c.descarte_motivo)}.` : '';
       const numero = c.numero_reaproveitavel
         ? `O número ${c.numero} vai para o próximo cupom.`
         : `O número ${c.numero} não volta a ser usado.`;
-      return { tom: 'muted', textos: [`Descartado${quando}.${motivo} ${numero}`], detalhe: null };
+      return { tom: 'muted', textos: [`Descartado${quando}${por}.${motivo} ${numero}`], detalhe: null };
     }
   }
 }
@@ -687,7 +708,7 @@ export type CaixaTopo =
   | { linha: 1; formulario: false }
   | { linha: 2; formulario: false; falta: { codigo: CodigoFalta; texto: string }[] }
   | { linha: 3; formulario: false; aviso: string | null }
-  | { linha: 4 | 5 | 6; formulario: true; tom: 'bad' | 'warn'; texto: string; link: { rotulo: string; href: string } | null; botao: string };
+  | { linha: 4 | 5 | 6 | 7; formulario: true; tom: 'bad' | 'warn'; texto: string; link: { rotulo: string; href: string } | null; botao: string };
 
 /** O link de cada parada (UX 6.1), até o campo que corrige: o certificado, o código de segurança (QR) ou a série do ambiente. */
 function linkDaParada(
@@ -742,6 +763,18 @@ export function caixaDoTopo(s: SituacaoCupomFiscal, agora: Date): CaixaTopo | nu
       tom: 'warn',
       texto: `A SEFAZ bloqueou os envios deste CNPJ por excesso de recusas. O caixa da loja pode estar bloqueado também: confira se ele está emitindo. Nada sai daqui até as ${h}.`,
       link: null,
+      botao: `Envio volta às ${h}`,
+    };
+  }
+  // linha 7 (leva pré-final, item 11): o teto de 10 recusas na hora, que o servidor manda em `recusas_ate`, avisado ANTES de enviar
+  if (s.recusas_ate != null && new Date(s.recusas_ate).getTime() > agora.getTime()) {
+    const h = horaSp(s.recusas_ate);
+    return {
+      linha: 7,
+      formulario: true,
+      tom: 'warn',
+      texto: `Muitas recusas da SEFAZ na última hora. Para não bloquear o CNPJ, o envio volta às ${h}. Enquanto isso, confira os dados dos produtos.`,
+      link: { rotulo: 'Ver os produtos', href: '/cupom?aba=produtos' },
       botao: `Envio volta às ${h}`,
     };
   }
@@ -851,8 +884,9 @@ const primeiraMaiuscula = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 type PendentesTela = { total: number; primeiro: { serie: number; numero: number; tipo: TipoPendente } | null };
 
 /**
- * A faixa de pendentes (UX 4.2), pelo `pendentes` da situação. O `tipo` vem do servidor: `sem_resposta` inclui o `cancelando` e o
- * `enviando` vencido; `venda_pendente` inclui a venda do cupom cancelado que não saiu do estoque (a frase é a da UX, do autorizado).
+ * A faixa de pendentes (UX 4.2), pelo `pendentes` da situação. O `tipo` vem do servidor: `sem_resposta` inclui o `enviando` vencido; o
+ * `cancelando` e a venda do cupom cancelado que não saiu do estoque (`venda_a_desfazer`) vêm separados, com frase própria (leva
+ * pré-final, item 13: as da UX 4.2 não servem para eles).
  */
 export function textoPendentes(p: PendentesTela): string | null {
   if (p.total <= 0) return null;
@@ -866,6 +900,10 @@ export function textoPendentes(p: PendentesTela): string | null {
       return `O cupom nº ${n} não saiu. Envie de novo ou descarte.`;
     case 'venda_pendente':
       return `O cupom nº ${n} está autorizado, mas a venda não baixou o estoque.`;
+    case 'cancelando':
+      return `O cancelamento do cupom nº ${n} ainda não foi confirmado pela SEFAZ. Consulte o cupom.`;
+    case 'venda_a_desfazer':
+      return `O cupom nº ${n} foi cancelado, mas a venda continua no estoque.`;
   }
 }
 

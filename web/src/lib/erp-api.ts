@@ -517,7 +517,8 @@ export type SituacaoCupom =
   | 'enviando' | 'nao_enviado' | 'sem_resposta' | 'nao_consta' | 'rejeitado' | 'autorizado' | 'cancelando' | 'denegado' | 'cancelado' | 'descartado';
 export type AcaoCupom = 'enviar_de_novo' | 'consultar' | 'cancelar' | 'descartar' | 'lancar_venda' | 'imprimir';
 export type VendaEstoque = 'lancada' | 'pendente' | 'desfeita' | 'desfazer_pendente' | 'teste' | 'nao_lanca';
-export type TipoPendente = 'sem_resposta' | 'nao_saiu' | 'recusado' | 'venda_pendente';
+/** O tipo do 1º pendente (o servidor separa `cancelando` e `venda_a_desfazer`, que a frase da UX 4.2 não cobre). */
+export type TipoPendente = 'sem_resposta' | 'cancelando' | 'nao_saiu' | 'recusado' | 'venda_pendente' | 'venda_a_desfazer';
 export type SituacaoAmbienteCupom = 'ok' | 'parada_656' | 'parada_certificado' | 'parada_configuracao' | 'parada_serie_em_uso';
 export type FamiliaRecusa = 'produto' | 'empresa' | 'consumidor' | 'valores' | 'hora' | 'outra';
 export type MotivoProduto =
@@ -537,6 +538,8 @@ export type SituacaoCupomFiscal = {
   situacao: SituacaoAmbienteCupom;
   mensagem: string | null;
   bloqueado_ate: string | null;
+  /** O teto de 10 recusas da SEFAZ na última hora atingido: o envio volta a esta hora (UX 2.1, linha 7); null = há folga. */
+  recusas_ate: string | null;
   serie: number | null;
   proximo_numero: number;
   falta: { codigo: CodigoFalta; texto: string }[];
@@ -704,6 +707,8 @@ export type CupomDetalhe = {
   venda_erro: string | null;
   descartado_em: string | null;
   descarte_motivo: string | null;
+  /** Quem descartou ("Descartado às 14h12 por Ana", UX 3.1); null nos descartes antigos. */
+  descartado_por_nome: string | null;
   emitido_por_nome: string | null;
   criado_em: string;
   /** A hora do servidor (a contagem da tela não depende do relógio do aparelho). */
