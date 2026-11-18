@@ -39,7 +39,7 @@ import {
   eventoDoCupom,
   fechamento,
   horasDe,
-  nfce503,
+  outroAmbiente,
   paraAcoes,
   r409,
   r422,
@@ -81,7 +81,7 @@ export class CupomCancelamentoService {
     const a = this.emissao.ambienteLigado();
     const m = motivoDoCancelamento(motivo);
     const c0 = await this.emissao.cupomOu404(this.prisma, id);
-    if (c0.ambiente !== a) throw nfce503();
+    if (c0.ambiente !== a) throw outroAmbiente(c0, 'cancelar');
     await this.conferirSituacao(this.prisma, c0, agora);
     const cert = await this.emissao.certificado(c0.chave.slice(6, 20), agora);
 

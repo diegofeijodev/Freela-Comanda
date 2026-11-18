@@ -63,7 +63,7 @@ import {
 import { SefazErro, sefazErro } from '../sefaz/sefaz-erro';
 import { CupomCadastroService, type Autor, type SituacaoCupomFiscal } from './cadastro.service';
 import { decifrarCsc } from './csc';
-import { FRASE_ERRO, FRASE_RETORNO, FRASES_CADASTRO, FRASES_EMISSAO, TEXTO_FALTA, type CodigoFalta } from './frases';
+import { FRASE_ERRO, FRASE_RETORNO, FRASES_CADASTRO, FRASES_EMISSAO, TEXTO_FALTA, type AcaoDaFrase, type CodigoFalta } from './frases';
 import { corpoEnviNfe, inserirSupl, MontagemNfceErro, montarNfe, montarNfeProc, type DadosNfce, type ItemXml } from './montagem-xml';
 import { qrCodeV2, URL_CHAVE } from './qrcode-nfce';
 import {
@@ -246,10 +246,15 @@ const tamanho = (s: string) => Array.from(s).length;
 const mais = (d: Date, ms: number) => new Date(d.getTime() + ms);
 /** `cStat` que cabe no CHECK do cupom (100–9999); o adaptador já garante, aqui é o cinto. */
 export const cStatGravavel = (c: number | null | undefined): number | null => (c != null && c >= 100 && c <= 9999 ? c : null);
-/** Data e hora da SEFAZ com fuso explícito; sem fuso ou ilegível = null. */
+/**
+ * Data e hora da SEFAZ (`dhRecbto`, `dhRegEvento`): com fuso, como veio; SEM fuso = horário de Brasília (−03:00, sem horário de verão
+ * desde 2019; onda final, item 4: nunca o relógio do servidor nem "agora"); ilegível = null (quem chama decide: `autorizada_em` fica sem
+ * prazo conhecido). O −03:00 vai escrito: `Date.parse` sem fuso usaria o fuso do processo.
+ */
 export function dataSefaz(s: string | null | undefined): Date | null {
-  if (!s || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?(Z|[+-]\d{2}:\d{2})$/.test(s)) return null;
-  const t = Date.parse(s);
+  const m = s ? /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?)(Z|[+-]\d{2}:\d{2})?$/.exec(s) : null;
+  if (!m) return null;
+  const t = Date.parse(`${m[1]}${m[2] ?? '-03:00'}`);
   return Number.isNaN(t) ? null : new Date(t);
 }
 const aammDe = (dhEmi: Date): string => {
@@ -306,6 +311,9 @@ export const nfce503 = () => new ServiceUnavailableException({ code: 'NFCE_DESLI
 const invalido = (message: string) => new BadRequestException({ code: 'VALIDATION_ERROR', message });
 export const r422 = (code: string, message: string) => new UnprocessableEntityException({ code, message });
 export const r409 = (code: string, message: string) => new ConflictException({ code, message });
+/** O cupom é do outro ambiente (o servidor trocou de ambiente com ele pendente): 409 com frase própria, nunca o "não está ativada" (onda final, item 6). */
+export const outroAmbiente = (c: Pick<nfce_cupons, 'ambiente'>, acao: AcaoDaFrase) =>
+  r409('NFCE_OUTRO_AMBIENTE', FRASE_ERRO.NFCE_OUTRO_AMBIENTE(c.ambiente as AmbienteSefaz, acao));
 const naoAchei = () => new NotFoundException({ code: 'NOT_FOUND', message: FRASES_CADASTRO.naoEncontrado });
 export const situacaoErro = (s: SituacaoCupom, acao: AcaoCupom) => r409('NFCE_SITUACAO', FRASE_ERRO.NFCE_SITUACAO(s, acao));
 
@@ -511,7 +519,7 @@ export class CupomEmissaoService {
   async reenviar(id: string, autor: Autor, agora: Date = new Date()): Promise<CupomDetalhe> {
     const a = this.ambienteLigado();
     const c0 = await this.cupomOu404(this.prisma, id);
-    if (c0.ambiente !== a) throw nfce503();
+    if (c0.ambiente !== a) throw outroAmbiente(c0, 'enviar_de_novo');
     if (c0.envios >= MAX_ENVIOS) throw r409('NFCE_LIMITE_ENVIOS', FRASE_ERRO.NFCE_LIMITE_ENVIOS);
     await this.conferirAcao(this.prisma, c0, 'enviar_de_novo', agora);
     const cad = await this.cadastroPronto(a);
@@ -606,7 +614,7 @@ export class CupomEmissaoService {
   async consultar(id: string, autor: Autor, agora: Date = new Date()): Promise<CupomDetalhe> {
     const a = this.ambienteLigado();
     const c0 = await this.cupomOu404(this.prisma, id);
-    if (c0.ambiente !== a) throw nfce503();
+    if (c0.ambiente !== a) throw outroAmbiente(c0, 'consultar');
     await this.conferirAcao(this.prisma, c0, 'consultar', agora);
     const cert = await this.certificado(c0.chave.slice(6, 20), agora);
 
@@ -750,7 +758,7 @@ export class CupomEmissaoService {
         dados = documento ? null : { situacao: 'sem_resposta', numero_reaproveitavel: false, atualizado_em: agora };
       } else if (semProva) {
         dados = semProvaAut
-          ? { ...camposDaAutorizacao(semProvaAut.p, semProvaAut.aut, true, agora), situacao: 'cancelando', atualizado_em: agora }
+          ? { ...camposDaAutorizacao(semProvaAut.p, semProvaAut.aut, true), situacao: 'cancelando', atualizado_em: agora }
           : !documento
             ? { situacao: 'sem_resposta', numero_reaproveitavel: false, atualizado_em: agora }
             : c.situacao === 'autorizado'
@@ -1914,7 +1922,8 @@ function dadosDaAutorizacao(
       n_prot: p.nProt,
       dig_val: p.digVal,
       // nota 7: `autorizada_em` = o `dhRecbto` do protocolo (base dos 30 min do cancelamento)
-      autorizada_em: acao.cupom === 'autorizado' ? (dataSefaz(p.dhRecbto) ?? agora) : null,
+      // `dhRecbto` ilegível = sem prazo conhecido (sem "Cancelar"), nunca `agora` (onda final, item 4)
+      autorizada_em: acao.cupom === 'autorizado' ? dataSefaz(p.dhRecbto) : null,
       alerta_c_msg: acao.alerta?.c_msg ?? null,
       alerta_x_msg: acao.alerta?.x_msg ?? null,
       xml_autorizado: montarNfeProc(nfe, p.xml),
@@ -1975,7 +1984,7 @@ function cupomDepoisDaConsulta(
     if (mostraANota(r)) dados.numero_reaproveitavel = false;
     if (precisaDaTentativa(acao, p) && comProtocolo(p)) {
       if (aut === null) throw new Error('consulta: autorização sem a tentativa conferida');
-      Object.assign(dados, camposDaAutorizacao(p, aut, acao.cupom !== 'denegado', agora));
+      Object.assign(dados, camposDaAutorizacao(p, aut, acao.cupom !== 'denegado'));
     } else if (acao.cupom === 'nao_consta') {
       Object.assign(dados, { c_stat: cStatGravavel(r.cStat), x_motivo: motivoSefaz(r.xMotivo) || null });
     }
@@ -1994,14 +2003,14 @@ function cupomDepoisDaConsulta(
  * Os campos da autorização (ou do uso negado) a partir do protocolo conferido e da tentativa dele, no UPDATE único que congela o cupom:
  * o `dh_emi` é o da tentativa autorizada (pode ser uma anterior; leva pré-final, item 7); o aviso do 120 vem do próprio protocolo.
  */
-function camposDaAutorizacao(p: ProtocoloNfce, aut: Tentativa, autorizado: boolean, agora: Date): Prisma.nfce_cuponsUpdateInput {
+function camposDaAutorizacao(p: ProtocoloNfce, aut: Tentativa, autorizado: boolean): Prisma.nfce_cuponsUpdateInput {
   return {
     dh_emi: aut.dhEmi,
     c_stat: cStatGravavel(p.cStat),
     x_motivo: motivoSefaz(p.xMotivo) || null,
     n_prot: p.nProt,
     dig_val: p.digVal,
-    autorizada_em: autorizado ? (dataSefaz(p.dhRecbto) ?? agora) : null,
+    autorizada_em: autorizado ? dataSefaz(p.dhRecbto) : null, // ilegível = sem prazo conhecido, nunca `agora` (onda final, item 4)
     alerta_c_msg: p.cStat === 120 ? p.cMsg : null,
     alerta_x_msg: p.cStat === 120 ? p.xMsg : null,
     xml_autorizado: montarNfeProc(aut.nfe, p.xml),

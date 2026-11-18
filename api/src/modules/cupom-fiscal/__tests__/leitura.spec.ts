@@ -21,7 +21,7 @@ import { cifrarCsc } from '../csc';
 import { danfeDoNfeProc } from '../danfe';
 import { CupomEmissaoService, type VendaParaCupom } from '../emissao.service';
 import { FRASE_ERRO, FRASES_LEITURA } from '../frases';
-import { CupomLeituraService, filtroDaLista, procEventoDoCancelamento } from '../leitura.service';
+import { CupomLeituraService, faixasPuladasAMao, filtroDaLista, procEventoDoCancelamento } from '../leitura.service';
 import { XPROD_HOMOLOGACAO } from '../montagem-xml';
 import { URL_CHAVE, URL_QR } from '../qrcode-nfce';
 import { zipSemCompressao } from '../zip';
@@ -872,6 +872,75 @@ describe('XML do mês para o contador (GET xml-do-mes)', () => {
     const h = await m.leitura.xmlDoMes('2026-11', 'homologacao', T0);
     expect(h.nome).toBe('cupons-de-teste-2026-11.zip');
     expect(lerZip(h.zip).map((a) => a.nome)).toHaveLength(2);
+  });
+
+  it('número pulado à mão (onda final, item 2): a faixa entra no csv do mês em que foi pulada, numa linha, com quem e quando', async () => {
+    const m = montar();
+    await pronto(m, 'producao');
+    const MARIA: Autor = { id: '22222222-2222-4222-8222-222222222222', nome: 'Maria' };
+    const csv = async (mes: string) =>
+      lerZip((await m.leitura.xmlDoMes(mes, undefined, mais(T0, 60 * MIN))).zip)
+        .find((a) => a.nome === 'numeros-nao-usados.csv')!
+        .dados.toString('utf8')
+        .replace('\ufeff', '')
+        .trim()
+        .split('\n')
+        .slice(1);
+    // 20/10 (Brasília): o 1 e o 2 pulados; 17/11: o 3 vira cupom e alguém digita 1000 em vez de 10
+    await m.cadastro.salvarAmbiente('producao', { proximo_numero: 3 }, EU, new Date('2026-10-20T15:00:00Z'));
+    await emitido(m, 'producao', T0);
+    await m.cadastro.salvarAmbiente('producao', { proximo_numero: 1000 }, EU, mais(T0, MIN));
+    expect(await csv('2026-10')).toEqual(['2;1 a 2;pulado à mão em 20/10 por Diego']);
+    expect(await csv('2026-11')).toEqual(['2;4 a 999;pulado à mão em 17/11 por Diego']);
+    // o erro de digitação corrigido: só a faixa que ficou de fora continua (o 10 em diante ainda vai ser usado)
+    await m.cadastro.salvarAmbiente('producao', { proximo_numero: 10 }, MARIA, mais(T0, 2 * MIN));
+    expect(await csv('2026-11')).toEqual(['2;4 a 9;pulado à mão em 17/11 por Diego']);
+    await m.cadastro.salvarAmbiente('producao', { proximo_numero: 4 }, MARIA, mais(T0, 3 * MIN));
+    expect(await csv('2026-11')).toEqual([]);
+    // um número só; trocar a série não é pulo (a série nova começa no 1); o modo de teste tem o seu próprio
+    await m.cadastro.salvarAmbiente('producao', { proximo_numero: 5 }, MARIA, mais(T0, 4 * MIN));
+    await m.cadastro.salvarAmbiente('producao', { serie: 3 }, MARIA, mais(T0, 5 * MIN));
+    expect(await csv('2026-11')).toEqual(['2;4;pulado à mão em 17/11 por Maria']);
+    const h = await m.leitura.xmlDoMes('2026-11', 'homologacao', mais(T0, 60 * MIN));
+    expect(
+      lerZip(h.zip)
+        .find((a) => a.nome === 'numeros-nao-usados.csv')!
+        .dados.toString('utf8'),
+    ).not.toContain('pulado');
+  });
+
+  it('faixasPuladasAMao: subir pula, descer devolve, voltar a uma série no N devolve do N em diante; linha sem os números não conta', () => {
+    const l = (
+      dia: string,
+      campos: string[],
+      serie: number | null,
+      antes: number | null,
+      depois: number | null,
+      nome: string | null = 'Diego',
+    ) => ({
+      campos,
+      serie,
+      numero_antes: antes === null ? null : BigInt(antes),
+      numero_depois: depois === null ? null : BigInt(depois),
+      feito_por_nome: nome,
+      feito_em: new Date(`${dia}T15:00:00Z`),
+    });
+    const linhas = [
+      l('2026-11-02', ['proximo_numero'], 2, 42, 1000),
+      l('2026-11-03', ['serie', 'proximo_numero'], 3, 1000, 1),
+      l('2026-11-04', ['proximo_numero'], 3, 1, 8, null),
+      l('2026-11-05', ['serie', 'proximo_numero'], 2, 8, 500),
+      l('2026-11-06', ['proximo_numero'], null, null, null), // gravada antes da coluna existir: não se sabe a faixa
+      l('2026-12-01', ['proximo_numero'], 2, 500, 501),
+    ];
+    expect(faixasPuladasAMao(linhas, '2026-11')).toEqual([
+      { serie: 2, numero: 42n, ate: 499n, motivo: 'pulado à mão em 02/11 por Diego' },
+      { serie: 3, numero: 1n, ate: 7n, motivo: 'pulado à mão em 04/11' },
+    ]);
+    expect(faixasPuladasAMao(linhas, '2026-12')).toEqual([
+      { serie: 2, numero: 500n, ate: 500n, motivo: 'pulado à mão em 01/12 por Diego' },
+    ]);
+    expect(faixasPuladasAMao(linhas, '2026-10')).toEqual([]);
   });
 
   it('mes fora de AAAA-MM = 400 VALIDATION_ERROR', async () => {

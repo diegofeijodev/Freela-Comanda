@@ -190,6 +190,14 @@ const ACAO_CUPOM: Record<AcaoDaFrase, string> = {
 /** Erros de validação e travas: UX §6.2, pelo código do erro (`NFCE_PARADA` = a mensagem guardada no ambiente). */
 export const FRASE_ERRO = {
   NFCE_DESLIGADA: 'A emissão de cupom fiscal não está ativada neste servidor.',
+  /**
+   * Nova (onda final, item 6; a UX não fixa), no estilo da UX §6.3: o cupom é do OUTRO ambiente (o servidor trocou entre o modo de teste e
+   * o valendo com ele pendente). O de teste não vale nada; o valendo precisa do servidor de volta no valendo (suporte).
+   */
+  NFCE_OUTRO_AMBIENTE: (cupom: AmbienteSefaz, acao: AcaoDaFrase) =>
+    cupom === 'homologacao'
+      ? `Este é um cupom de teste, e o Freela Comanda agora emite cupons valendo; não dá para ${ACAO_CUPOM[acao]}.`
+      : `Este cupom vale como documento fiscal, e o Freela Comanda agora está no modo de teste da SEFAZ; não dá para ${ACAO_CUPOM[acao]}. Fale com o suporte do Freela Comanda.`,
   NFCE_EMISSAO_DESLIGADA: 'A emissão de cupons está desligada. Ligue em Configurações → Cupom fiscal.',
   NFCE_CONFIG_INCOMPLETA: (itens: readonly string[]) => `Falta configurar o cupom fiscal: ${lista(itens)}.`,
   NFCE_SEM_ITENS: 'Adicione pelo menos um produto.',
@@ -283,6 +291,8 @@ export const FRASES_LEITURA = {
     naoConsta: 'A SEFAZ confirmou que não tem este cupom (ainda pendente no Comanda).',
     recusado: (codigo: number | null) =>
       `Recusado pela SEFAZ${codigo === null ? '' : ` (código ${codigo})`}: a SEFAZ não registrou este número (ainda pendente no Comanda).`,
+    /** Onda final, item 2 (literal do controlador): a faixa pulada em Configurações, com o dia (DD/MM, Brasília) e quem pulou. */
+    puladoAMao: (dia: string, nome: string | null) => `pulado à mão em ${dia}${nome ? ` por ${nome}` : ''}`,
   },
 } as const;
 

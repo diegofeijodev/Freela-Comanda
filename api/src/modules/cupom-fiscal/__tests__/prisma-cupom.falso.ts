@@ -110,7 +110,18 @@ function padroes(tabela: NomeTabela): Record<string, unknown> {
         alterada_em: null,
       };
     case 'nfce_ambientes_historico':
-      return { id: randomUUID(), campos: [], c_stat: null, mensagem: null, feito_por: null, feito_por_nome: null, feito_em: agora };
+      return {
+        id: randomUUID(),
+        campos: [],
+        c_stat: null,
+        mensagem: null,
+        feito_por: null,
+        feito_por_nome: null,
+        feito_em: agora,
+        serie: null,
+        numero_antes: null,
+        numero_depois: null,
+      };
     case 'nfce_perfis_fiscais':
       return {
         id: randomUUID(),
@@ -350,6 +361,12 @@ function conferir(t: TabelasCupom, n: NomeTabela, l: Record<string, any>, antiga
       if (!['ligada', 'desligada', 'parada_automatica', 'configuracao'].includes(l.evento)) throw check('nfce_ambientes_historico_evento');
       if (!SITUACOES_AMBIENTE.includes(l.situacao)) throw check('nfce_ambientes_historico_situacao');
       if (!Array.isArray(l.campos) || !l.campos.every((c: unknown) => typeof c === 'string')) throw check('text[] campos');
+      // migração 20261119120300_nfce_historico_numero (onda final, item 2)
+      const naFaixa = (n: unknown) => typeof n === 'bigint' && n >= 1n && n <= 999_999_999n;
+      const semNumeros = l.numero_antes === null && l.numero_depois === null;
+      if (!(semNumeros || (l.serie !== null && naFaixa(l.numero_antes) && naFaixa(l.numero_depois)))) {
+        throw check('nfce_ambientes_historico_numero');
+      }
       return;
     }
     case 'nfce_perfis_fiscais': {

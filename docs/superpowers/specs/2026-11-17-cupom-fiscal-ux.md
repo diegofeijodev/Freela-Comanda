@@ -638,6 +638,8 @@ As tabelas 6.1 e 6.2 continuam o texto final do que já estava nelas.
 | Produto fora do cupom | `FRASE_ERRO.NFCE_ITEM_INDISPONIVEL (nome_fora_do_padrao)` | "Chopp 1 litro não pode entrar no cupom: o nome no cupom tem emoji ou símbolo." |
 | Ação recusada pela situação (rótulos da §6.3) | `FRASE_ERRO.NFCE_SITUACAO (exemplo)` | "Este cupom está sem resposta da SEFAZ; não dá para consultar na SEFAZ." |
 | Arquivo pedido que o cupom não tem | `FRASE_ERRO.NFCE_SITUACAO (arquivo)` | "Este cupom está autorizado; não dá para baixar o arquivo do cancelamento (XML)." |
+| Cupom de teste com o servidor valendo (onda final, item 6; 409 `NFCE_OUTRO_AMBIENTE`) | `FRASE_ERRO.NFCE_OUTRO_AMBIENTE (teste)` | "Este é um cupom de teste, e o Freela Comanda agora emite cupons valendo; não dá para consultar na SEFAZ." |
+| Cupom valendo com o servidor no modo de teste (onda final, item 6) | `FRASE_ERRO.NFCE_OUTRO_AMBIENTE (valendo)` | "Este cupom vale como documento fiscal, e o Freela Comanda agora está no modo de teste da SEFAZ; não dá para cancelar. Fale com o suporte do Freela Comanda." |
 | Item que arredonda para 0 centavo (leva pré-final, item 2) | `FRASE_ERRO.NFCE_ITEM_SEM_VALOR` | "Cada produto do cupom tem de valer pelo menos R$ 0,01. Confira a quantidade." |
 | Cancelamento pedido há menos de 2 min (Ruling T9 I1) | `FRASE_ERRO.NFCE_CANCELAMENTO_CEDO` | "Espere até as 14h06 para pedir o cancelamento de novo: a SEFAZ bloqueia pedidos repetidos." |
 | Cancelamento pedido 3 vezes (Ruling T9 I1) | `FRASE_ERRO.NFCE_LIMITE_CANCELAMENTOS` | "O cancelamento deste cupom já foi pedido 3 vezes. Para não bloquear o CNPJ, não sai outro pedido: fale com o contador." |
@@ -658,6 +660,7 @@ As tabelas 6.1 e 6.2 continuam o texto final do que já estava nelas.
 | Números não usados (csv) | `FRASES_LEITURA.naoUsado.descartado` | "Descartado: a SEFAZ não registrou este número." |
 | Números não usados (csv) | `FRASES_LEITURA.naoUsado.naoSaiu` | "Não saiu: a SEFAZ não recebeu este cupom (ainda pendente no Comanda)." |
 | Números não usados (csv) | `FRASES_LEITURA.naoUsado.naoConsta` | "A SEFAZ confirmou que não tem este cupom (ainda pendente no Comanda)." |
+| Números não usados (csv): a faixa pulada em Configurações, numa linha ("42 a 999"; onda final, item 2) | `FRASES_LEITURA.naoUsado.puladoAMao` | "pulado à mão em 17/11 por Diego" |
 | Números não usados (csv) | `FRASES_LEITURA.naoUsado.recusado` | "Recusado pela SEFAZ (código 225): a SEFAZ não registrou este número (ainda pendente no Comanda)." |
 | Empresa no cupom | `FRASES_CADASTRO.municipioDeSp` | "O município tem de ser de SP (código começando com 35)." |
 | Empresa no cupom | `FRASES_CADASTRO.semMunicipio` | "Preencha o nome do município." |

@@ -789,7 +789,11 @@ export class CupomCadastroService {
         data: { ...data, alterada_por: autor.id, alterada_por_nome: autor.nome, alterada_em: agora },
       });
       const quem = { ambiente: a, situacao: amb.situacao, feito_por: autor.id, feito_por_nome: autor.nome, feito_em: agora };
-      await tx.nfce_ambientes_historico.create({ data: { ...quem, evento: 'configuracao', campos } });
+      // o próximo número que muda deixa a série e os números de antes e de depois: o csv do contador lista a faixa pulada à mão
+      // (onda final, item 2; número não é segredo, o CSC continua só pelo nome). Sem série ainda, nada foi numerado: não há faixa
+      const numeros =
+        mudaNumero && novaSerie !== null ? { serie: novaSerie, numero_antes: amb.proximo_numero, numero_depois: novoNumero } : {};
+      await tx.nfce_ambientes_historico.create({ data: { ...quem, evento: 'configuracao', campos, ...numeros } });
       if (desligar) {
         await tx.nfce_ambientes_historico.create({ data: { ...quem, evento: 'desligada', campos: ['serie'], mensagem: F.trioMudou } });
       }

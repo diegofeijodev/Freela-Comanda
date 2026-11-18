@@ -23,6 +23,7 @@ import { CupomCancelamentoService } from '../src/modules/cupom-fiscal/cancelamen
 import { cifrarCsc } from '../src/modules/cupom-fiscal/csc';
 import { CupomEmissaoService, type VendaParaCupom } from '../src/modules/cupom-fiscal/emissao.service';
 import { FRASES_EMISSAO } from '../src/modules/cupom-fiscal/frases';
+import { CupomLeituraService } from '../src/modules/cupom-fiscal/leitura.service';
 import { CLIENTE } from '../src/modules/sefaz/__tests__/certificado-teste';
 import { fixtureNfce, SefazNfceFalso } from '../src/modules/sefaz/__tests__/sefaz-nfce.falso';
 import { dhSefaz } from '../src/modules/sefaz/eventos-xml';
@@ -822,6 +823,37 @@ async function emissaoNoBanco(db: PrismaClient, a: Item): Promise<void> {
     Prisma.sql`UPDATE nfce_cupons SET n_prot = '135260000000997' WHERE id = ${r8.cupom.id}::uuid`,
     DOC_FISCAL,
     'protocolo do cancelando gravado pela consulta',
+  );
+
+  // 9. onda final, item 2 (migração `nfce_historico_numero`): o pulo à mão do próximo número grava a série e os números de antes e de
+  // depois; o csv do zip do mês (guardado sem compressão: o texto aparece no zip) lista a faixa numa linha só; voltar o número tira a
+  // faixa; o CHECK novo recusa números sem série. Fica no fim: os blocos acima conferem o próximo número.
+  const leitura = new CupomLeituraService(prisma, cadastro, svc);
+  const antes = await proximoNumero();
+  await cadastro.salvarAmbiente('producao', { proximo_numero: Number(antes) + 1000 }, QUEM);
+  const troca = await db.nfce_ambientes_historico.findFirstOrThrow({
+    where: { feito_por_nome: MARCA, evento: 'configuracao' },
+    orderBy: { feito_em: 'desc' },
+  });
+  conferir(
+    troca.campos.join() === 'proximo_numero' &&
+      troca.serie === SERIE &&
+      troca.numero_antes === antes &&
+      troca.numero_depois === antes + 1000n,
+    `pulo à mão: o histórico guarda a série e os números (veio ${troca.serie}, ${troca.numero_antes} → ${troca.numero_depois})`,
+  );
+  const [ano, mes, dia] = todaySp().split('-');
+  const linha = `${SERIE};${antes} a ${antes + 999n};pulado à mão em ${dia}/${mes} por ${MARCA}`;
+  const csvDoMes = async () => (await leitura.xmlDoMes(`${ano}-${mes}`)).zip.toString('utf8');
+  conferir((await csvDoMes()).includes(linha), `pulo à mão: a faixa no csv do mês numa linha (${linha})`);
+  await cadastro.salvarAmbiente('producao', { proximo_numero: Number(antes) }, QUEM);
+  conferir(!(await csvDoMes()).includes('pulado à mão'), 'número voltado (erro de digitação corrigido): a faixa sai do csv');
+  await recusa(
+    db,
+    Prisma.sql`INSERT INTO nfce_ambientes_historico (ambiente, evento, situacao, feito_por_nome, numero_antes, numero_depois)
+               VALUES ('producao', 'configuracao', 'ok', ${MARCA}, 1, 2)`,
+    'nfce_ambientes_historico_numero',
+    'números no histórico sem a série',
   );
 }
 

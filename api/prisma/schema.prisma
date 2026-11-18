@@ -363,6 +363,10 @@ model nfce_ambientes_historico {
   feito_por      String?  @db.Uuid
   feito_por_nome String?
   feito_em       DateTime @default(now()) @db.Timestamptz(6)
+  /// Troca do próximo número (onda final, item 2): a série que vale depois dela e o próximo número de antes e de depois.
+  serie          Int?
+  numero_antes   BigInt?
+  numero_depois  BigInt?
 
   @@index([ambiente, feito_em(sort: Desc)])
 }

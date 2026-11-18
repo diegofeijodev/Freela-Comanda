@@ -12,7 +12,7 @@ import type { RespostaAutorizacao } from '../../sefaz/nfce.port';
 import { sefazErro, type SefazErro } from '../../sefaz/sefaz-erro';
 import { CupomCadastroService, type Autor } from '../cadastro.service';
 import { cifrarCsc } from '../csc';
-import { CupomEmissaoService, pedidoHash, type VendaParaCupom } from '../emissao.service';
+import { CupomEmissaoService, dataSefaz, pedidoHash, type VendaParaCupom } from '../emissao.service';
 import { FRASE_ERRO, FRASE_RETORNO, FRASES_CADASTRO, FRASES_EMISSAO } from '../frases';
 import { linhaCom, montarPrismaCupom, type TabelasCupom } from './prisma-cupom.falso';
 import type { Atalho } from '../retornos';
@@ -203,6 +203,18 @@ describe('pedidoHash', () => {
     expect(pedidoHash({ ...v, itens: [{ ...v.itens[0], quantidade: '3' }] })).not.toBe(h);
     expect(pedidoHash({ ...v, pagamentos: [{ t_pag: '01', valor_centavos: 5000 }] })).not.toBe(h);
     expect(pedidoHash({ ...v, consumidor_doc: '529.982.247-25' })).toBe(pedidoHash({ ...v, consumidor_doc: '52998224725' }));
+  });
+});
+
+describe('dataSefaz (onda final, item 4)', () => {
+  it('com fuso: como veio; sem fuso: horário de Brasília (−03:00), qualquer que seja o fuso do servidor; ilegível: null', () => {
+    expect(dataSefaz('2026-11-17T14:30:02-03:00')?.toISOString()).toBe('2026-11-17T17:30:02.000Z');
+    expect(dataSefaz('2026-11-17T17:30:02Z')?.toISOString()).toBe('2026-11-17T17:30:02.000Z');
+    expect(dataSefaz('2026-11-17T14:30:02')?.toISOString()).toBe('2026-11-17T17:30:02.000Z');
+    expect(dataSefaz('2026-11-17T23:59:59.5')?.toISOString()).toBe('2026-11-18T02:59:59.500Z');
+    for (const ruim of [null, undefined, '', '17/11/2026 14:30', '2026-11-17 14:30:02', '2026-11-17T14:30', '2026-13-40T99:99:99']) {
+      expect(dataSefaz(ruim)).toBeNull();
+    }
   });
 });
 
@@ -478,6 +490,29 @@ describe('validação antes da T1: a porta não é chamada e nenhum cupom é cri
     expect((await m.svc.lancarVenda(id, AGORA)).venda_estoque).toBe('lancada');
     expect(m.porta.chamadas).toHaveLength(1);
   });
+
+  it('cupom do outro ambiente: 409 NFCE_OUTRO_AMBIENTE com frase própria (nunca "não está ativada neste servidor"), sem chamar a porta', async () => {
+    const m = montar();
+    const { espeto } = await pronto(m);
+    responder(m, erro(true));
+    const r = await m.svc.emitir(venda(espeto.id), EU, AGORA);
+    expect(r.cupom.situacao).toBe('sem_resposta');
+    m.env.NFCE_AMBIENTE = 'producao';
+    const teste = {
+      status: 409,
+      code: 'NFCE_OUTRO_AMBIENTE',
+      message: 'Este é um cupom de teste, e o Freela Comanda agora emite cupons valendo; não dá para consultar na SEFAZ.',
+    };
+    expect(await falha(m.svc.consultar(r.cupom.id, EU, mais(AGORA, 3 * MIN)))).toEqual(teste);
+    expect(await falha(m.svc.reenviar(r.cupom.id, EU, mais(AGORA, 3 * MIN)))).toEqual({
+      ...teste,
+      message: 'Este é um cupom de teste, e o Freela Comanda agora emite cupons valendo; não dá para enviar de novo.',
+    });
+    expect(m.porta.chamadas).toHaveLength(1);
+    expect(FRASE_ERRO.NFCE_OUTRO_AMBIENTE('producao', 'consultar')).toBe(
+      'Este cupom vale como documento fiscal, e o Freela Comanda agora está no modo de teste da SEFAZ; não dá para consultar na SEFAZ. Fale com o suporte do Freela Comanda.',
+    );
+  });
 });
 
 describe('idempotência', () => {
@@ -621,6 +656,49 @@ describe('sem resposta, consulta e descarte', () => {
     expect(c.xml_autorizado).toContain(nfeDoPedido(m.porta.chamadas[0].corpo));
     expect(c).toMatchObject({ n_prot: '13526000000012345', numero_reaproveitavel: false });
     expect(c.autorizada_em).toEqual(AGORA);
+  });
+
+  it('dhRecbto sem fuso = horário de Brasília (−03:00), nunca a hora da consulta; ilegível = sem prazo (null), nunca agora', async () => {
+    // a consulta 10 min depois da autorização: o prazo do cancelamento conta da autorização (14h30 em Brasília), não das 14h40
+    const m = montar();
+    const { espeto } = await pronto(m);
+    responder(m, erro(true), (corpo) => {
+      const enviado = m.porta.chamadas[0].corpo;
+      const x = lerRetornoConsulta(
+        fixture('ret-consulta-100.xml', enviado, AGORA, 'homologacao').replaceAll(CH_FIXTURE, doPedido(corpo).chave),
+      );
+      expect(x.protocolo?.dhRecbto).toBe('2026-11-17T14:30:00-03:00');
+      return { ...x, protocolo: { ...x.protocolo!, dhRecbto: '2026-11-17T14:30:00' } };
+    });
+    const r1 = await m.svc.emitir(venda(espeto.id), EU, AGORA);
+    const r2 = await m.svc.consultar(r1.cupom.id, EU, mais(AGORA, 10 * MIN));
+    expect(r2.situacao).toBe('autorizado');
+    expect(cupomDe(m.t, r1.cupom.id).autorizada_em?.toISOString()).toBe('2026-11-17T17:30:00.000Z');
+    expect(r2.cancelar_ate).toEqual(mais(AGORA, 29 * MIN));
+
+    // a T2 síncrona: o mesmo, com milissegundos
+    const m2 = montar();
+    const p2 = await pronto(m2);
+    responder(m2, (corpo) => {
+      const x = aut('ret-autorizacao-100.xml')(corpo) as RespostaAutorizacao;
+      return { ...x, protocolo: { ...x.protocolo!, dhRecbto: '2026-11-17T14:29:58.250' } };
+    });
+    const r3 = await m2.svc.emitir(venda(p2.espeto.id), EU, AGORA);
+    expect(r3.cupom.situacao).toBe('autorizado');
+    expect(cupomDe(m2.t, r3.cupom.id).autorizada_em?.toISOString()).toBe('2026-11-17T17:29:58.250Z');
+
+    // ilegível: autorizado sem prazo conhecido (sem "Cancelar"), nunca o relógio do servidor
+    const m3 = montar();
+    const p3 = await pronto(m3);
+    responder(m3, (corpo) => {
+      const x = aut('ret-autorizacao-100.xml')(corpo) as RespostaAutorizacao;
+      return { ...x, protocolo: { ...x.protocolo!, dhRecbto: '17/11/2026 14:30' } };
+    });
+    const r4 = await m3.svc.emitir(venda(p3.espeto.id), EU, AGORA);
+    expect(r4.cupom.situacao).toBe('autorizado');
+    expect(cupomDe(m3.t, r4.cupom.id).autorizada_em).toBeNull();
+    expect(r4.cupom.cancelar_ate).toBeNull();
+    expect(r4.cupom.acoes).not.toContain('cancelar');
   });
 
   it('consulta num cupom já autorizado não mexe nas colunas do documento (gatilho de imutável)', async () => {

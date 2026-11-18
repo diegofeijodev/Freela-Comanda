@@ -10,7 +10,7 @@ import { BadRequestException, Injectable, Logger, NotFoundException } from '@nes
 import { Prisma, type nfce_cupons } from '@prisma/client';
 import { PrismaService } from '../../common/database/prisma.service';
 import { mascararCpf } from '../../common/fiscal/documentos';
-import { addDays, isDateString } from '../../common/time/dates';
+import { addDays, isDateString, todaySp } from '../../common/time/dates';
 import type { AmbienteSefaz } from '../sefaz/distribuicao.port';
 import { elementos, lerXml, texto, xmlDoElemento, type NoXml } from '../sefaz/xml-leitura';
 import { CupomCadastroService, PENDENTES_NO_BANCO } from './cadastro.service';
@@ -261,8 +261,54 @@ function motivoNaoUsado(c: { situacao: string; numero_reaproveitavel: boolean; c
   }
 }
 
-/** Uma linha de `numeros-nao-usados.csv`. */
-type LinhaDoCsv = { serie: number; numero: bigint; motivo: string };
+/** Uma linha do `numeros-nao-usados.csv`: um número, ou a faixa `numero` a `ate` (o pulo à mão; onda final, item 2). */
+type LinhaDoCsv = { serie: number; numero: bigint; ate?: bigint; motivo: string };
+
+/** Uma linha do histórico com a troca do próximo número (migração `nfce_historico_numero`). */
+export type TrocaDoNumero = {
+  campos: string[];
+  serie: number | null;
+  numero_antes: bigint | null;
+  numero_depois: bigint | null;
+  feito_por_nome: string | null;
+  feito_em: Date;
+};
+
+/**
+ * As faixas puladas à mão em Configurações (onda final, item 2) que entram no csv do `mes` (o dia da troca, em Brasília): o histórico
+ * inteiro do ambiente, do mais velho para o mais novo. Cada troca deixa a série com o próximo número N: tudo do N em diante ainda vai
+ * ser usado e sai das faixas já puladas (o erro de digitação corrigido, ou a volta a uma série velha); a troca para cima na MESMA série
+ * (sem `serie` nos campos) pula do número de antes até N − 1. Trocar de série não é pulo (a série nova começa onde a pessoa disse).
+ * Nenhuma faixa tem número com cupom: o número com cupom fica abaixo do próximo número de quando o pulo foi feito.
+ */
+export function faixasPuladasAMao(trocas: readonly TrocaDoNumero[], mes: string): LinhaDoCsv[] {
+  type Faixa = { ini: bigint; fim: bigint; quando: Date; nome: string | null };
+  const porSerie = new Map<number, Faixa[]>();
+  for (const t of [...trocas].sort((x, y) => x.feito_em.getTime() - y.feito_em.getTime())) {
+    if (t.serie === null || t.numero_antes === null || t.numero_depois === null || !t.campos.includes('proximo_numero')) continue;
+    const n = t.numero_depois;
+    // do N em diante ainda vai ser usado: corta as faixas da série nele
+    const faixas = (porSerie.get(t.serie) ?? []).flatMap((f) => (f.ini >= n ? [] : [{ ...f, fim: f.fim < n ? f.fim : n - 1n }]));
+    if (!t.campos.includes('serie') && n > t.numero_antes) {
+      faixas.push({ ini: t.numero_antes, fim: n - 1n, quando: t.feito_em, nome: t.feito_por_nome });
+    }
+    porSerie.set(t.serie, faixas);
+  }
+  const linhas: LinhaDoCsv[] = [];
+  for (const [serie, faixas] of porSerie) {
+    for (const f of faixas) {
+      const dia = todaySp(f.quando); // AAAA-MM-DD em Brasília
+      if (dia.slice(0, 7) !== mes) continue;
+      linhas.push({
+        serie,
+        numero: f.ini,
+        ate: f.fim,
+        motivo: FRASES_LEITURA.naoUsado.puladoAMao(`${dia.slice(8, 10)}/${dia.slice(5, 7)}`, f.nome),
+      });
+    }
+  }
+  return linhas.sort((x, y) => x.serie - y.serie || (x.numero < y.numero ? -1 : x.numero > y.numero ? 1 : 0));
+}
 
 /** Campo de CSV com `;` (o Excel em português): entre aspas se tiver `;`, aspas ou quebra de linha. */
 const campoCsv = (s: string) => (/[;"\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);
@@ -500,7 +546,7 @@ export class CupomLeituraService {
       this.semArquivoNoDiario(c, 'cancelamento_sem_arquivo');
       avisos.push({ serie: c.serie, numero: c.numero, motivo: FRASES_LEITURA.aviso.cancelamentoIndisponivel });
     }
-    const csv = await this.naoUsados(a, cupons, avisos);
+    const csv = await this.naoUsados(a, mes, cupons, avisos);
     if (avisos.length > 0) {
       const texto = [FRASES_LEITURA.aviso.titulo(mes, a), ...avisos.map((v) => FRASES_LEITURA.aviso.linha(v.serie, v.numero, v.motivo))];
       arquivos.unshift({ nome: 'AVISOS.txt', dados: Buffer.from(`\ufeff${texto.join('\r\n')}\r\n`, 'utf8') });
@@ -511,11 +557,13 @@ export class CupomLeituraService {
 
   /**
    * `numeros-nao-usados.csv`: cada número dos cupons do mês que não é de nenhum documento fiscal (nem de um cupom de outro mês, quando o
-   * número descartado foi reaproveitado depois), com o motivo do cupom mais novo com ele, mais os `avisos` (documento cujo arquivo falta).
-   * Em ordem de série e número; com BOM, para o Excel ler os acentos.
+   * número descartado foi reaproveitado depois), com o motivo do cupom mais novo com ele, mais os `avisos` (documento cujo arquivo falta)
+   * e as faixas puladas à mão no mês (`faixasPuladasAMao`, uma linha "42 a 999" cada). Em ordem de série e número; com BOM, para o Excel
+   * ler os acentos.
    */
   private async naoUsados(
     a: AmbienteSefaz,
+    mes: string,
     cupons: { id: string; serie: number; numero: bigint; situacao: string; numero_reaproveitavel: boolean; c_stat: number | null }[],
     avisos: LinhaDoCsv[],
   ): Promise<string> {
@@ -544,11 +592,18 @@ export class CupomLeituraService {
             })
           ).map((e) => e.cupom_id),
     );
+    // o pulo à mão (onda final, item 2): uma linha por faixa ("42 a 999"), nunca um número por linha (o pulo pode ir a 999999999)
+    const trocas = await this.prisma.nfce_ambientes_historico.findMany({
+      where: { ambiente: a, evento: 'configuracao', numero_depois: { not: null } },
+      select: { campos: true, serie: true, numero_antes: true, numero_depois: true, feito_por_nome: true, feito_em: true },
+    });
     const linhas: LinhaDoCsv[] = [
       ...[...porNumero.values()].map((c) => ({ serie: c.serie, numero: c.numero, motivo: motivoNaoUsado(c, com539.has(c.id)) })),
       ...avisos,
+      ...faixasPuladasAMao(trocas, mes),
     ].sort((x, y) => x.serie - y.serie || (x.numero < y.numero ? -1 : x.numero > y.numero ? 1 : 0));
-    const texto = linhas.map((l) => `${l.serie};${l.numero};${campoCsv(l.motivo)}`);
+    const numero = (l: LinhaDoCsv) => (l.ate === undefined || l.ate === l.numero ? `${l.numero}` : `${l.numero} a ${l.ate}`);
+    const texto = linhas.map((l) => `${l.serie};${numero(l)};${campoCsv(l.motivo)}`);
     return `\ufeff${['serie;numero;motivo', ...texto].join('\n')}\n`;
   }
 

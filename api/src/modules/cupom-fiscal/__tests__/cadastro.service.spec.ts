@@ -155,6 +155,27 @@ describe('cadastro: CSC (só cifrado; só a dica volta)', () => {
     ]);
   });
 
+  it('o próximo número que muda grava a série e os valores de antes e de depois (onda final, item 2); o CSC continua só pelo nome', async () => {
+    const m = montar();
+    await m.svc.salvarAmbiente('homologacao', { serie: 2, proximo_numero: 42 }, EU, AGORA);
+    await m.svc.salvarAmbiente('homologacao', { proximo_numero: 1000 }, EU, AGORA);
+    await m.svc.salvarAmbiente('homologacao', { csc: CSC_TESTE }, EU, AGORA);
+    await m.svc.salvarAmbiente('homologacao', { serie: 3 }, EU, AGORA);
+    const h = m.t.nfce_ambientes_historico.map((x) => ({
+      campos: x.campos,
+      serie: x.serie,
+      numero_antes: x.numero_antes,
+      numero_depois: x.numero_depois,
+    }));
+    expect(h).toEqual([
+      { campos: ['serie', 'proximo_numero'], serie: 2, numero_antes: 1n, numero_depois: 42n },
+      { campos: ['proximo_numero'], serie: 2, numero_antes: 42n, numero_depois: 1000n },
+      { campos: ['csc'], serie: null, numero_antes: null, numero_depois: null },
+      { campos: ['serie', 'proximo_numero'], serie: 3, numero_antes: 1000n, numero_depois: 1n },
+    ]);
+    expect(fio(m.t.nfce_ambientes_historico)).not.toContain(CSC_TESTE);
+  });
+
   it('o histórico do GET traz as 5 últimas, da mais nova para a mais velha', async () => {
     const m = montar();
     for (let n = 1; n <= 7; n++) {

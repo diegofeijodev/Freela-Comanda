@@ -749,6 +749,8 @@ describe('frases.ts = UX §6.1 e §6.2, literais', () => {
     ['NFCE_MOTIVO descartar', E.NFCE_MOTIVO('descartar')],
     ['NFCE_SERIE_INVALIDA', E.NFCE_SERIE_INVALIDA],
     ['NFCE_SERIE_COM_PENDENTES', E.NFCE_SERIE_COM_PENDENTES],
+    ['NFCE_OUTRO_AMBIENTE cupom de teste (onda final, item 6)', E.NFCE_OUTRO_AMBIENTE('homologacao', 'consultar')],
+    ['NFCE_OUTRO_AMBIENTE cupom valendo (onda final, item 6)', E.NFCE_OUTRO_AMBIENTE('producao', 'cancelar')],
     ['NFCE_CSC_INVALIDO csc', E.NFCE_CSC_INVALIDO('csc')],
     ['NFCE_CSC_INVALIDO id_csc', E.NFCE_CSC_INVALIDO('id_csc')],
     ['NFCE_PERFIL_INVALIDO Simples', FRASES_VALIDACAO.simplesSemCsosn],

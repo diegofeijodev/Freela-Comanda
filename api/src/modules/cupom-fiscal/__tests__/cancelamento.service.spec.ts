@@ -657,13 +657,18 @@ describe('situação, ambiente e log', () => {
     expect(m.porta.chamadas.map((c) => c.servico)).toEqual(['autorizacao', 'autorizacao', 'evento']);
   });
 
-  it('servidor desligado = 503 NFCE_DESLIGADA; cupom de outro ambiente = 503; id desconhecido = 404', async () => {
+  it('servidor desligado = 503 NFCE_DESLIGADA; cupom de outro ambiente = 409 NFCE_OUTRO_AMBIENTE (frase própria); id desconhecido = 404', async () => {
     const m = montar();
     const id = await autorizado(m);
     m.env.NFCE_AMBIENTE = '';
     expect(await falha(m.svc.cancelar(id, MOTIVO, EU, mais(T0, MIN)))).toMatchObject({ status: 503, code: 'NFCE_DESLIGADA' });
     m.env.NFCE_AMBIENTE = 'homologacao';
-    expect(await falha(m.svc.cancelar(id, MOTIVO, EU, mais(T0, MIN)))).toMatchObject({ status: 503, code: 'NFCE_DESLIGADA' });
+    expect(await falha(m.svc.cancelar(id, MOTIVO, EU, mais(T0, MIN)))).toEqual({
+      status: 409,
+      code: 'NFCE_OUTRO_AMBIENTE',
+      message:
+        'Este cupom vale como documento fiscal, e o Freela Comanda agora está no modo de teste da SEFAZ; não dá para cancelar. Fale com o suporte do Freela Comanda.',
+    });
     m.env.NFCE_AMBIENTE = 'producao';
     expect(await falha(m.svc.cancelar(randomUUID(), MOTIVO, EU, mais(T0, MIN)))).toMatchObject({ status: 404, code: 'NOT_FOUND' });
     expect(m.porta.chamadas.map((c) => c.servico)).toEqual(['autorizacao']);
