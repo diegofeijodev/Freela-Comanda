@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import {
   BarChart3, BookOpen, ClipboardCheck, Boxes, Target, ShoppingCart, Upload, Settings, Users, LayoutDashboard, LogOut, FileInput, Wallet, Calculator, Landmark, KeyRound,
+  Receipt,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useMe, useSair } from '@/lib/auth';
@@ -15,6 +16,7 @@ import { useSessao } from '@/modules/auth/application/use-auth';
 const MENU = [
   { to: '/painel', label: 'Início', icon: LayoutDashboard, loja: true },
   { to: '/vendas', label: 'Vendas', icon: BarChart3, loja: false },
+  { to: '/cupom', label: 'Cupom Fiscal', icon: Receipt, loja: false },
   { to: '/fichas', label: 'Fichas Técnicas', icon: BookOpen, loja: true },
   { to: '/inventario', label: 'Inventário', icon: ClipboardCheck, loja: true },
   { to: '/estoque', label: 'Estoque & Movimentações', icon: Boxes, loja: false },

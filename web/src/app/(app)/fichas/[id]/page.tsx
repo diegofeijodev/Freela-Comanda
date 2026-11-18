@@ -8,7 +8,7 @@ import { toast } from "sonner";
 import { Trash2, Printer, Copy } from "lucide-react";
 import {
   adicionarIngrediente, atualizarIngrediente, atualizarItemCardapio, duplicarItemCardapio, excluirItemCardapio, itemCardapio, listarIngredientes,
-  listarItensEstoque, removerIngrediente,
+  listarItensEstoque, produtosCupom, removerIngrediente,
 } from "@/lib/erp-api";
 import { useMe } from "@/lib/auth";
 import { PageHeader, Panel, Tag } from "@/components/ui-kit";
@@ -20,6 +20,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { brl, num, parseNum, pct } from "@/lib/format";
 import { calcFicha } from "@/lib/ficha";
 import { getConfig, errMsg } from "@/lib/db";
+import { CHAVES_CUPOM, linhaCupomDaFicha } from "@/lib/cupom";
 
 
 const CATS = ["Pratos", "Espetinhos", "Porções", "Tábuas", "Adicionais", "Chopp", "Bebidas", "Burgers", "Combos"];
@@ -45,7 +46,7 @@ function FichaAdmin() {
     if (item) setF({
       nome: item.nome, codigo: item.codigo ?? "", categoria: item.categoria, grupo: item.grupo, unidade_venda: item.unidade_venda,
       preco_venda: item.preco_venda?.toString().replace(".", ",") ?? "", mkup: item.mkup?.toString().replace(".", ",") ?? "",
-      ncm: item.ncm ?? "", cfop: item.cfop ?? "", cst: item.cst ?? "", aliquota: item.aliquota?.toString() ?? "", observacoes: item.observacoes ?? "",
+      observacoes: item.observacoes ?? "",
     });
   }, [item]);
 
@@ -57,8 +58,8 @@ function FichaAdmin() {
     try {
       await atualizarItemCardapio(id, {
         nome: f.nome, codigo: f.codigo || null, categoria: f.categoria, grupo: f.grupo, unidade_venda: f.unidade_venda,
-        preco_venda: parseNum(f.preco_venda), mkup: parseNum(f.mkup), ncm: f.ncm || null, cfop: f.cfop || null, cst: f.cst || null,
-        aliquota: parseNum(f.aliquota), observacoes: f.observacoes || null,
+        // NCM e o resto dos dados fiscais moram no cupom fiscal (aba Produtos); a ficha não os manda mais (UX 5.8)
+        preco_venda: parseNum(f.preco_venda), mkup: parseNum(f.mkup), observacoes: f.observacoes || null,
       });
     } catch (error) {
       return toast.error(errMsg(error));
@@ -124,8 +125,9 @@ function FichaAdmin() {
             <Select value={f.grupo} onValueChange={(v) => setF({ ...f, grupo: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="Alimentos">Alimentos</SelectItem><SelectItem value="Bebidas">Bebidas</SelectItem></SelectContent></Select></div>
           <div><Label className="text-xs text-muted-foreground">Subgrupo</Label>
             <Select value={f.categoria} onValueChange={(v) => setF({ ...f, categoria: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{CATS.map((x) => <SelectItem key={x} value={x}>{x}</SelectItem>)}</SelectContent></Select></div>
-          {fld("unidade_venda", "Unid. venda")}{fld("ncm", "NCM")}{fld("cfop", "CFOP")}{fld("cst", "CST")}{fld("aliquota", "Alíquota %")}
+          {fld("unidade_venda", "Unid. venda")}
         </div>
+        <LinhaCupomFiscal id={id} />
       </Panel>
       <Panel title="Ingredientes">
         <div className="overflow-x-auto">
@@ -172,6 +174,23 @@ function FichaAdmin() {
           <Textarea rows={10} value={f.observacoes ?? ""} onChange={(e) => setF({ ...f, observacoes: e.target.value })} />
         </Panel>
       </div>
+    </div>
+  );
+}
+
+/**
+ * "Cupom fiscal: NCM 1602.50.00 · perfil Prato da casa" [Editar] ou "Cupom fiscal: faltam NCM e perfil" [Completar] (UX 5.8): só leitura;
+ * os dados fiscais se editam na folha do produto (Cupom Fiscal → Produtos). Só admin (a ficha da loja não chega aqui).
+ */
+function LinhaCupomFiscal({ id }: { id: string }) {
+  const { data } = useQuery({ queryKey: CHAVES_CUPOM.produtos, queryFn: () => produtosCupom() });
+  const p = data?.find((x) => x.item_cardapio_id === id);
+  if (!p) return null;
+  const l = linhaCupomDaFicha(p);
+  return (
+    <div className="no-print mt-3 flex flex-wrap items-center gap-x-3 border-t pt-3 text-sm">
+      <span className="min-w-0 break-words">{l.texto}</span>
+      <Link href={l.href} className="inline-flex min-h-11 items-center text-primary underline underline-offset-2">{l.acao}</Link>
     </div>
   );
 }

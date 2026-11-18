@@ -11,9 +11,17 @@ import { Empty, PageHeader } from '@/components/ui-kit';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { Emitir } from '@/components/cupom/emitir';
+import { Emitidos, type InicialEmitidos } from '@/components/cupom/emitidos';
+import { FaixaPendentes } from '@/components/cupom/faixa-pendentes';
+import { Produtos } from '@/components/cupom/produtos';
 
 type Aba = 'emitir' | 'emitidos' | 'produtos';
 const ABAS: readonly Aba[] = ['emitir', 'emitidos', 'produtos'];
+const SITUACOES_URL: readonly NonNullable<InicialEmitidos['situacao']>[] = ['todos', 'atencao', 'autorizados', 'cancelados', 'descartados'];
+const DIA = /^\d{4}-\d{2}-\d{2}$/;
+const ERRO_ABA = (nome: string) => (
+  <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm">Não consegui mostrar a aba {nome} agora. Recarregue a página.</p>
+);
 
 export default function CupomFiscalPage() {
   return <Suspense fallback={null}><CupomFiscal /></Suspense>;
@@ -21,7 +29,9 @@ export default function CupomFiscalPage() {
 
 /**
  * Cupom Fiscal (UX 1): só admin, sempre (também com o servidor desligado: cadastrar os dados do contador é o 1º trabalho). Abas por
- * `?aba=emitir|emitidos|produtos` (padrão `emitir`). A faixa do modo de teste vale nas três abas.
+ * `?aba=emitir|emitidos|produtos` (padrão `emitir`). A faixa do modo de teste e a de pendentes (UX 4.2) valem nas três abas.
+ * Emitidos lê `situacao`, `ini` e `fim` da URL (a faixa, a importação e o inventário levam para lá); Produtos lê `item` (abre a folha do
+ * produto) e `cupom` (só os produtos de um cupom recusado).
  */
 function CupomFiscal() {
   const router = useRouter();
@@ -47,6 +57,16 @@ function CupomFiscal() {
   const nPendentes = s?.pendentes.total ?? 0;
   const nFaltando = (produtosQ.data ?? []).filter((p) => p.ativo && !p.pronto).length;
   const trocar = (v: string) => router.replace(`/cupom?aba=${ABAS.includes(v as Aba) ? v : 'emitir'}`, { scroll: false });
+  const sitUrl = params.get('situacao');
+  const iniUrl = params.get('ini');
+  const fimUrl = params.get('fim');
+  const inicialEmitidos: InicialEmitidos = {
+    situacao: (SITUACOES_URL as readonly (string | null)[]).includes(sitUrl) ? (sitUrl as InicialEmitidos['situacao']) : null,
+    ini: iniUrl && DIA.test(iniUrl) ? iniUrl : null,
+    fim: fimUrl && DIA.test(fimUrl) ? fimUrl : null,
+  };
+  const itemUrl = params.get('item');
+  const cupomUrl = params.get('cupom');
 
   return (
     <div className="space-y-4">
@@ -57,7 +77,7 @@ function CupomFiscal() {
           <p className="min-w-0 break-words">MODO DE TESTE da SEFAZ: estes cupons não valem como documento fiscal e não mexem no estoque.</p>
         </div>
       )}
-      {/* Tarefa 15: a faixa de pendentes (UX 4.2) entra aqui, acima das abas. */}
+      {s && <FaixaPendentes pendentes={s.pendentes} />}
 
       <Tabs value={aba} onValueChange={trocar} className="space-y-4">
         <TabsList className="grid h-auto w-full grid-cols-3 sm:inline-grid sm:w-auto">
@@ -84,12 +104,19 @@ function CupomFiscal() {
             />
           </ErrorBoundary>
         </TabsContent>
-        {/* Tarefa 15: `emitidos.tsx` (UX 4.1 e 4.6) e `produtos.tsx` + `perfis.tsx` (UX 5.6 e 5.7). */}
+        {/* a chave remonta a aba quando um link (faixa, importação, inventário) muda o filtro com ela aberta */}
         <TabsContent value="emitidos" className="mt-0">
-          <p className="text-sm text-muted-foreground">Em preparação.</p>
+          <ErrorBoundary fallback={ERRO_ABA('Emitidos')}>
+            <Emitidos
+              key={`${inicialEmitidos.situacao}-${inicialEmitidos.ini}-${inicialEmitidos.fim}`}
+              situacao={s} situacaoEm={situacaoQ.dataUpdatedAt} inicial={inicialEmitidos}
+            />
+          </ErrorBoundary>
         </TabsContent>
         <TabsContent value="produtos" className="mt-0">
-          <p className="text-sm text-muted-foreground">Em preparação.</p>
+          <ErrorBoundary fallback={ERRO_ABA('Produtos')}>
+            <Produtos key={cupomUrl ?? ''} itemInicial={itemUrl} cupomId={cupomUrl} />
+          </ErrorBoundary>
         </TabsContent>
       </Tabs>
     </div>

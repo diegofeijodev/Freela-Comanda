@@ -2,8 +2,12 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import Link from "next/link";
 import { toast } from "sonner";
-import { importacoesRecentes, importar as enviarImportacao, listarCardapio, listarDePara, listarItensEstoque, mapearDePara } from "@/lib/erp-api";
+import { CircleAlert } from "lucide-react";
+import {
+  importacoesRecentes, importar as enviarImportacao, listarCardapio, listarDePara, listarItensEstoque, mapearDePara, vendasCupomNoPeriodo,
+} from "@/lib/erp-api";
 import { PageHeader, Panel, Tag } from "@/components/ui-kit";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,6 +16,8 @@ import { Label } from "@/components/ui/label";
 import { lerArquivo, type Row } from "@/lib/parse";
 import { dataBR, parseNum } from "@/lib/format";
 import { errMsg } from "@/lib/db";
+import { useMe } from "@/lib/auth";
+import { periodoDoArquivo, textoAvisoImportacao } from "@/lib/cupom";
 
 
 type Tipo = "insumos" | "fichas" | "vendas";
@@ -45,6 +51,16 @@ export default function Importar() {
   const { data: cardapio } = useQuery({ queryKey: ["cardapio-nomes"], queryFn: listarCardapio });
   const { data: dePara, refetch: rDP } = useQuery({ queryKey: ["depara"], queryFn: listarDePara });
   const { data: imps, refetch: rImp } = useQuery({ queryKey: ["importacoes"], queryFn: importacoesRecentes });
+  const { data: me } = useMe();
+  // UX 5.8: cupons do Freela Comanda já no estoque no período do arquivo de vendas (aviso que não bloqueia; falhar = sem aviso)
+  const periodo = tipo === "vendas" && rows.length > 0 ? periodoDoArquivo(rows.map((r) => r.data)) : null;
+  const { data: noPeriodo } = useQuery({
+    queryKey: ["cupom-fiscal", "vendas-no-periodo", periodo?.ini, periodo?.fim],
+    queryFn: () => vendasCupomNoPeriodo(periodo!.ini, periodo!.fim),
+    enabled: periodo !== null && me?.perfil === "admin",
+    retry: false,
+  });
+  const avisoCupons = periodo && noPeriodo ? textoAvisoImportacao(noPeriodo) : null;
 
   const insSet = new Set((insumos ?? []).map((i) => i.nome.toLowerCase()));
   const erros = rows.length ? validar(tipo, rows, insSet) : [];
@@ -92,7 +108,7 @@ export default function Importar() {
           </RadioGroup>
         </div>
         <p className="mt-2 text-xs text-muted-foreground">
-          {tipo === "vendas" ? "Substituir apaga as vendas do mesmo período do arquivo antes de importar. Vendas repetidas (pedido + produto + data) são ignoradas." : "Substituir desativa os itens que não estão no arquivo."}
+          {tipo === "vendas" ? "Substituir apaga as vendas do mesmo período do arquivo antes de importar (as dos cupons fiscais emitidos aqui ficam). Vendas repetidas (pedido + produto + data) são ignoradas." : "Substituir desativa os itens que não estão no arquivo."}
         </p>
       </Panel>
       {rows.length > 0 && (
@@ -106,6 +122,17 @@ export default function Importar() {
             <div className="mt-3 max-h-40 overflow-auto rounded-md bg-destructive/10 p-3 text-xs text-destructive">
               <div className="mb-1 font-semibold">{erros.length} problemas (linhas com erro serão ignoradas)</div>
               {erros.slice(0, 50).map((e) => <div key={e}>{e}</div>)}
+            </div>
+          )}
+          {avisoCupons && periodo && (
+            <div role="status" className="mt-3 flex min-w-0 items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+              <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" aria-hidden />
+              <div className="min-w-0 space-y-1">
+                <p className="break-words">{avisoCupons}</p>
+                <Link href={`/cupom?aba=emitidos&ini=${periodo.ini}&fim=${periodo.fim}`} className="inline-flex min-h-11 items-center text-primary underline underline-offset-2">
+                  Ver os cupons
+                </Link>
+              </div>
             </div>
           )}
           <Button className="mt-4" disabled={busy || faltando.length > 0} onClick={importar}>{busy ? "Importando…" : `Importar ${rows.length} linhas`}</Button>

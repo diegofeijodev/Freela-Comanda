@@ -494,3 +494,266 @@ describe('rodada de correção 1: trava e chave da venda (I1) e o atalho do serv
     expect(linkDoAtalho(null, 'c1')).toBeNull();
   });
 });
+
+// ======================================================================================================= Tarefa 15 (telas do cupom)
+import type { CupomLinha, PerfilFiscal, ProdutoCupom } from '../erp-api';
+import {
+  alvoDaFalta, avisoTrocaRegime, botaoDaEmissao, documentoNaLista, errosDoPerfil, filtrarProdutos, formDoPerfil, formDoProduto,
+  intervaloDoPeriodo, linhaCscGuardado, linhaCupomDaFicha, linhaDoPerfil, linhasHistoricoCupom, linkPendentes, mascaraCep, mascaraCest, mascaraIe, mascaraNcm,
+  mesesDoContador, mesPadraoContador, motivoCfopFora, nomeDoMes, ordenarFalta, perfilParaSalvar, periodoDoArquivo, produtoParaSalvar,
+  proximaAcao, quandoNaLista, tagDaEmissao, textoAvisoImportacao, textoPendentes, textoVendasPendentes,
+} from '../cupom';
+
+describe('Tarefa 15: faixa de pendentes, importação e inventário', () => {
+  it('textoPendentes: nenhum = null; um de cada tipo; vários', () => {
+    expect(textoPendentes({ total: 0, primeiro: null })).toBeNull();
+    expect(textoPendentes({ total: 1, primeiro: { serie: 2, numero: 12, tipo: 'sem_resposta' } })).toBe(
+      '1 cupom ficou sem resposta da SEFAZ. Consulte antes de emitir outro para a mesma venda.',
+    );
+    expect(textoPendentes({ total: 1, primeiro: { serie: 2, numero: 11, tipo: 'nao_saiu' } })).toBe(
+      'O cupom nº 11 não saiu. Envie de novo ou descarte.',
+    );
+    expect(textoPendentes({ total: 1, primeiro: { serie: 2, numero: 11, tipo: 'recusado' } })).toBe(
+      'O cupom nº 11 não saiu. Envie de novo ou descarte.',
+    );
+    expect(textoPendentes({ total: 1, primeiro: { serie: 2, numero: 9, tipo: 'venda_pendente' } })).toBe(
+      'O cupom nº 9 está autorizado, mas a venda não baixou o estoque.',
+    );
+    expect(textoPendentes({ total: 3, primeiro: { serie: 2, numero: 9, tipo: 'venda_pendente' } })).toBe('3 cupons precisam de você.');
+  });
+
+  it('linkPendentes: um = "Ver o cupom" direto; vários = "Ver", em "Precisam de você"', () => {
+    expect(linkPendentes({ total: 0, primeiro: null })).toBeNull();
+    expect(linkPendentes({ total: 1, primeiro: { id: 'c1', serie: 2, numero: 11, tipo: 'recusado' } })).toEqual({
+      rotulo: 'Ver o cupom',
+      href: '/cupom/c1',
+    });
+    expect(linkPendentes({ total: 2, primeiro: { id: 'c1', serie: 2, numero: 11, tipo: 'recusado' } })).toEqual({
+      rotulo: 'Ver',
+      href: '/cupom?aba=emitidos&situacao=atencao',
+    });
+  });
+
+  it('textoAvisoImportacao: o texto da UX 5.8; nenhum cupom = null; 1 no singular', () => {
+    expect(textoAvisoImportacao({ quantidade: 4, valor_centavos: 21050 })).toBe(
+      'Neste período, o Freela Comanda já lançou 4 cupons no estoque (R$ 210,50). Se essas vendas também estão neste arquivo, vão contar duas vezes.',
+    );
+    expect(textoAvisoImportacao({ quantidade: 0, valor_centavos: 0 })).toBeNull();
+    expect(textoAvisoImportacao({ quantidade: 1, valor_centavos: 1990 })).toContain('já lançou 1 cupom no estoque (R$ 19,90)');
+  });
+
+  it('periodoDoArquivo: menor e maior data AAAA-MM-DD; as outras não contam', () => {
+    expect(periodoDoArquivo(['2026-11-03', '2026-10-30', 'x', undefined, '2026-11-01'])).toEqual({ ini: '2026-10-30', fim: '2026-11-03' });
+    expect(periodoDoArquivo(['', '03/11/2026'])).toBeNull();
+  });
+
+  it('textoVendasPendentes: singular e plural', () => {
+    expect(textoVendasPendentes(0)).toBeNull();
+    expect(textoVendasPendentes(1)).toBe('1 cupom autorizado ainda não baixou o estoque.');
+    expect(textoVendasPendentes(2)).toBe('2 cupons autorizados ainda não baixaram o estoque.');
+  });
+});
+
+describe('Tarefa 15: Emitidos', () => {
+  const agora = new Date('2026-11-17T17:20:00Z'); // 14h20 em Brasília
+  const linha = (x: Partial<CupomLinha>): CupomLinha => ({
+    id: 'c1', ambiente: 'producao', serie: 2, numero: 12, chave: 'k', situacao: 'autorizado', dh_emi: '2026-11-17T17:05:00Z',
+    criado_em: '2026-11-17T17:05:00Z', autorizada_em: '2026-11-17T17:05:00Z', cancelado_em: null, descartado_em: null, envios: 1,
+    valor_total_centavos: 5370, pagamentos: [{ t_pag: '01', valor_centavos: 6000 }], consumidor_doc: null, venda_estoque: 'lancada',
+    acoes: ['imprimir', 'consultar', 'cancelar'], consultar_a_partir_de: null, cancelar_ate: '2026-11-17T17:34:00Z', ...x,
+  });
+
+  it('proximaAcao: a linha da UX 4.1 (e some depois do prazo de cancelar)', () => {
+    expect(proximaAcao(linha({}), agora)).toBe('Dá para cancelar até 14h34');
+    expect(proximaAcao(linha({ acoes: ['imprimir', 'consultar'] }), new Date('2026-11-17T17:40:00Z'))).toBeNull();
+    expect(proximaAcao(linha({ situacao: 'sem_resposta', acoes: ['consultar'], consultar_a_partir_de: '2026-11-17T17:07:00Z', venda_estoque: null }), agora)).toBe(
+      'Consulte a partir das 14h07',
+    );
+    expect(proximaAcao(linha({ situacao: 'rejeitado', acoes: ['enviar_de_novo', 'consultar', 'descartar'], venda_estoque: null }), agora)).toBe(
+      'Envie de novo ou descarte',
+    );
+    expect(proximaAcao(linha({ venda_estoque: 'pendente', acoes: ['imprimir', 'consultar', 'cancelar', 'lancar_venda'] }), agora)).toBe(
+      'A venda não baixou o estoque',
+    );
+  });
+
+  it('documentoNaLista: o CPF já mascarado pelo servidor fica como veio; CNPJ formatado; sem documento = —', () => {
+    expect(documentoNaLista('***.982.247-**')).toBe('***.982.247-**');
+    expect(documentoNaLista('12345678000195')).toBe('12.345.678/0001-95');
+    expect(documentoNaLista(null)).toBe('—');
+  });
+
+  it('quandoNaLista: "Hoje às 14h05", "Ontem às …", "Em 14/11 às …"', () => {
+    expect(quandoNaLista('2026-11-17T17:05:00Z', agora)).toBe('Hoje às 14h05');
+    expect(quandoNaLista('2026-11-16T17:05:00Z', agora)).toBe('Ontem às 14h05');
+    expect(quandoNaLista('2026-11-14T12:00:00Z', agora)).toBe('Em 14/11 às 09h00');
+  });
+
+  it('intervaloDoPeriodo: dias de Brasília (hoje, ontem, 7 dias, este mês, mês passado; virada de ano)', () => {
+    expect(intervaloDoPeriodo('hoje', '2026-11-17')).toEqual({ ini: '2026-11-17', fim: '2026-11-17' });
+    expect(intervaloDoPeriodo('ontem', '2026-11-01')).toEqual({ ini: '2026-10-31', fim: '2026-10-31' });
+    expect(intervaloDoPeriodo('7dias', '2026-11-03')).toEqual({ ini: '2026-10-28', fim: '2026-11-03' });
+    expect(intervaloDoPeriodo('mes', '2026-11-17')).toEqual({ ini: '2026-11-01', fim: '2026-11-17' });
+    expect(intervaloDoPeriodo('mes_passado', '2026-01-05')).toEqual({ ini: '2025-12-01', fim: '2025-12-31' });
+  });
+
+  it('para o contador: mês passado até o dia 10, este mês depois; nome do mês', () => {
+    expect(mesPadraoContador('2026-11-10')).toBe('2026-10');
+    expect(mesPadraoContador('2026-11-11')).toBe('2026-11');
+    expect(mesPadraoContador('2026-01-03')).toBe('2025-12');
+    expect(mesesDoContador('2026-02-15', 3)).toEqual(['2026-02', '2026-01', '2025-12']);
+    expect(nomeDoMes('2026-10')).toBe('outubro/2026');
+  });
+});
+
+describe('Tarefa 15: Produtos e perfis fiscais', () => {
+  const produto = (x: Partial<ProdutoCupom>): ProdutoCupom => ({
+    item_cardapio_id: 'p1', nome: 'Espetinho de carne', categoria: 'Espetos', unidade_venda: 'UN', preco_venda_centavos: 1200, ativo: true,
+    ncm: '16025000', cest: null, gtin: null, origem: 0, descricao_cupom: null, unidade: null, perfil_fiscal_id: 'pf1', perfil_nome: 'Prato da casa',
+    pronto: true, motivos: [], ...x,
+  });
+  const perfil = (x: Partial<PerfilFiscal>): PerfilFiscal => ({
+    id: 'pf1', nome: 'Prato da casa', cfop: '5101', csosn: '102', cst_icms: null, aliq_icms: null, pis_cst: null, cofins_cst: null,
+    c_ativ_sn: null, ibs_sn_aliq: null, cbs_sn_aliq: null, ibscbs_cst: null, ibscbs_cclass_trib: null, ativo: true, produtos: 64,
+    vale_no_regime: true, atualizado_por_nome: null, atualizado_em: null, ...x,
+  });
+
+  it('máscaras enquanto digita: NCM, CEST, IE e CEP', () => {
+    expect(mascaraNcm('16025000')).toBe('1602.50.00');
+    expect(mascaraNcm('1602')).toBe('1602');
+    expect(mascaraNcm('160250')).toBe('1602.50');
+    expect(mascaraCest('0300100')).toBe('03.001.00');
+    expect(mascaraIe('123456789012')).toBe('123.456.789.012');
+    expect(mascaraCep('13270000')).toBe('13270-000');
+  });
+
+  it('filtrarProdutos: só ativos; faltam/prontos/todos; busca sem acento; os de um cupom', () => {
+    const ps = [
+      produto({}),
+      produto({ item_cardapio_id: 'p2', nome: 'Chopp 1 litro', categoria: 'Chopp', ncm: null, pronto: false, motivos: ['falta_ncm'] }),
+      produto({ item_cardapio_id: 'p3', nome: 'Porção velha', ativo: false, pronto: false, motivos: ['inativo'] }),
+    ];
+    expect(filtrarProdutos(ps, { busca: '', filtro: 'faltam', categoria: null, so: null }).map((p) => p.item_cardapio_id)).toEqual(['p2']);
+    expect(filtrarProdutos(ps, { busca: '', filtro: 'todos', categoria: null, so: null }).map((p) => p.item_cardapio_id)).toEqual(['p1', 'p2']);
+    expect(filtrarProdutos(ps, { busca: 'CHÓPP', filtro: 'todos', categoria: null, so: null }).map((p) => p.item_cardapio_id)).toEqual(['p2']);
+    expect(filtrarProdutos(ps, { busca: '', filtro: 'todos', categoria: 'Espetos', so: null }).map((p) => p.item_cardapio_id)).toEqual(['p1']);
+    expect(filtrarProdutos(ps, { busca: '', filtro: 'todos', categoria: null, so: ['p3'] }).map((p) => p.item_cardapio_id)).toEqual(['p3']);
+  });
+
+  it('produtoParaSalvar: só o que mudou, sem máscara, "" = null (o perfil igual não vai)', () => {
+    const p = produto({});
+    const f = formDoProduto(p);
+    expect(f.ncm).toBe('1602.50.00');
+    expect(produtoParaSalvar(p, f)).toEqual({});
+    expect(produtoParaSalvar(p, { ...f, ncm: ' 2004.10.00 ', descricao_cupom: '  Espeto  ', gtin: '' })).toEqual({
+      ncm: '20041000',
+      descricao_cupom: 'Espeto',
+    });
+    expect(produtoParaSalvar(p, { ...f, perfil_fiscal_id: '' })).toEqual({ perfil_fiscal_id: null });
+  });
+
+  it('CFOP desabilitado pelo código do imposto, com o motivo', () => {
+    expect(motivoCfopFora('5101', { csosn: '500', cst_icms: null })).toBe('O CSOSN 500 só vale com o CFOP 5.405.');
+    expect(motivoCfopFora('5405', { csosn: '500', cst_icms: null })).toBeNull();
+    expect(motivoCfopFora('5405', { csosn: '102', cst_icms: null })).toBe(
+      'O CSOSN 102 só vale com o tipo de venda (CFOP) 5.101, 5.102, 5.103, 5.104 ou 5.115.',
+    );
+    expect(motivoCfopFora('5101', { csosn: null, cst_icms: '60' })).toBe('O CST 60 só vale com o tipo de venda (CFOP) 5.405.');
+    expect(motivoCfopFora('5101', { csosn: null, cst_icms: '00' })).toBeNull();
+  });
+
+  it('errosDoPerfil: o regime decide o código; CST 00 pede alíquota; formatos', () => {
+    const vazio = formDoPerfil(null);
+    expect(errosDoPerfil(vazio, 1)).toMatchObject({ nome: 'Dê um nome ao perfil.', csosn: 'No Simples, escolha o CSOSN.' });
+    expect(errosDoPerfil(vazio, 3)).toMatchObject({ cst_icms: 'No regime normal, escolha o CST.' });
+    expect(errosDoPerfil({ ...vazio, nome: 'X', cst_icms: '00', cfop: '5101' }, 3)).toEqual({ aliq_icms: 'Informe a alíquota do ICMS.' });
+    expect(errosDoPerfil({ ...vazio, nome: 'X', cst_icms: '00', cfop: '5101', aliq_icms: '101' }, 3)).toEqual({
+      aliq_icms: 'Use um número de 0 a 100, com até 2 casas.',
+    });
+    expect(errosDoPerfil({ ...vazio, nome: 'X', csosn: '500', cfop: '5101' }, 1)).toEqual({ cfop: 'O CSOSN 500 só vale com o CFOP 5.405.' });
+    expect(errosDoPerfil({ ...vazio, nome: 'X', csosn: '102', cfop: '5101', c_ativ_sn: '1' }, 1)).toEqual({ c_ativ_sn: 'Use 2 números.' });
+  });
+
+  it('perfilParaSalvar: o código do outro regime vai nulo; alíquota com ponto; espaços aparados', () => {
+    const f = { ...formDoPerfil(perfil({})), nome: ' Prato da casa ', cst_icms: '00', aliq_icms: '18,5' };
+    expect(perfilParaSalvar(f, 1)).toMatchObject({ nome: 'Prato da casa', csosn: '102', cst_icms: null, aliq_icms: null, cfop: '5101' });
+    expect(perfilParaSalvar({ ...f, csosn: '' }, 3)).toMatchObject({ csosn: null, cst_icms: '00', aliq_icms: '18.5' });
+  });
+
+  it('linhaCupomDaFicha: completa com "Editar"; incompleta diz o que falta, com "Completar" (a folha do produto)', () => {
+    expect(linhaCupomDaFicha(produto({}))).toEqual({
+      texto: 'Cupom fiscal: NCM 1602.50.00 · perfil Prato da casa',
+      acao: 'Editar',
+      href: '/cupom?aba=produtos&item=p1',
+    });
+    expect(linhaCupomDaFicha(produto({ ncm: null, perfil_nome: null })).texto).toBe('Cupom fiscal: faltam NCM e perfil');
+    expect(linhaCupomDaFicha(produto({ perfil_nome: null }))).toMatchObject({ texto: 'Cupom fiscal: falta perfil', acao: 'Completar' });
+  });
+
+  it('linhaDoPerfil e o aviso de trocar o regime', () => {
+    expect(linhaDoPerfil(perfil({}))).toBe('Prato da casa — CFOP 5.101 · CSOSN 102 · 64 produtos');
+    expect(linhaDoPerfil(perfil({ csosn: null, cst_icms: '00', produtos: 1 }))).toBe('Prato da casa — CFOP 5.101 · CST 00 · 1 produto');
+    const ps = [perfil({}), perfil({ id: 'b' }), perfil({ id: 'c' }), perfil({ id: 'd', ativo: false })];
+    expect(avisoTrocaRegime(ps, 1, 3)).toBe(
+      'Os 3 perfis fiscais usam códigos do Simples (CSOSN). No regime normal, eles deixam de valer até você trocar por CST, e os produtos desses perfis saem do cupom até lá.',
+    );
+    expect(avisoTrocaRegime(ps, 1, 4)).toBeNull();
+    expect(avisoTrocaRegime(ps, null, 3)).toBeNull();
+  });
+});
+
+describe('Tarefa 15: Configurações → Cupom fiscal', () => {
+  const agora = new Date('2026-11-17T17:20:00Z');
+  const s = (x: Record<string, unknown>) =>
+    ({
+      ambiente: 'homologacao', agora: agora.toISOString(), emissao_ligada: false, situacao: 'ok', mensagem: null, bloqueado_ate: null, serie: 2,
+      proximo_numero: 1, falta: [], certificado: { ok: true, mensagem: null }, pendentes: { total: 0, primeiro: null }, ...x,
+    }) as SituacaoCupomFiscal;
+
+  it('ordenarFalta: a ordem da UX 5.1, mesmo que o servidor mande fora de ordem', () => {
+    const f = [
+      { codigo: 'csc', texto: 'C' },
+      { codigo: 'certificado', texto: 'A' },
+      { codigo: 'series_outro_sistema', texto: 'S' },
+      { codigo: 'ie', texto: 'I' },
+    ];
+    expect(ordenarFalta(f).map((x) => x.codigo)).toEqual(['certificado', 'ie', 'csc', 'series_outro_sistema']);
+  });
+
+  it('tag e botão da emissão', () => {
+    expect(tagDaEmissao(s({}), agora)).toEqual({ tom: 'muted', texto: 'Emissão desligada' });
+    expect(tagDaEmissao(s({ emissao_ligada: true }), agora)).toEqual({ tom: 'ok', texto: 'Emissão ligada' });
+    expect(tagDaEmissao(s({ situacao: 'parada_certificado' }), agora)).toEqual({ tom: 'bad', texto: 'Parada' });
+    expect(tagDaEmissao(s({ emissao_ligada: true, bloqueado_ate: '2026-11-17T18:10:00Z' }), agora)).toEqual({ tom: 'warn', texto: 'Esperando a SEFAZ' });
+    expect(botaoDaEmissao(s({ ambiente: 'desligado' }))).toBeNull();
+    expect(botaoDaEmissao(s({}))).toBe('ligar');
+    expect(botaoDaEmissao(s({ emissao_ligada: true }))).toBe('desligar');
+    expect(botaoDaEmissao(s({ situacao: 'parada_656' }))).toBe('ligar_de_novo');
+    // só a parada do 656 desliga a emissão no banco: nas outras ela segue "ligada", e a ação é ligar de novo (limpa a parada)
+    expect(botaoDaEmissao(s({ emissao_ligada: true, situacao: 'parada_certificado' }))).toBe('ligar_de_novo');
+  });
+
+  it('alvoDaFalta: o campo de cada item (aba e id), ou a outra tela', () => {
+    expect(alvoDaFalta('certificado', 'homologacao')).toEqual({ rotulo: 'Ir para o certificado', aba: 'geral', id: 'certificado-digital' });
+    expect(alvoDaFalta('ie', 'homologacao')).toEqual({ rotulo: 'Preencher', aba: 'cupom', id: 'cupom-ie' });
+    expect(alvoDaFalta('csc', 'producao')).toEqual({ rotulo: 'Preencher', aba: 'cupom', id: 'cupom-csc-producao' });
+    expect(alvoDaFalta('produto_pronto', 'homologacao')).toEqual({ rotulo: 'Ver produtos', href: '/cupom?aba=produtos' });
+  });
+
+  it('histórico do ambiente e o CSC guardado (o nome do campo, nunca o valor)', () => {
+    const h = [
+      { evento: 'configuracao', campos: ['serie', 'csc'], mensagem: null, feito_por_nome: 'Diego', feito_em: '2026-11-18T12:10:00Z' },
+      { evento: 'parada_automatica', campos: [], mensagem: 'A emissão parou.', feito_por_nome: null, feito_em: '2026-11-17T18:00:00Z' },
+      { evento: 'ligada', campos: [], mensagem: null, feito_por_nome: 'Diego', feito_em: '2026-11-17T13:05:00Z' },
+    ];
+    expect(linhasHistoricoCupom(h)).toEqual([
+      'Diego mudou a série e o código de segurança em 18/11/2026 às 09h10',
+      'Parou sozinha em 17/11/2026 às 15h00: A emissão parou.',
+      'Ligada por Diego em 17/11/2026 às 10h05',
+    ]);
+    expect(linhaCscGuardado({ csc_dica: '1234', historico: h, alterada_por_nome: 'Ana', alterada_em: '2026-11-19T12:00:00Z' })).toBe(
+      'Guardado: ••••1234 (por Diego em 18/11/2026)',
+    );
+    expect(linhaCscGuardado({ csc_dica: null, historico: h, alterada_por_nome: null, alterada_em: null })).toBeNull();
+  });
+});

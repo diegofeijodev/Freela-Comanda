@@ -1,7 +1,8 @@
 'use client';
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { Trash2 } from "lucide-react";
 import {
@@ -25,6 +26,9 @@ import { ErrorBoundary } from "@/components/error-boundary";
 import { CERTIFICADO_QUERY_KEY } from "@/hooks/use-certificado";
 import { SITUACAO_SEFAZ_KEY } from "@/hooks/use-notas-sefaz";
 import { useMe } from "@/lib/auth";
+import { CupomFiscalPanel } from "@/components/cupom-fiscal-panel";
+import { CHAVE_EMITENTE } from "@/components/cupom/perfis";
+import { CHAVES_CUPOM, type AlvoFalta } from "@/lib/cupom";
 
 
 const CAMPOS: [string, string][] = [
@@ -33,8 +37,48 @@ const CAMPOS: [string, string][] = [
   ["mkup_padrao", "Mkup padrão"], ["estoque_seguranca_pct", "Estoque de segurança padrão (%)"], ["semanas_media", "Semanas para média de consumo"],
 ];
 
-export default function Config() {
+type Aba = "geral" | "despesas" | "cupom";
+
+/**
+ * Leva ao campo de um item de "Para ligar a emissão, falta:" (UX 5.1, ponto 10.5): espera o campo existir (a aba acabou de trocar ou o
+ * dado ainda chega), abre o bloco recolhido em volta, rola até ele e põe o foco (num grupo de opções, na 1ª opção).
+ */
+function focarCampo(id: string, tentativas = 20) {
+  const el = document.getElementById(id);
+  if (!el) {
+    if (tentativas > 0) setTimeout(() => focarCampo(id, tentativas - 1), 150);
+    return;
+  }
+  for (let d = el.closest("details"); d; d = d.parentElement?.closest("details") ?? null) d.open = true;
+  el.scrollIntoView({ block: "center" });
+  const focavel = el.matches("input, select, textarea, button, a[href], [tabindex]")
+    ? el
+    : el.querySelector<HTMLElement>("input:not([type=hidden]), select, textarea, button, [role=radio], a[href]");
+  (focavel ?? el).focus({ preventScroll: true });
+}
+
+export default function ConfigPage() {
+  return <Suspense fallback={null}><Config /></Suspense>;
+}
+
+function Config() {
   const { data: me } = useMe();
+  const router = useRouter();
+  const params = useSearchParams();
+  const admin = me?.perfil === "admin";
+  const pedida = params.get("aba");
+  const aba: Aba = pedida === "despesas" || (pedida === "cupom" && admin) ? pedida : "geral";
+  const trocarAba = (v: string) => router.replace(`/configuracoes${v === "geral" ? "" : `?aba=${v}`}`, { scroll: false });
+  const irPara = (alvo: AlvoFalta) => {
+    if ("href" in alvo) return router.push(alvo.href);
+    if (alvo.aba !== aba) trocarAba(alvo.aba);
+    focarCampo(alvo.id);
+  };
+  // um link com âncora (`/configuracoes?aba=cupom#cupom-crt`, `/configuracoes#certificado-digital`) leva ao campo quando ele aparecer
+  useEffect(() => {
+    const h = decodeURIComponent(window.location.hash.slice(1));
+    if (/^[a-z0-9-]+$/.test(h)) focarCampo(h);
+  }, []);
   const queryClient = useQueryClient();
   const { data: cfg, refetch } = useQuery({ queryKey: ["config"], queryFn: getConfig });
   const { data: saz, refetch: rS } = useQuery({ queryKey: ["sazonalidade"], queryFn: listarSazonalidade });
@@ -65,21 +109,42 @@ export default function Config() {
     toast.success("Configurações salvas"); refetch();
     queryClient.invalidateQueries({ queryKey: CERTIFICADO_QUERY_KEY });
     queryClient.invalidateQueries({ queryKey: SITUACAO_SEFAZ_KEY });
+    // o CNPJ e a razão social também são os do cupom (mudar o CNPJ desliga a emissão)
+    queryClient.invalidateQueries({ queryKey: CHAVES_CUPOM.situacao });
+    queryClient.invalidateQueries({ queryKey: CHAVE_EMITENTE });
   }
 
   return (
     <div className="space-y-4">
       <PageHeader title="Configurações" />
-      <Tabs defaultValue="geral">
-        <TabsList><TabsTrigger value="geral">Geral</TabsTrigger><TabsTrigger value="despesas">Contas de despesas</TabsTrigger></TabsList>
+      <Tabs value={aba} onValueChange={trocarAba}>
+        <TabsList className={admin ? "grid h-auto w-full grid-cols-3 sm:inline-grid sm:w-auto" : undefined}>
+          <TabsTrigger value="geral" className={admin ? "h-auto min-h-11 whitespace-normal px-4" : undefined}>Geral</TabsTrigger>
+          <TabsTrigger value="despesas" className={admin ? "h-auto min-h-11 whitespace-normal px-4" : undefined}>Contas de despesas</TabsTrigger>
+          {admin && <TabsTrigger value="cupom" className="h-auto min-h-11 whitespace-normal px-4">Cupom fiscal</TabsTrigger>}
+        </TabsList>
         <TabsContent value="despesas"><PlanoContas /></TabsContent>
+        {admin && (
+          <TabsContent value="cupom" className="space-y-4">
+            <p className="text-sm text-muted-foreground">Cada quadro desta aba tem o próprio botão de salvar.</p>
+            <ErrorBoundary
+              fallback={
+                <Panel title="Cupom fiscal (NFC-e)">
+                  <p className="text-sm text-muted-foreground">Não consegui mostrar este quadro agora. Recarregue a página.</p>
+                </Panel>
+              }
+            >
+              <CupomFiscalPanel irPara={irPara} />
+            </ErrorBoundary>
+          </TabsContent>
+        )}
         <TabsContent value="geral" className="space-y-4">
       <div className="flex justify-end"><Button onClick={salvar}>Salvar</Button></div>
       <Panel title="Empresa">
         <div className="grid gap-3 sm:grid-cols-2">
           <div><Label className="text-xs text-muted-foreground">Razão social</Label><Input value={empresa.razao_social} onChange={(e) => setEmpresa({ ...empresa, razao_social: e.target.value })} /></div>
           <div><Label className="text-xs text-muted-foreground">Nome fantasia</Label><Input value={empresa.nome_fantasia} onChange={(e) => setEmpresa({ ...empresa, nome_fantasia: e.target.value })} /></div>
-          <div><Label className="text-xs text-muted-foreground">CNPJ</Label><Input autoCapitalize="characters" autoComplete="off" spellCheck={false} className="uppercase" placeholder="00.000.000/0000-00" value={empresa.cnpj} onChange={(e) => setEmpresa({ ...empresa, cnpj: e.target.value.toUpperCase() })} onBlur={() => setEmpresa((x) => ({ ...x, cnpj: formatarCnpj(x.cnpj) }))} /></div>
+          <div><Label htmlFor="empresa-cnpj" className="text-xs text-muted-foreground">CNPJ</Label><Input id="empresa-cnpj" autoCapitalize="characters" autoComplete="off" spellCheck={false} className="uppercase" placeholder="00.000.000/0000-00" value={empresa.cnpj} onChange={(e) => setEmpresa({ ...empresa, cnpj: e.target.value.toUpperCase() })} onBlur={() => setEmpresa((x) => ({ ...x, cnpj: formatarCnpj(x.cnpj) }))} /></div>
           <div><Label className="text-xs text-muted-foreground">Endereço completo</Label><Input value={empresa.endereco} onChange={(e) => setEmpresa({ ...empresa, endereco: e.target.value })} /></div>
         </div>
       </Panel>

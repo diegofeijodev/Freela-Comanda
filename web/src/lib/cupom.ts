@@ -97,9 +97,11 @@ export function decimal4(q: string): string {
 // vem por parâmetro, a do servidor); textos literais da UX (docs/superpowers/specs/2026-11-17-cupom-fiscal-ux.md). Os imports ficam aqui,
 // e não no alto, para o bloco de cima continuar igual a `api/src/modules/cupom-fiscal/totais.ts`.
 import type {
-  AtalhoCupom, CodigoFalta, CupomDetalhe, MotivoProduto, ProdutoCupom, RecusaCupom, SituacaoCupom, SituacaoCupomFiscal,
+  AmbienteCupom, AmbienteSefaz, AmbienteServidor, AtalhoCupom, CodigoFalta, CupomDetalhe, CupomLinha, MotivoProduto, PerfilFiscal, ProdutoCupom,
+  RecusaCupom, SalvarPerfilFiscal, SalvarProdutoCupom, SituacaoCupom, SituacaoCupomFiscal, TipoPendente,
 } from './erp-api';
-import { cnpjValido, cpfValido } from './fiscal';
+import { dataHoraSp, dataSp } from './certificado';
+import { cnpjValido, cpfValido, gtinValido } from './fiscal';
 import { horaSp } from './notas-sefaz';
 
 const FUSO = 'America/Sao_Paulo';
@@ -817,4 +819,630 @@ export function linkDoAtalho(a: AtalhoCupom | null, cupomId: string): { rotulo: 
     default:
       return null;
   }
+}
+
+
+// ===================================================================================================== Tarefa 15 (só no web)
+// Emitidos e a faixa de pendentes (UX 4.1, 4.2 e 4.6), Produtos e perfis fiscais (UX 5.6 e 5.7), a aba "Cupom fiscal" de Configurações
+// (UX 5.1 a 5.5) e os avisos da importação e do inventário (UX 5.8). Puras: a hora vem por parâmetro (a do servidor); textos literais da UX.
+
+const plural = (n: number, um: string, varios: string) => (n === 1 ? um : varios);
+const primeiraMaiuscula = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+// ----------------------------------------------------------------------------------------------------------------- pendentes
+type PendentesTela = { total: number; primeiro: { serie: number; numero: number; tipo: TipoPendente } | null };
+
+/**
+ * A faixa de pendentes (UX 4.2), pelo `pendentes` da situação. O `tipo` vem do servidor: `sem_resposta` inclui o `cancelando` e o
+ * `enviando` vencido; `venda_pendente` inclui a venda do cupom cancelado que não saiu do estoque (a frase é a da UX, do autorizado).
+ */
+export function textoPendentes(p: PendentesTela): string | null {
+  if (p.total <= 0) return null;
+  if (p.total > 1 || p.primeiro === null) return `${p.total} ${plural(p.total, 'cupom precisa', 'cupons precisam')} de você.`;
+  const n = p.primeiro.numero;
+  switch (p.primeiro.tipo) {
+    case 'sem_resposta':
+      return '1 cupom ficou sem resposta da SEFAZ. Consulte antes de emitir outro para a mesma venda.';
+    case 'nao_saiu':
+    case 'recusado':
+      return `O cupom nº ${n} não saiu. Envie de novo ou descarte.`;
+    case 'venda_pendente':
+      return `O cupom nº ${n} está autorizado, mas a venda não baixou o estoque.`;
+  }
+}
+
+/** Emitidos em "Precisam de você" (o destino do [Ver] da faixa com vários, e dos avisos do estoque). */
+export const HREF_PRECISAM = '/cupom?aba=emitidos&situacao=atencao';
+
+/** O link da faixa: um = direto ao cupom ("Ver o cupom"); vários = Emitidos em "Precisam de você" ("Ver"). */
+export function linkPendentes(p: SituacaoCupomFiscal['pendentes']): { rotulo: string; href: string } | null {
+  if (p.total <= 0) return null;
+  if (p.total === 1 && p.primeiro) return { rotulo: 'Ver o cupom', href: `/cupom/${p.primeiro.id}` };
+  return { rotulo: 'Ver', href: HREF_PRECISAM };
+}
+
+/** "2 cupons autorizados ainda não baixaram o estoque." (UX 5.1 e 5.8); nenhum = null. */
+export function textoVendasPendentes(n: number): string | null {
+  if (n <= 0) return null;
+  return n === 1 ? '1 cupom autorizado ainda não baixou o estoque.' : `${n} cupons autorizados ainda não baixaram o estoque.`;
+}
+
+/** O aviso da importação de vendas (UX 5.8): os cupons valendo que já estão no estoque no período do arquivo; nenhum = null. */
+export function textoAvisoImportacao(r: { quantidade: number; valor_centavos: number }): string | null {
+  if (r.quantidade <= 0) return null;
+  return `Neste período, o Freela Comanda já lançou ${r.quantidade} ${plural(r.quantidade, 'cupom', 'cupons')} no estoque (${reais(
+    BigInt(r.valor_centavos),
+  )}). Se essas vendas também estão neste arquivo, vão contar duas vezes.`;
+}
+
+/** O período do arquivo de vendas: a menor e a maior data `AAAA-MM-DD` (as outras não contam); nenhuma = null. */
+export function periodoDoArquivo(datas: readonly (string | null | undefined)[]): { ini: string; fim: string } | null {
+  const ok = datas.filter((d): d is string => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d)).sort();
+  return ok.length === 0 ? null : { ini: ok[0], fim: ok[ok.length - 1] };
+}
+
+// ----------------------------------------------------------------------------------------------------------------- Emitidos
+export type PeriodoEmitidos = 'hoje' | 'ontem' | '7dias' | 'mes' | 'mes_passado' | 'datas';
+export const ROTULO_PERIODO: Record<PeriodoEmitidos, string> = {
+  hoje: 'Hoje',
+  ontem: 'Ontem',
+  '7dias': 'Últimos 7 dias',
+  mes: 'Este mês',
+  mes_passado: 'Mês passado',
+  datas: 'Escolher datas',
+};
+export type SituacaoEmitidos = 'todos' | 'atencao' | 'autorizados' | 'cancelados' | 'descartados';
+/** O filtro de situação de cada botão (UX 4.1): "Precisam de você" é o `atencao=true` do servidor (pendentes + venda pendente). */
+export const SITUACOES_DO_FILTRO: Record<Exclude<SituacaoEmitidos, 'todos' | 'atencao'>, SituacaoCupom[]> = {
+  autorizados: ['autorizado'],
+  cancelados: ['cancelado'],
+  descartados: ['descartado'],
+};
+
+/** "AAAA-MM-DD" do dia em Brasília. */
+export function diaSpDe(d: Date): string {
+  const p = partesSp(d.toISOString());
+  return `${p.year}-${p.month}-${p.day}`;
+}
+
+/** Soma dias a um "AAAA-MM-DD" pelo calendário (sem fuso). */
+export function somarDias(dia: string, n: number): string {
+  const d = new Date(`${dia}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+/** O intervalo de cada período (UX 4.1), em dias de Brasília; `hoje` = o dia do servidor. */
+export function intervaloDoPeriodo(p: Exclude<PeriodoEmitidos, 'datas'>, hoje: string): { ini: string; fim: string } {
+  const primeiro = `${hoje.slice(0, 7)}-01`;
+  switch (p) {
+    case 'hoje':
+      return { ini: hoje, fim: hoje };
+    case 'ontem': {
+      const d = somarDias(hoje, -1);
+      return { ini: d, fim: d };
+    }
+    case '7dias':
+      return { ini: somarDias(hoje, -6), fim: hoje };
+    case 'mes':
+      return { ini: primeiro, fim: hoje };
+    case 'mes_passado': {
+      const fim = somarDias(primeiro, -1);
+      return { ini: `${fim.slice(0, 7)}-01`, fim };
+    }
+  }
+}
+
+/**
+ * A próxima ação de um cupom na lista (UX 4.1), uma linha só: a venda pendente no estoque primeiro (é o que precisa de você), depois a
+ * consulta, o enviar de novo/descartar e o prazo de cancelar (que some depois do prazo, UX 4.4). Nada = null.
+ */
+export function proximaAcao(
+  l: Pick<CupomLinha, 'situacao' | 'acoes' | 'cancelar_ate' | 'consultar_a_partir_de' | 'venda_estoque'>,
+  agora: Date,
+): string | null {
+  if (l.venda_estoque === 'pendente') return 'A venda não baixou o estoque';
+  if (l.venda_estoque === 'desfazer_pendente') return 'A venda ainda está no estoque';
+  if (l.situacao === 'sem_resposta' || l.situacao === 'cancelando') {
+    return l.consultar_a_partir_de ? `Consulte a partir das ${horaSp(l.consultar_a_partir_de)}` : 'Consulte na SEFAZ';
+  }
+  if (l.acoes.includes('enviar_de_novo')) return 'Envie de novo ou descarte';
+  if (l.acoes.includes('descartar')) return 'Descarte este cupom';
+  if (l.acoes.includes('cancelar') && l.cancelar_ate && new Date(l.cancelar_ate).getTime() > agora.getTime()) {
+    return `Dá para cancelar até ${horaSp(l.cancelar_ate)}`;
+  }
+  return null;
+}
+
+/** "Hoje às 14h05" | "Ontem às 14h05" | "Em 14/11 às 14h05" (o cartão do celular). */
+export const quandoNaLista = (iso: string, agora: Date) => primeiraMaiuscula(quandoSp(iso, agora));
+/** "17/11 14h05" (a tabela do computador). */
+export const dataHoraNaLista = (iso: string) => `${diaMesSp(iso)} ${horaSp(iso)}`;
+
+/** O documento da lista: o CPF já vem mascarado do servidor (`***.982.247-**`) e fica como veio; o CNPJ, formatado; nenhum = "—". */
+export function documentoNaLista(d: string | null): string {
+  if (d === null || d === '') return '—';
+  return d.includes('*') ? d : documentoFormatado(d);
+}
+
+/** O mês do contador (UX 4.6): até o dia 10, o mês passado; depois, este mês ("AAAA-MM"). */
+export function mesPadraoContador(hoje: string): string {
+  const primeiro = `${hoje.slice(0, 7)}-01`;
+  return Number(hoje.slice(8, 10)) <= 10 ? somarDias(primeiro, -1).slice(0, 7) : hoje.slice(0, 7);
+}
+
+/** Os `n` meses até este (o mais novo primeiro), para o `Select` "Mês". */
+export function mesesDoContador(hoje: string, n = 12): string[] {
+  const r: string[] = [];
+  let primeiro = `${hoje.slice(0, 7)}-01`;
+  for (let i = 0; i < n; i++) {
+    r.push(primeiro.slice(0, 7));
+    primeiro = `${somarDias(primeiro, -1).slice(0, 7)}-01`;
+  }
+  return r;
+}
+
+const NOMES_MES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+/** "2026-10" → "outubro/2026". */
+export const nomeDoMes = (mes: string) => `${NOMES_MES[Number(mes.slice(5, 7)) - 1]}/${mes.slice(0, 4)}`;
+
+// ----------------------------------------------------------------------------------------------------------------- máscaras
+export const soNumeros = (s: string) => s.replace(/[^0-9]/g, '');
+/** Os números de `s` (até a soma dos grupos) com os separadores entre os grupos, enquanto digita. */
+function mascarar(s: string, grupos: number[], seps: string[]): string {
+  const d = soNumeros(s).slice(0, grupos.reduce((a, g) => a + g, 0));
+  let r = '';
+  let i = 0;
+  grupos.forEach((g, k) => {
+    const parte = d.slice(i, i + g);
+    if (parte === '') return;
+    r += (k > 0 ? seps[k - 1] : '') + parte;
+    i += g;
+  });
+  return r;
+}
+export const mascaraNcm = (s: string) => mascarar(s, [4, 2, 2], ['.', '.']);
+export const mascaraCest = (s: string) => mascarar(s, [2, 3, 2], ['.', '.']);
+export const mascaraIe = (s: string) => mascarar(s, [3, 3, 3, 3], ['.', '.', '.']);
+export const mascaraCep = (s: string) => mascarar(s, [5, 3], ['-']);
+/** Sem os separadores das máscaras (espaço, ponto, hífen e barra); o que sobrar de estranho fica, para a validação recusar. */
+const semSeparador = (s: string) => s.replace(/[\s.\-/]/g, '');
+const vazioNulo = (s: string) => {
+  const t = s.trim();
+  return t === '' ? null : t;
+};
+
+// ----------------------------------------------------------------------------------------------------------------- Produtos
+export type FiltroProdutos = 'faltam' | 'prontos' | 'todos';
+
+/** Contagem dos botões (UX 5.7), só dos ativos (a grade é dos itens ativos do cardápio; o número bate com o da aba). */
+export function contarProdutos(ps: readonly ProdutoCupom[]): Record<FiltroProdutos, number> {
+  const ativos = ps.filter((p) => p.ativo);
+  const prontos = ativos.filter((p) => p.pronto).length;
+  return { faltam: ativos.length - prontos, prontos, todos: ativos.length };
+}
+
+/**
+ * A grade (UX 5.7): os ativos (ou, vindo de um cupom, os produtos dele, `so`), pelo filtro, a categoria e a busca (sem acento, no nome do
+ * cardápio e no nome no cupom).
+ */
+export function filtrarProdutos(
+  ps: readonly ProdutoCupom[],
+  f: { busca: string; filtro: FiltroProdutos; categoria: string | null; so: readonly string[] | null },
+): ProdutoCupom[] {
+  const t = semAcento(f.busca.trim());
+  return ps.filter((p) => {
+    if (f.so ? !f.so.includes(p.item_cardapio_id) : !p.ativo) return false;
+    if (f.filtro === 'faltam' && p.pronto) return false;
+    if (f.filtro === 'prontos' && !p.pronto) return false;
+    if (f.categoria && p.categoria !== f.categoria) return false;
+    if (t === '') return true;
+    return semAcento(p.nome).includes(t) || (p.descricao_cupom !== null && semAcento(p.descricao_cupom).includes(t));
+  });
+}
+
+/** As tags do produto (UX 5.7): "Pronto para o cupom" ou uma por motivo. */
+export function tagsDoProduto(p: Pick<ProdutoCupom, 'pronto' | 'motivos'>): { tom: 'ok' | 'warn'; texto: string }[] {
+  if (p.pronto) return [{ tom: 'ok', texto: 'Pronto para o cupom' }];
+  return p.motivos.map((m) => ({ tom: 'warn' as const, texto: TAG_MOTIVO[m] }));
+}
+
+/** "NCM 1602.50.00 · Prato da casa" (o que houver). */
+export function linhaFiscalDoProduto(p: Pick<ProdutoCupom, 'ncm' | 'perfil_nome'>): string | null {
+  const partes = [p.ncm ? `NCM ${mascaraNcm(p.ncm)}` : null, p.perfil_nome].filter((x): x is string => !!x);
+  return partes.length === 0 ? null : partes.join(' · ');
+}
+
+export type FormProduto = {
+  ncm: string;
+  perfil_fiscal_id: string;
+  cest: string;
+  gtin: string;
+  origem: string;
+  descricao_cupom: string;
+  unidade: string;
+};
+export const formDoProduto = (p: ProdutoCupom): FormProduto => ({
+  ncm: p.ncm ? mascaraNcm(p.ncm) : '',
+  perfil_fiscal_id: p.perfil_fiscal_id ?? '',
+  cest: p.cest ? mascaraCest(p.cest) : '',
+  gtin: p.gtin ?? '',
+  origem: String(p.origem),
+  descricao_cupom: p.descricao_cupom ?? '',
+  unidade: p.unidade ?? '',
+});
+
+/** Erro de cada campo da folha do produto (no blur; as frases da UX 5.7); vazio = sem erro (o NCM e o perfil vazios só deixam "Falta"). */
+export function errosDoProduto(f: FormProduto): Partial<Record<keyof FormProduto, string>> {
+  const e: Partial<Record<keyof FormProduto, string>> = {};
+  const ncm = semSeparador(f.ncm);
+  const cest = semSeparador(f.cest);
+  const gtin = semSeparador(f.gtin);
+  if (ncm !== '' && !/^\d{8}$/.test(ncm)) e.ncm = 'O NCM tem 8 números.';
+  if (cest !== '' && !/^\d{7}$/.test(cest)) e.cest = 'O CEST tem 7 números.';
+  if (gtin !== '' && !gtinValido(gtin)) e.gtin = 'Este código de barras não confere. Confira os números (8, 12, 13 ou 14).';
+  if (Array.from(f.descricao_cupom.trim()).length > 120) e.descricao_cupom = 'Use até 120 letras.';
+  if (Array.from(f.unidade.trim()).length > 6) e.unidade = 'Use até 6 letras.';
+  return e;
+}
+
+/**
+ * O PUT do produto com SÓ o que mudou (um perfil igual, mesmo desativado, não vai: o servidor recusaria): códigos sem máscara, textos
+ * aparados, vazio = null.
+ */
+export function produtoParaSalvar(p: ProdutoCupom, f: FormProduto): SalvarProdutoCupom {
+  const r: SalvarProdutoCupom = {};
+  const ncm = vazioNulo(semSeparador(f.ncm));
+  const cest = vazioNulo(semSeparador(f.cest));
+  const gtin = vazioNulo(semSeparador(f.gtin));
+  const descricao = vazioNulo(f.descricao_cupom);
+  const unidade = vazioNulo(f.unidade);
+  const perfil = f.perfil_fiscal_id === '' ? null : f.perfil_fiscal_id;
+  const origem = Number(f.origem);
+  if (ncm !== p.ncm) r.ncm = ncm;
+  if (cest !== p.cest) r.cest = cest;
+  if (gtin !== p.gtin) r.gtin = gtin;
+  if (Number.isInteger(origem) && origem !== p.origem) r.origem = origem;
+  if (descricao !== p.descricao_cupom) r.descricao_cupom = descricao;
+  if (unidade !== p.unidade) r.unidade = unidade;
+  if (perfil !== p.perfil_fiscal_id) r.perfil_fiscal_id = perfil;
+  return r;
+}
+
+/** Origem da mercadoria (UX 5.7; os números da tabela de origem do leiaute). */
+export const OPCOES_ORIGEM: readonly { codigo: string; texto: string }[] = [
+  { codigo: '0', texto: '0 Nacional' },
+  { codigo: '1', texto: '1 Estrangeira, importação direta' },
+  { codigo: '2', texto: '2 Estrangeira, comprada no Brasil' },
+  { codigo: '3', texto: '3 Nacional, mais de 40% e até 70% importado' },
+  { codigo: '4', texto: '4 Nacional, processo produtivo básico' },
+  { codigo: '5', texto: '5 Nacional, até 40% importado' },
+  { codigo: '6', texto: '6 Estrangeira sem similar nacional, importação direta' },
+  { codigo: '7', texto: '7 Estrangeira sem similar nacional, comprada no Brasil' },
+  { codigo: '8', texto: '8 Nacional, mais de 70% importado' },
+];
+
+// ----------------------------------------------------------------------------------------------------------------- perfis fiscais
+// As listas e as combinações são as de `api/src/modules/cupom-fiscal/validacao-fiscal.ts` (a tela desabilita o que o servidor recusa).
+/** CRT 1, 2 e 4 (Simples, acima do sublimite e MEI) usam CSOSN; o 3 (regime normal), CST. */
+export const usaCsosn = (crt: number | null) => crt === 1 || crt === 2 || crt === 4;
+const CFOP_SEM_ST = ['5101', '5102', '5103', '5104', '5115'];
+const CFOP_CSOSN_500 = ['5405', '5656', '5667'];
+const CFOP_CST_60 = ['5405'];
+/** "5101" → "5.101". */
+export const cfopTexto = (c: string) => (c.length === 4 ? `${c[0]}.${c.slice(1)}` : c);
+const listaCfop = (cs: readonly string[]) => {
+  const t = cs.map(cfopTexto);
+  return t.length === 1 ? t[0] : `${t.slice(0, -1).join(', ')} ou ${t[t.length - 1]}`;
+};
+
+export type OpcaoFiscal = { codigo: string; texto: string; motivo?: string };
+export const OPCOES_CSOSN: readonly OpcaoFiscal[] = [
+  { codigo: '102', texto: '102 Tributado pelo Simples, sem permissão de crédito' },
+  { codigo: '103', texto: '103 Isento pela faixa de receita' },
+  { codigo: '300', texto: '300 Imune' },
+  { codigo: '400', texto: '400 Não tributado pelo Simples' },
+  { codigo: '500', texto: '500 ICMS já pago antes (substituição tributária)' },
+  { codigo: '900', texto: '900 Outros' },
+];
+export const OPCOES_CST: readonly OpcaoFiscal[] = [
+  { codigo: '00', texto: '00 Tributado integralmente' },
+  { codigo: '20', texto: '20 Com redução da base', motivo: 'O CST 20 ainda não pode ser usado no Comanda. Fale com o contador.' },
+  { codigo: '40', texto: '40 Isento' },
+  { codigo: '41', texto: '41 Não tributado' },
+  { codigo: '60', texto: '60 ICMS já pago antes (substituição tributária)' },
+  { codigo: '90', texto: '90 Outros' },
+];
+export const OPCOES_CFOP: readonly OpcaoFiscal[] = [
+  { codigo: '5101', texto: '5.101 Produção própria (feito na casa)' },
+  { codigo: '5102', texto: '5.102 Revenda (comprado pronto)' },
+  { codigo: '5103', texto: '5.103 Produção própria, vendida fora do estabelecimento' },
+  { codigo: '5104', texto: '5.104 Revenda, vendida fora do estabelecimento' },
+  { codigo: '5115', texto: '5.115 Revenda recebida em consignação' },
+  { codigo: '5405', texto: '5.405 Revenda com imposto já pago antes (substituição tributária)' },
+  { codigo: '5656', texto: '5.656 Combustível (raro)' },
+  { codigo: '5667', texto: '5.667 Combustível (raro)' },
+];
+const PIS_BARRADO = 'Pede alíquota: ainda não pode ser usado no Comanda. Fale com o contador.';
+/** CST de PIS/COFINS: os que vão só com o código (04–09) ou zerados (49, 99); os que pedem alíquota ficam desabilitados (o servidor recusa). */
+export const OPCOES_PIS_COFINS: readonly OpcaoFiscal[] = [
+  { codigo: '01', texto: '01 Tributável, alíquota básica', motivo: PIS_BARRADO },
+  { codigo: '02', texto: '02 Tributável, alíquota diferenciada', motivo: PIS_BARRADO },
+  { codigo: '03', texto: '03 Tributável, alíquota por unidade', motivo: PIS_BARRADO },
+  { codigo: '04', texto: '04 Monofásica, revenda a alíquota zero' },
+  { codigo: '05', texto: '05 Substituição tributária' },
+  { codigo: '06', texto: '06 Alíquota zero' },
+  { codigo: '07', texto: '07 Isenta' },
+  { codigo: '08', texto: '08 Sem incidência' },
+  { codigo: '09', texto: '09 Com suspensão' },
+  { codigo: '49', texto: '49 Outras operações de saída' },
+  { codigo: '99', texto: '99 Outras operações' },
+];
+
+/** Por que o CFOP não combina com o código do imposto (as frases do servidor); combina = null. */
+export function motivoCfopFora(cfop: string, c: { csosn: string | null; cst_icms: string | null }): string | null {
+  const csosn = c.csosn?.trim() || null;
+  const cst = c.cst_icms?.trim() || null;
+  if (csosn === '500') return CFOP_CSOSN_500.includes(cfop) ? null : 'O CSOSN 500 só vale com o CFOP 5.405.';
+  if (csosn !== null) return CFOP_SEM_ST.includes(cfop) ? null : `O CSOSN ${csosn} só vale com o tipo de venda (CFOP) ${listaCfop(CFOP_SEM_ST)}.`;
+  if (cst === '60') return CFOP_CST_60.includes(cfop) ? null : `O CST 60 só vale com o tipo de venda (CFOP) ${listaCfop(CFOP_CST_60)}.`;
+  return null;
+}
+
+/** A ajuda do CFOP com o CSOSN 500 ou o CST 60 (UX 5.6). */
+export const ajudaDoCfop = (c: { csosn: string; cst_icms: string }) =>
+  c.csosn === '500' || c.cst_icms === '60' ? 'Com este código de imposto, o CFOP é 5.405.' : null;
+
+export type FormPerfil = {
+  nome: string;
+  csosn: string;
+  cst_icms: string;
+  aliq_icms: string;
+  cfop: string;
+  pis_cst: string;
+  cofins_cst: string;
+  c_ativ_sn: string;
+  ibs_sn_aliq: string;
+  cbs_sn_aliq: string;
+  ibscbs_cst: string;
+  ibscbs_cclass_trib: string;
+};
+const pctTela = (n: number | null) => (n === null ? '' : String(n).replace('.', ','));
+export const formDoPerfil = (p: PerfilFiscal | null): FormPerfil => ({
+  nome: p?.nome ?? '',
+  csosn: p?.csosn ?? '',
+  cst_icms: p?.cst_icms ?? '',
+  aliq_icms: pctTela(p?.aliq_icms ?? null),
+  cfop: p?.cfop ?? '',
+  pis_cst: p?.pis_cst ?? '',
+  cofins_cst: p?.cofins_cst ?? '',
+  c_ativ_sn: p?.c_ativ_sn ?? '',
+  ibs_sn_aliq: pctTela(p?.ibs_sn_aliq ?? null),
+  cbs_sn_aliq: pctTela(p?.cbs_sn_aliq ?? null),
+  ibscbs_cst: p?.ibscbs_cst ?? '',
+  ibscbs_cclass_trib: p?.ibscbs_cclass_trib ?? '',
+});
+
+/** Percentual da tela ("18,5") → texto do fio ("18.5"); vazio = null. */
+const pctFio = (s: string) => vazioNulo(s.replace(',', '.'));
+const pctOk = (s: string, casas: number) => new RegExp(`^\\d{1,3}(\\.\\d{1,${casas}})?$`).test(s) && Number(s) <= 100;
+
+/**
+ * Erros da folha do perfil (UX 5.6), campo a campo; o regime (`crt`) decide se o código é CSOSN ou CST (sem regime: o do próprio perfil).
+ * As opções que não combinam já vêm desabilitadas: aqui fica o que a pessoa ainda pode deixar errado.
+ */
+export function errosDoPerfil(f: FormPerfil, crt: number | null): Partial<Record<keyof FormPerfil, string>> {
+  const e: Partial<Record<keyof FormPerfil, string>> = {};
+  const simples = crt === null ? f.csosn.trim() !== '' : usaCsosn(crt);
+  const nome = f.nome.trim();
+  if (nome === '') e.nome = 'Dê um nome ao perfil.';
+  else if (Array.from(nome).length > 60) e.nome = 'O nome do perfil tem até 60 letras.';
+  if (simples && f.csosn.trim() === '') e.csosn = 'No Simples, escolha o CSOSN.';
+  if (!simples) {
+    const cst = f.cst_icms.trim();
+    const aliq = pctFio(f.aliq_icms);
+    if (cst === '') e.cst_icms = 'No regime normal, escolha o CST.';
+    if (aliq !== null && !pctOk(aliq, 2)) e.aliq_icms = 'Use um número de 0 a 100, com até 2 casas.';
+    else if (cst === '00' && aliq === null) e.aliq_icms = 'Informe a alíquota do ICMS.';
+  }
+  const cfop = f.cfop.trim();
+  if (cfop === '') e.cfop = 'Escolha o tipo de venda (CFOP).';
+  else {
+    const m = motivoCfopFora(cfop, simples ? { csosn: f.csosn, cst_icms: null } : { csosn: null, cst_icms: f.cst_icms });
+    if (m) e.cfop = m;
+  }
+  for (const k of ['pis_cst', 'cofins_cst'] as const) if (f[k].trim() !== '' && !/^\d{2}$/.test(f[k].trim())) e[k] = 'Use 2 números.';
+  if (simples) {
+    if (f.c_ativ_sn.trim() !== '' && !/^\d{2}$/.test(f.c_ativ_sn.trim())) e.c_ativ_sn = 'Use 2 números.';
+    for (const k of ['ibs_sn_aliq', 'cbs_sn_aliq'] as const) {
+      const v = pctFio(f[k]);
+      if (v !== null && !pctOk(v, 4)) e[k] = 'Use um número com até 4 casas.';
+    }
+  } else {
+    if (f.ibscbs_cst.trim() !== '' && !/^\d{3}$/.test(f.ibscbs_cst.trim())) e.ibscbs_cst = 'Use 3 números.';
+    if (f.ibscbs_cclass_trib.trim() !== '' && !/^\d{6}$/.test(f.ibscbs_cclass_trib.trim())) e.ibscbs_cclass_trib = 'Use 6 números.';
+  }
+  return e;
+}
+
+/** O corpo do POST/PATCH do perfil: aparado, vazio = null, alíquota com ponto; os campos do outro regime vão nulos (os dois = 422). */
+export function perfilParaSalvar(f: FormPerfil, crt: number | null): SalvarPerfilFiscal & { nome: string; cfop: string } {
+  const simples = crt === null ? f.csosn.trim() !== '' : usaCsosn(crt);
+  return {
+    nome: f.nome.trim(),
+    cfop: f.cfop.trim(),
+    csosn: simples ? vazioNulo(f.csosn) : null,
+    cst_icms: simples ? null : vazioNulo(f.cst_icms),
+    aliq_icms: simples ? null : pctFio(f.aliq_icms),
+    pis_cst: vazioNulo(f.pis_cst),
+    cofins_cst: vazioNulo(f.cofins_cst),
+    c_ativ_sn: simples ? vazioNulo(f.c_ativ_sn) : null,
+    ibs_sn_aliq: simples ? pctFio(f.ibs_sn_aliq) : null,
+    cbs_sn_aliq: simples ? pctFio(f.cbs_sn_aliq) : null,
+    ibscbs_cst: simples ? null : vazioNulo(f.ibscbs_cst),
+    ibscbs_cclass_trib: simples ? null : vazioNulo(f.ibscbs_cclass_trib),
+  };
+}
+
+/** "Prato da casa — CFOP 5.101 · CSOSN 102 · 64 produtos" (UX 5.6). */
+export function linhaDoPerfil(p: Pick<PerfilFiscal, 'nome' | 'cfop' | 'csosn' | 'cst_icms' | 'produtos'>): string {
+  const codigo = p.csosn ? `CSOSN ${p.csosn}` : p.cst_icms ? `CST ${p.cst_icms}` : null;
+  return [`${p.nome} — CFOP ${cfopTexto(p.cfop)}`, codigo, `${p.produtos} ${plural(p.produtos, 'produto', 'produtos')}`]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+/** O corpo do "Desativar" de um perfil em uso (UX 5.6). */
+export const textoDesativarPerfil = (n: number) =>
+  n === 1
+    ? '1 produto usa este perfil e sai do cupom até você escolher outro perfil para ele.'
+    : `${n} produtos usam este perfil e saem do cupom até você escolher outro perfil para eles.`;
+
+/**
+ * O aviso de trocar o regime entre Simples e normal (UX 5.2), com os perfis ativos do outro regime; sem troca de família ou sem perfil
+ * afetado = null (sem diálogo).
+ */
+export function avisoTrocaRegime(
+  perfis: readonly Pick<PerfilFiscal, 'ativo' | 'csosn' | 'cst_icms'>[],
+  antes: number | null,
+  depois: number,
+): string | null {
+  if (antes === null || usaCsosn(antes) === usaCsosn(depois)) return null;
+  const paraNormal = !usaCsosn(depois);
+  const n = perfis.filter((p) => p.ativo && (paraNormal ? p.csosn : p.cst_icms)).length;
+  if (n === 0) return null;
+  const quem = n === 1 ? 'O perfil fiscal usa' : `Os ${n} perfis fiscais usam`;
+  const deixa = n === 1 ? 'ele deixa' : 'eles deixam';
+  const desses = n === 1 ? 'desse perfil' : 'desses perfis';
+  return paraNormal
+    ? `${quem} códigos do Simples (CSOSN). No regime normal, ${deixa} de valer até você trocar por CST, e os produtos ${desses} saem do cupom até lá.`
+    : `${quem} códigos do regime normal (CST). No Simples, ${deixa} de valer até você trocar por CSOSN, e os produtos ${desses} saem do cupom até lá.`;
+}
+
+// ----------------------------------------------------------------------------------------------------------------- Configurações
+/** A ordem da UX 5.1 (a do servidor; a tela reordena por garantia). */
+const ORDEM_FALTA: readonly string[] = [
+  'certificado', 'cnpj', 'ie', 'crt', 'endereco', 'serie', 'csc', 'produto_pronto', 'teste_homologacao', 'lanca_venda', 'series_outro_sistema',
+];
+export function ordenarFalta<T extends { codigo: string; texto: string }>(f: readonly T[]): T[] {
+  const pos = (c: string) => {
+    const i = ORDEM_FALTA.indexOf(c);
+    return i < 0 ? ORDEM_FALTA.length : i;
+  };
+  return f
+    .map((x, i) => ({ x, i }))
+    .sort((a, b) => pos(a.x.codigo) - pos(b.x.codigo) || a.i - b.i)
+    .map((y) => y.x);
+}
+
+/** "Este servidor: …" (UX 5.1). */
+export const linhaDoServidor = (a: AmbienteServidor) =>
+  a === 'homologacao' ? 'Este servidor: modo de teste da SEFAZ' : a === 'producao' ? 'Este servidor: valendo' : 'Este servidor: desligado';
+
+/** A tag da emissão (UX 5.1): parada, esperando a SEFAZ (bloqueio do 656), ligada ou desligada. */
+export function tagDaEmissao(s: Pick<SituacaoCupomFiscal, 'situacao' | 'bloqueado_ate' | 'emissao_ligada'>, agora: Date): { tom: TomCupom; texto: string } {
+  if (s.situacao !== 'ok') return { tom: 'bad', texto: 'Parada' };
+  if (s.bloqueado_ate !== null && new Date(s.bloqueado_ate).getTime() > agora.getTime()) return { tom: 'warn', texto: 'Esperando a SEFAZ' };
+  return s.emissao_ligada ? { tom: 'ok', texto: 'Emissão ligada' } : { tom: 'muted', texto: 'Emissão desligada' };
+}
+
+/**
+ * O botão da emissão (UX 5.1): servidor desligado = nenhum; depois de uma parada = ligar de novo (só a do 656 desliga a emissão no
+ * banco; nas outras ela segue "ligada", mas parada: ligar de novo limpa a parada); ligada = desligar.
+ */
+export function botaoDaEmissao(s: Pick<SituacaoCupomFiscal, 'ambiente' | 'emissao_ligada' | 'situacao'>): 'ligar' | 'desligar' | 'ligar_de_novo' | null {
+  if (s.ambiente === 'desligado') return null;
+  if (s.situacao !== 'ok') return 'ligar_de_novo';
+  return s.emissao_ligada ? 'desligar' : 'ligar';
+}
+
+/** Para onde leva cada item de "Para ligar a emissão, falta:" dentro de Configurações (a aba e o id do campo), ou a outra tela. */
+export type AlvoFalta = { rotulo: string; aba: 'geral' | 'cupom'; id: string } | { rotulo: string; href: string };
+export function alvoDaFalta(codigo: CodigoFalta, ambiente: AmbienteSefaz): AlvoFalta {
+  switch (codigo) {
+    case 'certificado':
+      return { rotulo: 'Ir para o certificado', aba: 'geral', id: 'certificado-digital' };
+    case 'cnpj':
+      return { rotulo: 'Preencher', aba: 'geral', id: 'empresa-cnpj' };
+    case 'ie':
+      return { rotulo: 'Preencher', aba: 'cupom', id: 'cupom-ie' };
+    case 'crt':
+      return { rotulo: 'Preencher', aba: 'cupom', id: 'cupom-crt' };
+    case 'endereco':
+      return { rotulo: 'Preencher', aba: 'cupom', id: 'cupom-logradouro' };
+    case 'serie':
+      return { rotulo: 'Preencher', aba: 'cupom', id: `cupom-serie-${ambiente}` };
+    case 'csc':
+      return { rotulo: 'Preencher', aba: 'cupom', id: `cupom-csc-${ambiente}` };
+    case 'produto_pronto':
+      return { rotulo: 'Ver produtos', href: '/cupom?aba=produtos' };
+    case 'teste_homologacao':
+      return { rotulo: 'Emitir um cupom de teste', href: '/cupom?aba=emitir' };
+    case 'lanca_venda':
+      return { rotulo: 'Responder', aba: 'cupom', id: 'cupom-lanca-venda' };
+    case 'series_outro_sistema':
+      return { rotulo: 'Preencher', aba: 'cupom', id: 'cupom-series' };
+  }
+}
+
+const NOME_CAMPO: Record<string, string> = {
+  serie: 'a série',
+  proximo_numero: 'o próximo número',
+  id_csc: 'o número do código (IdCSC)',
+  csc: 'o código de segurança',
+};
+const juntarE = (xs: string[]) => (xs.length <= 1 ? (xs[0] ?? '') : `${xs.slice(0, -1).join(', ')} e ${xs[xs.length - 1]}`);
+
+/** O histórico do ambiente (UX 5.1, ponto 10.11), do mais novo para o mais velho: o nome do campo mudado, nunca o valor. */
+export function linhasHistoricoCupom(h: AmbienteCupom['historico']): string[] {
+  return h.map((e) => {
+    const quando = dataHoraSp(e.feito_em);
+    const por = e.feito_por_nome ? ` por ${e.feito_por_nome}` : '';
+    switch (e.evento) {
+      case 'ligada':
+        return `Ligada${por} em ${quando}`;
+      case 'desligada':
+        return `Desligada${por} em ${quando}${e.mensagem ? `: ${e.mensagem}` : ''}`;
+      case 'parada_automatica':
+        return `Parou sozinha em ${quando}${e.mensagem ? `: ${e.mensagem}` : ''}`;
+      case 'configuracao': {
+        const campos = juntarE(e.campos.map((c) => NOME_CAMPO[c] ?? c));
+        return `${e.feito_por_nome ?? 'Alguém'} mudou ${campos || 'a configuração'} em ${quando}`;
+      }
+      default:
+        return `${e.evento} em ${quando}`;
+    }
+  });
+}
+
+/** "Ligada por Diego em 17/11/2026 às 10h05" (a última vez que ligou), para a emissão ligada. */
+export function linhaLigadaPor(h: AmbienteCupom['historico']): string | null {
+  const e = h.find((x) => x.evento === 'ligada');
+  return e ? `Ligada${e.feito_por_nome ? ` por ${e.feito_por_nome}` : ''} em ${dataHoraSp(e.feito_em)}` : null;
+}
+
+/** "Guardado: ••••1234 (por Diego em 17/11/2026)" (UX 5.3): quem gravou o CSC sai do histórico; o valor nunca volta. */
+export function linhaCscGuardado(a: Pick<AmbienteCupom, 'csc_dica' | 'historico' | 'alterada_por_nome' | 'alterada_em'>): string | null {
+  if (!a.csc_dica) return null;
+  const e = a.historico.find((x) => x.evento === 'configuracao' && x.campos.includes('csc'));
+  const nome = e ? e.feito_por_nome : a.alterada_por_nome;
+  const em = e ? e.feito_em : a.alterada_em;
+  const quem = nome && em ? ` (por ${nome} em ${dataSp(em)})` : em ? ` (em ${dataSp(em)})` : '';
+  return `Guardado: ••••${a.csc_dica}${quem}`;
+}
+
+/** Os rótulos do regime (UX 5.2), com o código na frente, na ordem da UX. */
+export const OPCOES_CRT: readonly { crt: number; texto: string }[] = [
+  { crt: 1, texto: '1 Simples Nacional' },
+  { crt: 2, texto: '2 Simples Nacional, acima do sublimite' },
+  { crt: 4, texto: '4 MEI' },
+  { crt: 3, texto: '3 Regime normal (Lucro Presumido ou Real)' },
+];
+
+/** A linha só de leitura da Ficha Técnica (UX 5.8): completa = NCM e perfil + "Editar"; senão o que falta + "Completar". */
+export function linhaCupomDaFicha(p: Pick<ProdutoCupom, 'item_cardapio_id' | 'ncm' | 'perfil_nome'>): { texto: string; acao: 'Editar' | 'Completar'; href: string } {
+  const href = `/cupom?aba=produtos&item=${p.item_cardapio_id}`;
+  if (p.ncm && p.perfil_nome) return { texto: `Cupom fiscal: NCM ${mascaraNcm(p.ncm)} · perfil ${p.perfil_nome}`, acao: 'Editar', href };
+  const falta = [p.ncm ? null : 'NCM', p.perfil_nome ? null : 'perfil'].filter((x): x is string => x !== null);
+  return { texto: `Cupom fiscal: ${falta.length > 1 ? 'faltam' : 'falta'} ${juntarE(falta)}`, acao: 'Completar', href };
 }

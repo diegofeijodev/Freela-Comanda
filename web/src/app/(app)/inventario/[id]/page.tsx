@@ -1,11 +1,14 @@
 'use client';
 
+import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { AlertTriangle, Check, ChevronDown } from "lucide-react";
-import { definirFinal, fecharInventario, inventario, itensContagem, itensInventarioAdmin, registrarContagem, type LojaItem } from "@/lib/erp-api";
+import { AlertTriangle, Check, ChevronDown, CircleAlert } from "lucide-react";
+import {
+  definirFinal, fecharInventario, inventario, itensContagem, itensInventarioAdmin, listarCupons, registrarContagem, type LojaItem,
+} from "@/lib/erp-api";
 import { gravarRascunho, lerRascunho } from "@/modules/inventario/infrastructure/rascunho.storage";
 import { useMe } from "@/lib/auth";
 import { PageHeader, Panel, Tag, STATUS_INV } from "@/components/ui-kit";
@@ -15,6 +18,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { brl, dataBR, dataHoraBR, num, parseNum, pct } from "@/lib/format";
 import { errMsg } from "@/lib/db";
 import { cn } from "@/lib/utils";
+import { HREF_PRECISAM, textoVendasPendentes } from "@/lib/cupom";
 
 
 export default function InvPage() {
@@ -196,6 +200,7 @@ function VisaoAdmin({ invId, status, inicial, onChange }: { invId: string; statu
         <div className="rounded-xl border bg-card p-4"><div className="text-xs uppercase text-muted-foreground">Perdas</div><div className="text-2xl font-semibold text-destructive">{brl(geral.perda)}</div></div>
         <div className="rounded-xl border bg-card p-4"><div className="text-xs uppercase text-muted-foreground">Sobras</div><div className="text-2xl font-semibold text-success">{brl(geral.sobra)}</div></div>
       </div>
+      {status !== "fechado" && <AvisoCuponsPendentes />}
       {status !== "fechado" && (
         <div className="flex flex-wrap items-center gap-3">
           <Button onClick={fechar} disabled={pend > 0}>Aprovar e fechar inventário</Button>
@@ -233,6 +238,29 @@ function VisaoAdmin({ invId, status, inicial, onChange }: { invId: string; statu
           </Panel>
         );
       })}
+    </div>
+  );
+}
+
+/**
+ * UX 5.8 (Inventário, fechar): os cupons valendo autorizados cuja venda ainda não baixou o estoque. Só na visão do admin (a rota do cupom
+ * é só dele); não bloqueia o fechamento; falhar = sem aviso.
+ */
+function AvisoCuponsPendentes() {
+  const { data } = useQuery({
+    queryKey: ["cupom-fiscal", "cupons", { ambiente: "producao", atencao: true, limite: 500 }],
+    queryFn: () => listarCupons({ ambiente: "producao", atencao: true, limite: 500 }),
+    retry: false,
+  });
+  const texto = textoVendasPendentes((data ?? []).filter((c) => c.venda_estoque === "pendente").length);
+  if (!texto) return null;
+  return (
+    <div role="status" className="flex min-w-0 items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+      <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" aria-hidden />
+      <div className="min-w-0 space-y-1">
+        <p className="break-words">{texto} Lance antes de fechar, para a contagem bater.</p>
+        <Link href={HREF_PRECISAM} className="inline-flex min-h-11 items-center text-primary underline underline-offset-2">Ver os cupons</Link>
+      </div>
     </div>
   );
 }
