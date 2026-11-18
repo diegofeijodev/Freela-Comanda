@@ -842,6 +842,37 @@ export const desfechoDoErro = (status: number | null, code: string | null): 'err
 /** O toque no botão da venda: com a venda travada, reabre o "não sei se saiu"; fora disso, segue o que falta (`rotuloBotaoEmitir`). */
 export const toqueNoBotao = (travada: boolean, alvo: AlvoBotao): AlvoBotao | 'reabrir' => (travada ? 'reabrir' : alvo);
 
+/** O parâmetro da URL da aba Emitir que guarda a chave da venda travada (onda final, item 3). */
+export const PARAM_VENDA = 'venda';
+const UUID_DA_VENDA = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/**
+ * A venda com que a aba Emitir abre (onda final, item 3): com `?venda=<chave>` na URL (o formato da `novaChaveIdempotencia`), a venda
+ * travada do "não sei se saiu" volta TRAVADA e com a MESMA chave (voltar à tela ou recarregar nunca dá chave nova a uma venda que pode
+ * ter saído); sem ela, ou fora do formato, uma venda nova.
+ */
+export function vendaDaUrl(valor: string | null, novaChave: () => string = novaChaveIdempotencia): VendaEnvio {
+  return valor !== null && UUID_DA_VENDA.test(valor) ? { chave: valor, travada: true } : { chave: novaChave(), travada: false };
+}
+
+/**
+ * A busca da URL (`?…`) para esta venda: travada = `venda=<chave>` (só a chave; nunca o carrinho nem o CPF); fora disso, sem o
+ * parâmetro. Os outros (aba, filtros) ficam como estão. Nada vai para o storage do navegador.
+ */
+export function buscaComVenda(busca: string, v: VendaEnvio): string {
+  const p = new URLSearchParams(busca);
+  if (v.travada) p.set(PARAM_VENDA, v.chave);
+  else p.delete(PARAM_VENDA);
+  const s = p.toString();
+  return s === '' ? '' : `?${s}`;
+}
+
+/**
+ * O "Tentar de novo" do "não sei se saiu": com o corpo do envio na memória, manda o MESMO corpo (mesma chave); voltando pela URL, sem o
+ * corpo (o carrinho não vai para lugar nenhum), só procura pela chave, no nosso servidor (achou = o cupom; nada = destrava, mesma chave).
+ */
+export const tentarDeNovoFaz = (temCorpo: boolean): 'reenviar' | 'procurar' => (temCorpo ? 'reenviar' : 'procurar');
+
 // ----------------------------------------------------------------------------------------------------------------- atalho da recusa
 /**
  * O link do atalho que o SERVIDOR manda no cupom (`atalho`, calculado em `retornos.ts` junto da frase; Ruling T14 I2 e "T14 atalhos"): a
@@ -1493,6 +1524,20 @@ export function linhaCscGuardado(a: Pick<AmbienteCupom, 'csc_dica' | 'historico'
   const em = e ? e.feito_em : a.alterada_em;
   const quem = nome && em ? ` (por ${nome} em ${dataSp(em)})` : em ? ` (em ${dataSp(em)})` : '';
   return `Guardado: ••••${a.csc_dica}${quem}`;
+}
+
+/**
+ * O erro do campo "Série" (UX 5.3, frases da tabela do quadro): fora de 0 a 889, ou uma série do caixa de hoje (só quando muda). Vazio
+ * com uma série já salva também é "A série vai de 0 a 889." (onda final, item 5): o servidor não apaga a série, e salvar sem ela daria
+ * "Dados salvos." sem salvar nada.
+ */
+export function erroDaSerie(texto: string, salva: number | null, seriesDoCaixa: readonly number[]): string | undefined {
+  const t = texto.trim();
+  if (t === '') return salva === null ? undefined : 'A série vai de 0 a 889.';
+  const n = /^\d+$/.test(t) ? Number(t) : null;
+  if (n === null || n > 889) return 'A série vai de 0 a 889.';
+  if (n !== salva && seriesDoCaixa.includes(n)) return `A série ${n} é do caixa de hoje. Escolha outra.`;
+  return undefined;
 }
 
 /** Os rótulos do regime (UX 5.2), com o código na frente, na ordem da UX. */

@@ -133,7 +133,12 @@ describe('totais do cupom (centavos)', () => {
 import type { SituacaoCupomFiscal } from '../erp-api';
 import {
   atalhosDinheiro,
+  buscaComVenda,
   buscarProdutos,
+  erroDaSerie,
+  PARAM_VENDA,
+  tentarDeNovoFaz,
+  vendaDaUrl,
   caixaDoCupom,
   caixaDoTopo,
   chaveEmBlocos,
@@ -943,5 +948,48 @@ describe('Tarefa 15, rodada de correção 1: âncoras dos atalhos (M2) e o zip d
     expect(ambienteDoContador('producao')).toBe('producao');
     expect(ambienteDoContador('desligado')).toBe('producao');
     expect(ambienteDoContador(undefined)).toBeUndefined();
+  });
+});
+
+describe('onda final: a chave da venda travada na URL (item 3) e a série apagada (item 5)', () => {
+  const CHAVE = '0b8f5c2e-2222-4000-8000-0000000000bb';
+  const nova = () => 'chave-nova';
+
+  it('vendaDaUrl: a chave da URL volta TRAVADA, com a mesma chave; sem ela ou fora do formato, uma venda nova', () => {
+    expect(PARAM_VENDA).toBe('venda');
+    expect(vendaDaUrl(CHAVE, nova)).toEqual({ chave: CHAVE, travada: true });
+    for (const ruim of [null, '', 'abc', `${CHAVE}x`, CHAVE.toUpperCase(), '52998224725', '<script>']) {
+      expect(vendaDaUrl(ruim, nova)).toEqual({ chave: 'chave-nova', travada: false });
+    }
+  });
+
+  it('buscaComVenda: só a venda travada leva a chave (e só a chave); os outros parâmetros ficam', () => {
+    expect(buscaComVenda('?aba=emitir', { chave: CHAVE, travada: true })).toBe(`?aba=emitir&venda=${CHAVE}`);
+    expect(buscaComVenda(`?aba=emitidos&venda=${CHAVE}`, { chave: CHAVE, travada: true })).toBe(`?aba=emitidos&venda=${CHAVE}`);
+    expect(buscaComVenda(`?aba=emitir&venda=${CHAVE}`, { chave: CHAVE, travada: false })).toBe('?aba=emitir');
+    expect(buscaComVenda(`?venda=${CHAVE}`, { chave: 'outra', travada: false })).toBe('');
+    expect(buscaComVenda('', { chave: CHAVE, travada: true })).toBe(`?venda=${CHAVE}`);
+    expect(buscaComVenda('?aba=emitidos&situacao=atencao', { chave: CHAVE, travada: false })).toBe('?aba=emitidos&situacao=atencao');
+  });
+
+  it('ida e volta: a busca que a venda travada escreve devolve a mesma venda travada', () => {
+    const v = { chave: CHAVE, travada: true };
+    expect(vendaDaUrl(new URLSearchParams(buscaComVenda('?aba=emitir', v)).get(PARAM_VENDA), nova)).toEqual(v);
+  });
+
+  it('tentarDeNovoFaz: com o corpo do envio, manda o MESMO corpo; voltando pela URL (sem o corpo), só procura pela chave', () => {
+    expect(tentarDeNovoFaz(true)).toBe('reenviar');
+    expect(tentarDeNovoFaz(false)).toBe('procurar');
+  });
+
+  it('erroDaSerie: apagar uma série salva não diz "Dados salvos." (o servidor não apaga a série): "A série vai de 0 a 889."', () => {
+    expect(erroDaSerie('', 2, [])).toBe('A série vai de 0 a 889.');
+    expect(erroDaSerie('   ', 0, [])).toBe('A série vai de 0 a 889.');
+    expect(erroDaSerie('', null, [])).toBeUndefined();
+    expect(erroDaSerie('890', 2, [])).toBe('A série vai de 0 a 889.');
+    expect(erroDaSerie('2a', 2, [])).toBe('A série vai de 0 a 889.');
+    expect(erroDaSerie('1', 2, [1])).toBe('A série 1 é do caixa de hoje. Escolha outra.');
+    expect(erroDaSerie('1', 1, [1])).toBeUndefined();
+    expect(erroDaSerie(' 3 ', 2, [1])).toBeUndefined();
   });
 });

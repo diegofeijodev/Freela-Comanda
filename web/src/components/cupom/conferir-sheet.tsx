@@ -109,6 +109,8 @@ function Corpo({
 }) {
   const { linhas, resto } = linhasConferir(resumo.itens);
   const enviando = fase.fase === 'enviando';
+  // a venda travada que voltou pela URL (onda final, item 3) não tem o carrinho na memória: sem um resumo de R$ 0,00 nem "Emitir cupom"
+  const semVenda = resumo.itens.length === 0;
   return (
     <div className="space-y-4" aria-busy={enviando || (fase.fase === 'incerta' && fase.procurando)}>
       <SheetTitle ref={titulo} tabIndex={-1} className="text-lg font-semibold outline-none">Conferir o cupom</SheetTitle>
@@ -118,23 +120,27 @@ function Corpo({
             ? 'Cupom de teste: vai para a SEFAZ, mas não vale como documento fiscal.'
             : 'Este cupom vale como documento fiscal e vai para a SEFAZ em nome da empresa.'}
         </SheetDescription>
-        <ul className="space-y-1">
-          {linhas.map((l, k) => (
-            <li key={k} className="flex justify-between gap-3"><span className="min-w-0 break-words">{l.texto}</span><span className="shrink-0">{l.valor}</span></li>
-          ))}
-          {resto && <li className="text-muted-foreground">{resto}</li>}
-        </ul>
-        {resumo.desconto > 0n && <Linha rotulo="Desconto" valor={`− ${reais(resumo.desconto)}`} />}
-        <Linha rotulo={<strong>Total</strong>} valor={<strong>{reais(resumo.total)}</strong>} />
-        {resumo.pagamentos.map((p, k) => <Linha key={k} rotulo={NOME_PAGAMENTO[p.tPag]} valor={reais(p.valor)} />)}
-        {resumo.troco > 0n && <Linha rotulo="Troco" valor={reais(resumo.troco)} />}
-        <p>
-          {resumo.documento
-            ? resumo.documento.tipo === 'cpf'
-              ? `CPF ${mascaraCpf(resumo.documento.valor)}`
-              : `CNPJ ${mascaraCnpj(resumo.documento.valor)}`
-            : 'Sem CPF na nota'}
-        </p>
+        {!semVenda && (
+          <>
+            <ul className="space-y-1">
+              {linhas.map((l, k) => (
+                <li key={k} className="flex justify-between gap-3"><span className="min-w-0 break-words">{l.texto}</span><span className="shrink-0">{l.valor}</span></li>
+              ))}
+              {resto && <li className="text-muted-foreground">{resto}</li>}
+            </ul>
+            {resumo.desconto > 0n && <Linha rotulo="Desconto" valor={`− ${reais(resumo.desconto)}`} />}
+            <Linha rotulo={<strong>Total</strong>} valor={<strong>{reais(resumo.total)}</strong>} />
+            {resumo.pagamentos.map((p, k) => <Linha key={k} rotulo={NOME_PAGAMENTO[p.tPag]} valor={reais(p.valor)} />)}
+            {resumo.troco > 0n && <Linha rotulo="Troco" valor={reais(resumo.troco)} />}
+            <p>
+              {resumo.documento
+                ? resumo.documento.tipo === 'cpf'
+                  ? `CPF ${mascaraCpf(resumo.documento.valor)}`
+                  : `CNPJ ${mascaraCnpj(resumo.documento.valor)}`
+                : 'Sem CPF na nota'}
+            </p>
+          </>
+        )}
       </div>
 
       {fase.fase === 'erro' && (
@@ -177,7 +183,7 @@ function Corpo({
         </div>
       ) : (
         <div className="flex flex-col gap-2 sm:flex-row">
-          <Button className="h-12 w-full sm:flex-1" onClick={onEmitir}>Emitir cupom</Button>
+          {!semVenda && <Button className="h-12 w-full sm:flex-1" onClick={onEmitir}>Emitir cupom</Button>}
           <Button variant="outline" className="h-12 w-full sm:flex-1" onClick={onFechar}>Voltar e corrigir</Button>
         </div>
       )}

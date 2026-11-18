@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -12,10 +12,11 @@ import {
 import { errCode, errMsg } from '@/lib/db';
 import { useMe } from '@/lib/auth';
 import {
-  atalhosDinheiro, buscarProdutos, caixaDoTopo, calcularTotais, centavosDaTela, CHAVES_CUPOM, DOC_OBRIGATORIO_A_PARTIR, documentoDoPost,
+  atalhosDinheiro, buscaComVenda, buscarProdutos, caixaDoTopo, calcularTotais, centavosDaTela, CHAVES_CUPOM, DOC_OBRIGATORIO_A_PARTIR, documentoDoPost,
   depoisDoEnvio, desfechoDoErro, erroDocumento, erroQuantidade, FORMAS_DA_TELA, linkDaFalta, linhasDosPagamentos, MOTIVO_NA_FRASE, mascaraCnpj, mascaraCpf,
-  NOME_PAGAMENTO, novaChaveIdempotencia, pagamentosDaTela, podeDiminuir, quantidadeDaTela, quantidadeValida, reais,
-  rotuloBotaoEmitir, somarQuantidade, TAG_MOTIVO, tagDoCupom, textoCentavos, toqueNoBotao, valorItemCentavos, type DesfechoEnvio,
+  NOME_PAGAMENTO, PARAM_VENDA, pagamentosDaTela, podeDiminuir, quantidadeDaTela, quantidadeValida, reais,
+  rotuloBotaoEmitir, somarQuantidade, TAG_MOTIVO, tagDoCupom, tentarDeNovoFaz, textoCentavos, toqueNoBotao, valorItemCentavos, vendaDaUrl,
+  type DesfechoEnvio,
   type ErroTotais, type EstadoEmitir, type LinhaPagamento, type TPag, type VendaEnvio, type VendaRefeita,
 } from '@/lib/cupom';
 import { horaSp, semToqueDuplo } from '@/lib/notas-sefaz';
@@ -49,7 +50,9 @@ const plural = (n: number, um: string, varios: string) => (n === 1 ? um : varios
 /**
  * Aba Emitir (UX 2): a caixa do topo (o que destrava a emissão), a busca e o carrinho, o desconto, o pagamento, o CPF/CNPJ e o botão que
  * diz o que falta; "Conferir o cupom" envia. Nada da venda vai para o storage: recarregar perde a venda (a faixa de pendentes e o "Último
- * cupom" dizem se algo saiu). A `chave_idempotencia` nasce uma vez por venda e só muda depois de uma resposta com cupom.
+ * cupom" dizem se algo saiu). A `chave_idempotencia` nasce uma vez por venda e só muda depois de uma resposta com cupom. A venda TRAVADA
+ * (o "não sei se saiu") deixa só a chave na URL (`?venda=`; onda final, item 3): voltar à tela ou recarregar volta travado, com a mesma
+ * chave, e o "Tentar de novo" sem o corpo na memória só procura pela chave.
  */
 export function Emitir({ situacao, situacaoEm, situacaoErro, onTentarSituacao }: {
   situacao: SituacaoCupomFiscal | undefined;
@@ -59,6 +62,7 @@ export function Emitir({ situacao, situacaoEm, situacaoErro, onTentarSituacao }:
   onTentarSituacao(): void;
 }) {
   const router = useRouter();
+  const params = useSearchParams();
   const qc = useQueryClient();
   // só o admin lê (a loja levaria dois 403 a cada visita enquanto o `me` carrega; leva pré-final, item 16)
   const { data: me } = useMe();
@@ -73,8 +77,9 @@ export function Emitir({ situacao, situacaoEm, situacaoErro, onTentarSituacao }:
   const ultimoQ = useQuery({ queryKey: CHAVES_CUPOM.ultimo, queryFn: () => listarCupons({ limite: 1 }), enabled: admin });
 
   // ---------------------------------------------------------------------------------------------------------------- venda
-  // a chave da venda e a trava do "não sei se saiu": só `depoisDoEnvio` as muda (a chave, só depois de uma resposta com cupom)
-  const [envio, setEnvio] = useState<VendaEnvio>(() => ({ chave: novaChaveIdempotencia(), travada: false }));
+  // a chave da venda e a trava do "não sei se saiu": só `depoisDoEnvio` as muda (a chave, só depois de uma resposta com cupom); a venda
+  // travada volta da URL (`?venda=`, onda final, item 3) com a mesma chave
+  const [envio, setEnvio] = useState<VendaEnvio>(() => vendaDaUrl(params.get(PARAM_VENDA)));
   const { chave, travada } = envio;
   const desfecho = (d: DesfechoEnvio) => setEnvio((v) => depoisDoEnvio(v, d));
   const [carrinho, setCarrinho] = useState<LinhaCarrinho[]>([]);
@@ -86,9 +91,20 @@ export function Emitir({ situacao, situacaoEm, situacaoErro, onTentarSituacao }:
   const [docTocado, setDocTocado] = useState(false);
   const [mostrarErros, setMostrarErros] = useState(false);
   const [foraDaVenda, setForaDaVenda] = useState<string[]>([]);
-  const [conferir, setConferir] = useState<{ aberto: boolean; fase: FaseConferir }>({ aberto: false, fase: { fase: 'conferir' } });
+  // voltando travada pela URL: o "não sei se saiu" fechado (a faixa e o botão o reabrem), sem procurar sozinho (o Voltar do navegador
+  // não pode cair num cupom e voltar de novo para ele)
+  const [conferir, setConferir] = useState<{ aberto: boolean; fase: FaseConferir }>(() => ({
+    aberto: false,
+    fase: envio.travada ? { fase: 'incerta', procurando: false } : { fase: 'conferir' },
+  }));
   const corpoEnviado = useRef<EmitirCupom | null>(null);
   const emCurso = useRef(false);
+
+  // só a chave da venda TRAVADA fica na URL (onda final, item 3). Um link da própria página que reescreve a busca (trocar de aba, "Ver
+  // cupons emitidos", a faixa de pendentes) tira o parâmetro: com a aba Emitir montada (forceMount), ele volta aqui
+  useEffect(() => {
+    if (window.location.pathname === '/cupom') escreverVendaNaUrl(envio);
+  }, [envio, params]);
 
   // ---------------------------------------------------------------------------------------------------------------- busca
   const [termo, setTermo] = useState('');
@@ -368,7 +384,23 @@ export function Emitir({ situacao, situacaoEm, situacaoErro, onTentarSituacao }:
     void qc.invalidateQueries({ queryKey: CHAVES_CUPOM.ultimo });
     zerarVenda();
     setConferir({ aberto: false, fase: { fase: 'conferir' } });
+    // a venda resolvida sai da URL ANTES de navegar: o Voltar do navegador não traz de volta uma venda travada que já tem cupom
+    escreverVendaNaUrl({ chave, travada: false });
     router.push(`/cupom/${id}`);
+  }
+
+  /** A única leitura pela chave (UX 2.7), só no nosso servidor (nunca emite nem fala com a SEFAZ): achou = o cupom; `[]` = destrava. */
+  async function procurarPelaChave(chaveDaVenda: string) {
+    desfecho('incerta');
+    setConferir({ aberto: true, fase: { fase: 'incerta', procurando: true } });
+    try {
+      const achados = await listarCupons({ chave_idempotencia: chaveDaVenda, limite: 1 });
+      if (achados[0]) return abrirCupom(achados[0].id);
+      desfecho('nada');
+      setConferir({ aberto: true, fase: { fase: 'nada' } });
+    } catch {
+      setConferir({ aberto: true, fase: { fase: 'incerta', procurando: false } });
+    }
   }
 
   const enviar = (corpoFixo?: EmitirCupom) => semToqueDuplo(emCurso, async () => {
@@ -390,18 +422,15 @@ export function Emitir({ situacao, situacaoEm, situacaoErro, onTentarSituacao }:
         return;
       }
       // UX 2.7: a venda trava e a tela procura UMA vez pela chave, só no nosso servidor (nunca emite nem fala com a SEFAZ)
-      desfecho('incerta');
-      setConferir({ aberto: true, fase: { fase: 'incerta', procurando: true } });
-      try {
-        const achados = await listarCupons({ chave_idempotencia: corpo.chave_idempotencia, limite: 1 });
-        if (achados[0]) return abrirCupom(achados[0].id);
-        desfecho('nada');
-        setConferir({ aberto: true, fase: { fase: 'nada' } });
-      } catch {
-        setConferir({ aberto: true, fase: { fase: 'incerta', procurando: false } });
-      }
+      await procurarPelaChave(corpo.chave_idempotencia);
     }
   });
+  /** "Tentar de novo": o MESMO corpo; voltando pela URL (sem o corpo na memória), só a leitura pela mesma chave (onda final, item 3). */
+  function tentarDeNovo() {
+    const corpo = corpoEnviado.current;
+    if (tentarDeNovoFaz(corpo !== null) === 'reenviar' && corpo !== null) return void enviar(corpo);
+    void semToqueDuplo(emCurso, () => procurarPelaChave(chave));
+  }
 
   // ---------------------------------------------------------------------------------------------------------------- resumo
   const resumo: ResumoConferir = {
@@ -765,7 +794,7 @@ export function Emitir({ situacao, situacaoEm, situacaoErro, onTentarSituacao }:
         fase={conferir.fase}
         resumo={resumo}
         onEmitir={() => void enviar()}
-        onTentarDeNovo={() => void enviar(corpoEnviado.current ?? undefined)}
+        onTentarDeNovo={tentarDeNovo}
         onVerEmitidos={() => {
           // no 409 NFCE_CHAVE_REUSADA o servidor já tem um cupom com esta chave: a venda é abandonada (sem isso, só recarregando);
           // no "não sei se saiu" a venda continua travada (a aba Emitir fica montada) para o "Tentar de novo" na volta
@@ -781,6 +810,15 @@ export function Emitir({ situacao, situacaoEm, situacaoErro, onTentarSituacao }:
       />
     </div>
   );
+}
+
+/**
+ * Põe (venda travada) ou tira a chave da venda da URL sem navegar (`replaceState`, que o roteador do Next acompanha): só a chave, nunca
+ * o carrinho nem o CPF (onda final, item 3).
+ */
+function escreverVendaNaUrl(v: VendaEnvio) {
+  const busca = buscaComVenda(window.location.search, v);
+  if (busca !== window.location.search) window.history.replaceState(null, '', `${window.location.pathname}${busca}${window.location.hash}`);
 }
 
 /** A caixa do alto da aba (UX 2.1). */

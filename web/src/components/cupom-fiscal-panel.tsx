@@ -11,7 +11,7 @@ import {
 } from '@/lib/erp-api';
 import { errMsg } from '@/lib/db';
 import {
-  alvoDaFalta, avisoTrocaRegime, botaoDaEmissao, CHAVES_CUPOM, HREF_PRECISAM, linhaCscGuardado, linhaDoServidor, linhaLigadaPor,
+  alvoDaFalta, avisoTrocaRegime, botaoDaEmissao, CHAVES_CUPOM, erroDaSerie, HREF_PRECISAM, linhaCscGuardado, linhaDoServidor, linhaLigadaPor,
   linhasHistoricoCupom, mascaraCep, mascaraIe, OPCOES_CRT, ordenarFalta, soNumeros, tagDaEmissao, textoVendasPendentes, type AlvoFalta,
 } from '@/lib/cupom';
 import { dataHoraSp, formatarCnpj } from '@/lib/certificado';
@@ -685,8 +685,8 @@ function FormAmbiente({ amb, seriesDoCaixa }: { amb: AmbienteCupom; seriesDoCaix
 
   const erros: Record<string, string | undefined> = {};
   const nSerie = inteiro(serie);
-  if (serie.trim() !== '' && (nSerie === null || nSerie > 889)) erros.serie = 'A série vai de 0 a 889.';
-  else if (nSerie !== null && mudouSerie && seriesDoCaixa.includes(nSerie)) erros.serie = `A série ${nSerie} é do caixa de hoje. Escolha outra.`;
+  // apagar a série salva também é erro (onda final, item 5): o servidor não apaga a série, e o "Dados salvos." enganaria
+  erros.serie = erroDaSerie(serie, amb.serie, seriesDoCaixa);
   const nProximo = inteiro(proximo);
   if (mudouProximo && (nProximo === null || nProximo < 1 || nProximo > 999_999_999)) erros.proximo = 'O número do próximo cupom vai de 1 a 999999999.';
   else if (mudouProximo && !mudouSerie && amb.serie !== null && amb.ultimo_numero_usado !== null && nProximo !== null && nProximo <= amb.ultimo_numero_usado) {

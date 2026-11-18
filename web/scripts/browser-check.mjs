@@ -1402,9 +1402,59 @@ await blocoCupom('cupom 2 (emitir 360)', { width: 360, height: 800 }, async ({ p
   check('não sei se saiu: o erro definitivo destrava a venda', await page.waitForFunction(() => !document.querySelector('#cupom-busca')?.disabled, null, { timeout: 20_000 }).then(() => true, () => false)
     && (await page.getByText('Para mudar a venda, primeiro toque em Tentar de novo.').count()) === 0);
   check('não sei se saiu: a venda continua no carrinho', (await page.getByText('No cupom (1 item)').count()) === 1);
+  check('não sei se saiu: destravada, a chave não fica na URL', await page.waitForFunction(() => !new URL(location.href).searchParams.has('venda'), null, { timeout: 20_000 }).then(() => true, () => false), page.url());
+
+  // onda final, item 3: a chave da venda TRAVADA vai na URL (só ela); recarregar volta travado e o "Tentar de novo" sem o corpo na
+  // memória só procura pela MESMA chave (nenhum POST novo); o "nada" destrava e tira a chave da URL
+  const folhaFechada = (nome) => page.waitForFunction(() => !document.querySelector('[role=dialog]'), null, { timeout: 20_000 })
+    .then(() => true, () => false).then((ok) => check(`${nome}: a folha "Conferir o cupom" fecha de vez`, ok));
+  await folhaFechada('chave na URL');
+  await barraPronta(page, 'chave na URL');
+  await botaoBarra.click();
+  await simQ(dlg.getByRole('button', { name: 'Emitir cupom' }));
+  est.post = 'abortar';
+  est.busca = 'abortar';
+  await dlg.getByRole('button', { name: 'Emitir cupom' }).click();
+  check('chave na URL: a venda trava', await simQ(dlg.getByText('Não consegui falar com o servidor do Freela Comanda. O cupom pode ter saído ou não.')));
+  const chaveTravada = est.posts.at(-1)?.chave_idempotencia;
+  check('chave na URL: a chave da venda travada vai na URL', await page.waitForFunction((k) => new URL(location.href).searchParams.get('venda') === k, chaveTravada, { timeout: 20_000 }).then(() => true, () => false), page.url());
+  check('chave na URL: só a chave (nada do carrinho)', [...new URL(page.url()).searchParams.keys()].every((k) => k === 'aba' || k === 'venda'), page.url());
+  const [postsAntes, buscasAntes] = [est.posts.length, est.buscas.length];
+  await page.reload({ waitUntil: 'domcontentloaded', timeout: 180_000 });
+  check('chave na URL: recarregar volta travado', await simQ(page.getByText('Para mudar a venda, primeiro toque em Tentar de novo.'), 120_000) && await busca.isDisabled());
+  est.busca = 'vazia';
+  await botaoBarra.click();
+  check('chave na URL: o "não sei se saiu" reabre, sem um resumo de R$ 0,00', await simQ(dlg.getByRole('button', { name: 'Tentar de novo' }))
+    && (await dlg.getByText('Total', { exact: true }).count()) === 0);
+  await dlg.getByRole('button', { name: 'Tentar de novo' }).click();
+  check('chave na URL: "Tentar de novo" procurou pela MESMA chave, sem POST', await simQ(dlg.getByText('Nada foi emitido. Pode corrigir a venda ou emitir de novo.'))
+    && est.posts.length === postsAntes && est.buscas.length === buscasAntes + 1 && est.buscas.at(-1) === chaveTravada, JSON.stringify({ posts: est.posts.length, buscas: est.buscas }));
+  check('chave na URL: destravada, a chave sai da URL', await page.waitForFunction(() => !new URL(location.href).searchParams.has('venda'), null, { timeout: 20_000 }).then(() => true, () => false), page.url());
+  await dlg.getByRole('button', { name: 'Voltar e corrigir' }).click();
+
+  // a venda travada que acaba num cupom: a chave sai da URL ANTES de abrir o cupom, e o Voltar do navegador não traz a trava de volta
+  await folhaFechada('trava que vira cupom');
+  await busca.fill('chopp');
+  await resultado('Chopp 300 ml').click();
+  await page.getByRole('radio', { name: 'Dinheiro' }).click();
+  await barraPronta(page, 'trava que vira cupom');
+  await botaoBarra.click();
+  await simQ(dlg.getByRole('button', { name: 'Emitir cupom' }));
+  est.post = 'abortar';
+  est.busca = 'abortar';
+  await dlg.getByRole('button', { name: 'Emitir cupom' }).click();
+  check('trava que vira cupom: a venda trava, com a chave na URL', await simQ(dlg.getByText('Não consegui falar com o servidor do Freela Comanda. O cupom pode ter saído ou não.'))
+    && await page.waitForFunction(() => new URL(location.href).searchParams.has('venda'), null, { timeout: 20_000 }).then(() => true, () => false), page.url());
+  await page.waitForFunction(() => [...document.querySelectorAll('[role=dialog] button')].some((b) => b.textContent.trim() === 'Tentar de novo' && !b.disabled), null, { timeout: 30_000 });
+  est.post = 'ok';
+  await dlg.getByRole('button', { name: 'Tentar de novo' }).click();
+  check('trava que vira cupom: "Tentar de novo" abre o cupom', await page.waitForURL(`**/cupom/${CUP_A}`, { timeout: 60_000 }).then(() => true, () => false));
+  await page.goBack();
+  check('trava que vira cupom: o Voltar não traz a trava (sem a chave na URL, a busca livre)', await page.waitForFunction(() => location.pathname === '/cupom'
+    && !new URL(location.href).searchParams.has('venda') && !!document.querySelector('#cupom-busca') && !document.querySelector('#cupom-busca').disabled, null, { timeout: 60_000 }).then(() => true, () => false), page.url());
   const guardado = await page.evaluate(() => ({ local: Object.keys(localStorage), sessao: sessionStorage.length }));
   check('emitir 360: a venda não vai para o storage (só authUser)', guardado.local.length === 1 && guardado.local[0] === 'authUser' && guardado.sessao === 0, JSON.stringify(guardado));
-  // só os três que o bloco provoca: o POST e a busca pela chave que caem (route.abort) e o 422 do "Tentar de novo"
+  // só os que o bloco provoca: os POST e as buscas pela chave que caem (route.abort) e o 422 do "Tentar de novo"
   const reais = reaisErros(erros, [
     [/\/v1\/cupom-fiscal\/cupons(\?[^ ]*)?$/, /net::ERR_FAILED/],
     [/\/v1\/cupom-fiscal\/cupons$/, /status of 422/],
