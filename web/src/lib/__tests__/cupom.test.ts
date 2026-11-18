@@ -71,7 +71,11 @@ import {
   caixaDoTopo,
   chaveEmBlocos,
   dataHoraDanfe,
+  depoisDoEnvio,
+  desfechoDoErro,
   linhasDosPagamentos,
+  linkDoAtalho,
+  toqueNoBotao,
   novaChaveIdempotencia,
   valorDanfe,
   vendaDoCupom,
@@ -440,5 +444,51 @@ describe('tela do cupom: caixa do topo e venda refeita', () => {
       '3526 1112 3456 7800 0195 6500 2000 0000 1210 1234 5678',
     );
     expect(novaChaveIdempotencia()).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  });
+});
+
+describe('rodada de correção 1: trava e chave da venda (I1) e o atalho do servidor (I2)', () => {
+  const travada = { chave: 'chave-1', travada: true };
+  const solta = { chave: 'chave-1', travada: false };
+  const nova = () => 'chave-2';
+
+  it('incerta → erro definitivo (4xx com código ou 503) destrava, com a MESMA chave', () => {
+    expect(depoisDoEnvio(travada, desfechoDoErro(422, 'NFCE_ITEM_INDISPONIVEL'), nova)).toEqual(solta);
+    expect(depoisDoEnvio(travada, desfechoDoErro(409, 'NFCE_TOTAL_MUDOU'), nova)).toEqual(solta);
+    expect(depoisDoEnvio(travada, desfechoDoErro(503, 'NFCE_DESLIGADA'), nova)).toEqual(solta);
+  });
+
+  it('incerta → rede de novo (ou a leitura pela chave falhou) continua travada, com a MESMA chave', () => {
+    expect(depoisDoEnvio(travada, desfechoDoErro(null, 'SEM_CONEXAO'), nova)).toEqual(travada);
+    expect(depoisDoEnvio(travada, desfechoDoErro(504, null), nova)).toEqual(travada);
+    expect(depoisDoEnvio(solta, 'incerta', nova)).toEqual(travada);
+  });
+
+  it('a leitura pela chave voltou [] ("Nada foi emitido") destrava com a MESMA chave', () => {
+    expect(depoisDoEnvio(travada, 'nada', nova)).toEqual(solta);
+  });
+
+  it('resposta com cupom: a chave nova é da próxima venda; nenhum outro desfecho troca a chave', () => {
+    expect(depoisDoEnvio(travada, 'cupom', nova)).toEqual({ chave: 'chave-2', travada: false });
+    expect(depoisDoEnvio(solta, 'cupom', nova)).toEqual({ chave: 'chave-2', travada: false });
+    for (const d of ['erro', 'incerta', 'nada'] as const) expect(depoisDoEnvio(travada, d, nova).chave).toBe('chave-1');
+  });
+
+  it('o botão só reabre o "não sei se saiu" com a venda travada; fora disso segue o alvo', () => {
+    expect(toqueNoBotao(true, 'produtos')).toBe('reabrir');
+    expect(toqueNoBotao(true, 'conferir')).toBe('reabrir');
+    expect(toqueNoBotao(false, 'produtos')).toBe('produtos');
+    expect(toqueNoBotao(false, 'conferir')).toBe('conferir');
+  });
+
+  it('linkDoAtalho: só o atalho que o servidor manda (sem tabela de códigos na tela)', () => {
+    expect(linkDoAtalho('produtos', 'c1')).toEqual({ rotulo: 'Corrigir os produtos', href: '/cupom?aba=produtos&cupom=c1', primario: true });
+    expect(linkDoAtalho('certificado', 'c1')).toEqual({
+      rotulo: 'Ir para o certificado',
+      href: '/configuracoes#certificado-digital',
+      primario: false,
+    });
+    expect(linkDoAtalho('csc', 'c1')).toEqual({ rotulo: 'Ir para Configurações', href: '/configuracoes?aba=cupom', primario: false });
+    expect(linkDoAtalho(null, 'c1')).toBeNull();
   });
 });

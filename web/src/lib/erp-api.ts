@@ -526,6 +526,8 @@ export type CodigoFalta =
   | 'certificado' | 'cnpj' | 'ie' | 'crt' | 'endereco' | 'serie' | 'csc' | 'produto_pronto' | 'teste_homologacao' | 'lanca_venda'
   | 'series_outro_sistema';
 export type TPagCupom = '01' | '03' | '04' | '10' | '11' | '17';
+/** O atalho que conserta a recusa (calculado no servidor, em `retornos.ts`, junto da frase): a tela só mostra o que vier. */
+export type AtalhoCupom = 'certificado' | 'csc' | 'perfil' | 'produtos';
 /** O que a SEFAZ disse (código, família, a frase da UX 6.1 e o `xMotivo` à parte). */
 export type RecusaCupom = { codigo: number; familia: FamiliaRecusa; frase: string; x_motivo: string };
 export type SituacaoCupomFiscal = {
@@ -710,6 +712,8 @@ export type CupomDetalhe = {
   cancelar_ate: string | null;
   acoes: AcaoCupom[];
   recusa: RecusaCupom | null;
+  /** O atalho que conserta a `recusa` (UX 6.1), decidido no servidor; null = nenhum. */
+  atalho: AtalhoCupom | null;
   mensagem: string | null;
 };
 /** Uma linha de Emitidos: sem itens; o CPF mascarado (`***.982.247-**`). */

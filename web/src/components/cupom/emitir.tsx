@@ -12,10 +12,10 @@ import {
 import { errCode, errMsg } from '@/lib/db';
 import {
   atalhosDinheiro, buscarProdutos, caixaDoTopo, calcularTotais, centavosDaTela, CHAVES_CUPOM, DOC_OBRIGATORIO_A_PARTIR, documentoDoPost,
-  erroDocumento, erroQuantidade, falhaIncerta, FORMAS_DA_TELA, linkDaFalta, linhasDosPagamentos, MOTIVO_NA_FRASE, mascaraCnpj, mascaraCpf,
+  depoisDoEnvio, desfechoDoErro, erroDocumento, erroQuantidade, FORMAS_DA_TELA, linkDaFalta, linhasDosPagamentos, MOTIVO_NA_FRASE, mascaraCnpj, mascaraCpf,
   NOME_PAGAMENTO, novaChaveIdempotencia, pagamentosDaTela, podeDiminuir, quantidadeDaTela, quantidadeValida, reais,
-  rotuloBotaoEmitir, somarQuantidade, TAG_MOTIVO, tagDoCupom, textoCentavos, valorItemCentavos, type EstadoEmitir, type LinhaPagamento,
-  type TPag, type VendaRefeita,
+  rotuloBotaoEmitir, somarQuantidade, TAG_MOTIVO, tagDoCupom, textoCentavos, toqueNoBotao, valorItemCentavos, type DesfechoEnvio,
+  type EstadoEmitir, type LinhaPagamento, type TPag, type VendaEnvio, type VendaRefeita,
 } from '@/lib/cupom';
 import { horaSp, semToqueDuplo } from '@/lib/notas-sefaz';
 import { Button } from '@/components/ui/button';
@@ -63,7 +63,10 @@ export function Emitir({ situacao, situacaoEm, situacaoErro, onTentarSituacao }:
   const ultimoQ = useQuery({ queryKey: CHAVES_CUPOM.ultimo, queryFn: () => listarCupons({ limite: 1 }) });
 
   // ---------------------------------------------------------------------------------------------------------------- venda
-  const [chave, setChave] = useState(novaChaveIdempotencia);
+  // a chave da venda e a trava do "não sei se saiu": só `depoisDoEnvio` as muda (a chave, só depois de uma resposta com cupom)
+  const [envio, setEnvio] = useState<VendaEnvio>(() => ({ chave: novaChaveIdempotencia(), travada: false }));
+  const { chave, travada } = envio;
+  const desfecho = (d: DesfechoEnvio) => setEnvio((v) => depoisDoEnvio(v, d));
   const [carrinho, setCarrinho] = useState<LinhaCarrinho[]>([]);
   const [desconto, setDesconto] = useState<string | null>(null);
   const [descontoTocado, setDescontoTocado] = useState(false);
@@ -73,7 +76,6 @@ export function Emitir({ situacao, situacaoEm, situacaoErro, onTentarSituacao }:
   const [docTocado, setDocTocado] = useState(false);
   const [mostrarErros, setMostrarErros] = useState(false);
   const [foraDaVenda, setForaDaVenda] = useState<string[]>([]);
-  const [travada, setTravada] = useState(false);
   const [conferir, setConferir] = useState<{ aberto: boolean; fase: FaseConferir }>({ aberto: false, fase: { fase: 'conferir' } });
   const corpoEnviado = useRef<EmitirCupom | null>(null);
   const emCurso = useRef(false);
@@ -304,8 +306,9 @@ export function Emitir({ situacao, situacaoEm, situacaoErro, onTentarSituacao }:
     }
   }
   function tocarBotao() {
-    if (travada) return setConferir((c) => ({ ...c, aberto: true }));
-    if (botao.alvo !== 'conferir') return irPara(botao.alvo);
+    const t = toqueNoBotao(travada, botao.alvo);
+    if (t === 'reabrir') return setConferir((c) => ({ ...c, aberto: true }));
+    if (t !== 'conferir') return irPara(t);
     setConferir({ aberto: true, fase: { fase: 'conferir' } });
   }
 
@@ -330,8 +333,9 @@ export function Emitir({ situacao, situacaoEm, situacaoErro, onTentarSituacao }:
     };
   }
 
+  /** Uma resposta com cupom (ou o 409 `NFCE_CHAVE_REUSADA`): a venda é outra, com a chave nova. */
   function zerarVenda() {
-    setChave(novaChaveIdempotencia());
+    desfecho('cupom');
     setCarrinho([]);
     setDesconto(null);
     setDescontoTocado(false);
@@ -341,7 +345,6 @@ export function Emitir({ situacao, situacaoEm, situacaoErro, onTentarSituacao }:
     setDocTocado(false);
     setMostrarErros(false);
     setForaDaVenda([]);
-    setTravada(false);
     setRecem(null);
     corpoEnviado.current = null;
   }
@@ -365,19 +368,21 @@ export function Emitir({ situacao, situacaoEm, situacaoErro, onTentarSituacao }:
       abrirCupom(c.id, c);
     } catch (e) {
       const code = errCode(e);
-      if (!falhaIncerta(statusDoErro(e), code)) {
+      if (desfechoDoErro(statusDoErro(e), code) === 'erro') {
+        // resposta definitiva (também no "Tentar de novo"): a venda destrava, com a mesma chave, para corrigir (Ruling T14 I1)
+        desfecho('erro');
         setConferir({ aberto: true, fase: { fase: 'erro', mensagem: errMsg(e), verEmitidos: code === 'NFCE_CHAVE_REUSADA' } });
         if (code === 'NFCE_TOTAL_MUDOU' || code === 'NFCE_ITEM_INDISPONIVEL') void qc.invalidateQueries({ queryKey: CHAVES_CUPOM.produtos });
         void qc.invalidateQueries({ queryKey: CHAVES_CUPOM.situacao });
         return;
       }
       // UX 2.7: a venda trava e a tela procura UMA vez pela chave, só no nosso servidor (nunca emite nem fala com a SEFAZ)
-      setTravada(true);
+      desfecho('incerta');
       setConferir({ aberto: true, fase: { fase: 'incerta', procurando: true } });
       try {
         const achados = await listarCupons({ chave_idempotencia: corpo.chave_idempotencia, limite: 1 });
         if (achados[0]) return abrirCupom(achados[0].id);
-        setTravada(false);
+        desfecho('nada');
         setConferir({ aberto: true, fase: { fase: 'nada' } });
       } catch {
         setConferir({ aberto: true, fase: { fase: 'incerta', procurando: false } });

@@ -12,7 +12,7 @@ import {
 import { errCode, errMsg } from '@/lib/db';
 import { useMe } from '@/lib/auth';
 import {
-  caixaDoCupom, caixaDoTopo, CHAVES_CUPOM, documentoFormatado, linhaPrazoCancelar, linhasConferir, NOME_PAGAMENTO, nomeDoArquivo,
+  caixaDoCupom, caixaDoTopo, CHAVES_CUPOM, documentoFormatado, linhaPrazoCancelar, linhasConferir, linkDoAtalho, NOME_PAGAMENTO, nomeDoArquivo,
   nomesDosPagamentos, quandoSp, quantidadeParaTela, reais, tagDoCupom, textoTentativa, toastDaConsulta, vendaDoCupom, type IconeCupom,
   type TPag,
 } from '@/lib/cupom';
@@ -28,9 +28,6 @@ import { cn } from '@/lib/utils';
 
 const ENVIANDO_ATE_MS = 120_000;
 const MAX_ENVIOS = 3;
-const ESQUEMA = new Set([214, 215, 225, 402, 404, 516, 517, 587, 588]);
-const QR = new Set([373, 394, 395]);
-const certificado = (c: number) => c === 213 || (c >= 280 && c <= 286) || (c >= 290 && c <= 298);
 const semPonto = (s: string) => s.trim().replace(/[\s.]+$/u, '');
 const CAIXA: Record<'ok' | 'warn' | 'bad' | 'muted', string> = {
   ok: 'border-success/30 bg-success/10',
@@ -45,19 +42,6 @@ function IconeTag({ icone }: { icone: IconeCupom }) {
   if (icone === 'alerta') return <CircleAlert className="mr-1 h-3.5 w-3.5" aria-hidden />;
   if (icone === 'carregando') return <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin motion-reduce:animate-none" aria-hidden />;
   if (icone === 'ban') return <Ban className="mr-1 h-3.5 w-3.5" aria-hidden />;
-  return null;
-}
-
-/** O link que conserta a recusa (UX 6.1), pelo código e pela família que o servidor manda. */
-function linkDaRecusa(c: CupomDetalhe): { rotulo: string; href: string } | null {
-  const cod = c.recusa?.codigo ?? c.c_stat;
-  if (cod === 539) return { rotulo: 'Trocar a série', href: '/configuracoes?aba=cupom' };
-  if (cod !== null && certificado(cod)) return { rotulo: 'Ir para o certificado', href: '/configuracoes#certificado-digital' };
-  if (cod !== null && QR.has(cod)) return { rotulo: 'Ir para Configurações', href: '/configuracoes?aba=cupom' };
-  if (cod !== null && ESQUEMA.has(cod)) return null;
-  const familia = c.recusa?.familia ?? 'outra';
-  if (familia === 'empresa') return { rotulo: 'Ir para Configurações', href: '/configuracoes?aba=cupom' };
-  if (familia === 'produto' || familia === 'outra') return { rotulo: 'Corrigir os produtos', href: `/cupom?aba=produtos&cupom=${c.id}` };
   return null;
 }
 
@@ -163,6 +147,7 @@ export default function CupomPage() {
   const topo = s ? caixaDoTopo(s, agora) : null;
   const envioBarrado = topo && topo.formulario ? topo.texto : null;
   const reenviavel = ['nao_enviado', 'nao_consta', 'rejeitado'].includes(cupom.situacao);
+  const atalho = linkDoAtalho(cupom.atalho, cupom.id);
   const esgotou = reenviavel && cupom.numero_reaproveitavel && cupom.envios >= MAX_ENVIOS;
 
   function atualizar(r: CupomDetalhe) {
@@ -325,17 +310,14 @@ export default function CupomPage() {
     case 'nao_enviado':
     case 'nao_consta':
     case 'rejeitado': {
-      // UX 3.1 e 6.1: "Corrigir os produtos" é a primária (e então "Enviar de novo"); "Trocar a série", "Ir para Configurações" e "Ir para
-      // o certificado" são links; sem outra, a primária é "Enviar de novo" ou, sem ela (539, consumidor, valores), "Descartar…"
-      const link = cupom.situacao === 'rejeitado' ? linkDaRecusa(cupom) : null;
-      const corrigir = link?.rotulo === 'Corrigir os produtos';
+      // UX 3.1 e 6.1: com o atalho "Corrigir os produtos" (a primária, desenhada acima), "Enviar de novo" vem depois; sem ele, a primária
+      // é "Enviar de novo" ou, sem ela (539, consumidor, valores), "Descartar…"
+      const corrigir = atalho?.primario === true;
       const reenvia = cupom.acoes.includes('enviar_de_novo');
       acoes = (
         <>
-          {link && corrigir && <Button asChild className="h-11 w-full sm:w-auto"><Link href={link.href}>{link.rotulo}</Link></Button>}
           {reenvia && botaoReenviar(!corrigir)}
           {cupom.acoes.includes('descartar') && botaoDescartar(!corrigir && !reenvia)}
-          {link && !corrigir && <Link href={link.href} className={LINK}>{link.rotulo}</Link>}
           {cupom.situacao !== 'nao_consta' && opcaoConferir && maisOpcoes(opcaoConferir)}
         </>
       );
@@ -446,7 +428,13 @@ export default function CupomPage() {
               <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" aria-hidden /><p className="min-w-0 break-words">{erroAcao}</p>
             </div>
           )}
-          <div className="flex flex-col gap-2">{acoes}</div>
+          <div className="flex flex-col gap-2">
+            {/* o atalho que conserta a recusa vem do servidor (Ruling T14 I2): a tela não decide por código */}
+            {atalho && (atalho.primario
+              ? <Button asChild className="h-11 w-full sm:w-auto"><Link href={atalho.href}>{atalho.rotulo}</Link></Button>
+              : <Link href={atalho.href} className={LINK}>{atalho.rotulo}</Link>)}
+            {acoes}
+          </div>
         </div>
 
         {/* ------------------------------------------------------------------------------------------- o papel */}

@@ -96,7 +96,9 @@ export function decimal4(q: string): string {
 // Daqui para baixo NÃO há cópia na API: são as regras puras das telas do cupom (Tarefa 14; UX 2 a 4). Nada lê relógio nem rede (a hora
 // vem por parâmetro, a do servidor); textos literais da UX (docs/superpowers/specs/2026-11-17-cupom-fiscal-ux.md). Os imports ficam aqui,
 // e não no alto, para o bloco de cima continuar igual a `api/src/modules/cupom-fiscal/totais.ts`.
-import type { CodigoFalta, CupomDetalhe, MotivoProduto, ProdutoCupom, RecusaCupom, SituacaoCupom, SituacaoCupomFiscal } from './erp-api';
+import type {
+  AtalhoCupom, CodigoFalta, CupomDetalhe, MotivoProduto, ProdutoCupom, RecusaCupom, SituacaoCupom, SituacaoCupomFiscal,
+} from './erp-api';
 import { cnpjValido, cpfValido } from './fiscal';
 import { horaSp } from './notas-sefaz';
 
@@ -758,4 +760,58 @@ export function linhasDosPagamentos(p: { t_pag: string; valor_centavos: number }
     return [{ tPag: f.t_pag, valor: f.t_pag === '01' ? textoCentavos(BigInt(f.valor_centavos)) : '' }];
   }
   return formas.map((x) => ({ tPag: x.t_pag, valor: textoCentavos(BigInt(x.valor_centavos)) }));
+}
+
+
+// ----------------------------------------------------------------------------------------------------------------- trava e chave da venda
+/** A chave de idempotência da venda e se ela está travada pelo "não sei se saiu" (UX 2.5 e 2.7). */
+export type VendaEnvio = { chave: string; travada: boolean };
+/**
+ * O desfecho de um envio (ou da leitura pela chave): `cupom` = uma resposta com cupom (201/200, o cupom achado pela chave, ou o 409
+ * `NFCE_CHAVE_REUSADA`, em que o servidor já tem um cupom com esta chave); `erro` = erro da API antes do envio (4xx com código ou 503);
+ * `incerta` = pode ter saído (sem resposta, 502/504, 5xx, ou a leitura pela chave falhou); `nada` = a leitura pela chave voltou `[]`.
+ */
+export type DesfechoEnvio = 'cupom' | 'erro' | 'incerta' | 'nada';
+
+/**
+ * O ÚNICO lugar que troca a chave ou a trava (Ruling T14 I1): só uma resposta com cupom troca a chave (a próxima venda é outra); `incerta`
+ * trava; `erro` e `nada` destravam com a MESMA chave (o servidor confere a chave antes de itens e total, então um 4xx prova que não há
+ * cupom com ela; e um corpo diferente que chegue depois de um 1º pedido atrasado vira 409 `NFCE_CHAVE_REUSADA`, nunca um 2º cupom).
+ */
+export function depoisDoEnvio(v: VendaEnvio, d: DesfechoEnvio, novaChave: () => string = novaChaveIdempotencia): VendaEnvio {
+  switch (d) {
+    case 'cupom':
+      return { chave: novaChave(), travada: false };
+    case 'incerta':
+      return { chave: v.chave, travada: true };
+    case 'erro':
+    case 'nada':
+      return { chave: v.chave, travada: false };
+  }
+}
+
+/** O desfecho de um POST que falhou: só com o código da API (4xx ou 503) é erro antes do envio (`falhaIncerta`). */
+export const desfechoDoErro = (status: number | null, code: string | null): 'erro' | 'incerta' =>
+  falhaIncerta(status, code) ? 'incerta' : 'erro';
+
+/** O toque no botão da venda: com a venda travada, reabre o "não sei se saiu"; fora disso, segue o que falta (`rotuloBotaoEmitir`). */
+export const toqueNoBotao = (travada: boolean, alvo: AlvoBotao): AlvoBotao | 'reabrir' => (travada ? 'reabrir' : alvo);
+
+// ----------------------------------------------------------------------------------------------------------------- atalho da recusa
+/**
+ * O link do atalho que o SERVIDOR manda no cupom (`atalho`, calculado em `retornos.ts` junto da frase; Ruling T14 I2): a tela não
+ * classifica por código. `primario` = é a ação principal ("Corrigir os produtos", e então "Enviar de novo"). `perfil` ainda não tem
+ * destino definido: sem link.
+ */
+export function linkDoAtalho(a: AtalhoCupom | null, cupomId: string): { rotulo: string; href: string; primario: boolean } | null {
+  switch (a) {
+    case 'produtos':
+      return { rotulo: 'Corrigir os produtos', href: `/cupom?aba=produtos&cupom=${cupomId}`, primario: true };
+    case 'certificado':
+      return { rotulo: 'Ir para o certificado', href: '/configuracoes#certificado-digital', primario: false };
+    case 'csc':
+      return { rotulo: 'Ir para Configurações', href: '/configuracoes?aba=cupom', primario: false };
+    default:
+      return null;
+  }
 }
