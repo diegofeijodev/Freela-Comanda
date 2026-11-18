@@ -74,6 +74,19 @@ Na máquina do dono, sempre pelo teto de memória (`scripts/run-capped.sh`, ver 
   4. **Volta, nesta ordem:** "Desligar as respostas" na tela, variável vazia, recriar só a API, conferir o painel; nunca apagar `sefaz_*`. Toda nota com ciência registrada ainda precisa de resposta final em 90 dias; o aviso do prazo continua na tela com a variável vazia (com a busca ativada no servidor).
   Perguntas ao contador: a ciência obriga resposta final para restaurante (cláusula 15ª-C § 5º, NT 2020.001)? multa em SP? concorda com ciência automática + confirmação ao lançar? ele já responde as notas deste CNPJ por outro sistema (a última resposta vale)? Ao dono: "É a mesma nota" e "Já lancei de outro jeito" confirmam sozinhos (provisório); notas lançadas antes da 1ª vez que as respostas forem ligadas ficam sem confirmação automática (provisório); qual chave usar na homologação. Rotas e erros: `docs/api-contract.md` §16.
 
+- **Cupom fiscal (NFC-e):** pronto e DESLIGADO (`NFCE_AMBIENTE` ausente + "Emitir cupons" de cada ambiente desligado), e **nenhum cupom, consulta, status ou cancelamento foi enviado à SEFAZ** (nem homologação): os testes usam porta falsa e HTTPS local. A 1ª chamada real exige o "eu autorizo" do dono, na hora e por escrito; o roteiro de homologação e a volta estão em `docs/deploy.md`, rotas e erros em `docs/api-contract.md` §17.
+  Perguntas ao dono e ao contador, numa lista só (as respostas entram em Configurações → Cupom fiscal; produção não liga sem a 1):
+  1. A venda emitida no Comanda também é lançada no sistema do caixa de hoje? (se for, o estoque conta em dobro)
+  2. Qual a série e o CSC do caixa de hoje? (o Comanda usa outra série)
+  3. Regime tributário (CRT), IE, NCM, CEST, GTIN e o perfil fiscal (CFOP, CSOSN/CST, PIS/COFINS) de cada produto. O CRT 2 pede CSOSN ou CST? Por ora estão barrados o CST 20 (sem o campo de redução) e o CST de PIS/COFINS com alíquota.
+  4. O que fazer com número pulado? (SP não tem inutilização; o zip do mês traz `numeros-nao-usados.csv` para o contador)
+  5. A taxa de serviço entra no cupom?
+  6. Quer o responsável técnico no XML (CNPJ, contato, e-mail, telefone)?
+  7. O cupom pode ser só digital (QR/link), sem papel?
+  8. O Pix do balcão é o código 17 (dinâmico) ou 20 (estático)? (hoje só o 17 está aceito)
+  9. Reforma tributária: quais os códigos do Simples para 2027 (`cAtivSN`/`gTribSN`)? (hoje só o cadastro; nada sai no XML)
+  Conferência no navegador antes de usar: abrir Cupom → Emitir com a emissão desligada e ler a faixa de aviso; imprimir um DANFE de teste no papel de 80 mm (o CSS não fixa o papel).
+
 ## Migração dos dados (pendente)
 
 As tabelas são idênticas às do Supabase do Lovable, então trazer os dados de Valinhos (insumos, fichas, inventários, vendas, contas) é cópia

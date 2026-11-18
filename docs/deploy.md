@@ -86,3 +86,44 @@ Roteiro do primeiro teste real:
 Perguntas que só o dono ou o contador respondem (antes de ligar): (contador) pela cláusula 15ª-C § 5º, a ciência obriga uma resposta final para o restaurante, ou a NT 2020.001 restringe aos obrigados? qual a multa de SP por não responder? ele concorda com ciência automática + confirmação ao lançar? ele já responde (manifesta) as notas deste CNPJ por outro sistema? (a última resposta vale: nosso 210200 sobre um 210220 dele vira retificação; combinem quem responde); (dono) "É a mesma nota" e "Já lancei de outro jeito" confirmam a compra sozinhos (decisão provisória); notas lançadas ANTES da 1ª vez que as respostas forem ligadas ficam sem confirmação automática (decisão provisória; desligar e religar depois não muda essa data) — basta?; qual chave de nota real usar no teste de homologação.
 
 Registro: o `api/Dockerfile` roda `npm ci` com as devDependencies (anterior a esta entrega); o `xml-crypto` 6.4.0 é devDependency, só dos testes, e por isso vai para a imagem, mas nenhum código fora de `__tests__` o importa. Cuidado: o certificado e a chave só chegam à assinatura pela porta `CERTIFICADO_DIGITAL`; nada vai para log (nunca `NODE_DEBUG=http|https|tls`).
+
+## Cupom fiscal (NFC-e modelo 65; pronto e DESLIGADO por padrão)
+
+Variável `NFCE_AMBIENTE` (declarada no `docker-compose.prod.yml` como `${NFCE_AMBIENTE:-}`; modelo em `api/.env.example`). É separada de `SEFAZ_DFE_AMBIENTE` e de `SEFAZ_MANIFESTACAO`:
+
+| Valor | Efeito |
+|---|---|
+| ausente ou vazia | `desligado` (o padrão): emitir, reenviar, consultar, cancelar, descartar, testar a conexão e ligar respondem 503 `NFCE_DESLIGADA`; nenhuma conexão sai. Cadastro, lista, DANFE, XML e zip do mês continuam funcionando |
+| `homologacao` | usa o ambiente de teste da SEFAZ (cupom sem valor fiscal; a venda nunca baixa o estoque) |
+| `producao` | cupom valendo |
+| qualquer outro | **a API não sobe** (falha de validação, de propósito) |
+
+Mesmo com a variável ligada, nada é emitido até alguém tocar em "Emitir cupons" em Configurações → Cupom fiscal (cada ambiente tem o seu botão, e ele nasce desligado). **Nunca** pôr `homologacao` ou `producao` sem o "eu autorizo" do dono, dado na hora e por escrito;
+nenhum agente executa o roteiro (ele está em `README.md`, "Pendências do dono").
+
+**Subida (entrega no ar com o cupom desligado):**
+- Migrações novas, aplicadas pelo `prisma migrate deploy` do contêiner: `20261119120000_nfce` (tabelas `nfce_*` e as funções de venda), `20261119120100_nfce_gatilho` (o cupom autorizado vira imutável) e `20261119120200_nfce_descartado_por` (quem descartou).
+  Faça o `pg_dump` antes, como em toda subida.
+- `CERTIFICADO_SECRET` é **obrigatório para salvar o CSC** (a mesma variável do certificado, passo 3b): sem ela, salvar o código de segurança dá 503 `NFCE_SEM_SEGREDO`. Se o segredo se perder ou mudar, o CSC fica ilegível e precisa ser digitado de novo.
+- Conferir no ar, sem falar com a SEFAZ: Configurações → Cupom fiscal mostra "A emissão de cupom fiscal não está ativada neste servidor."; `select count(*) from nfce_cupons` = 0 e `select count(*) from nfce_envios` = 0.
+
+**Roteiro do 1º teste em HOMOLOGAÇÃO (só com o "eu autorizo" do dono; o dono acompanha):**
+1. Pré-condições: `pg_dump`; certificado A1 válido da empresa; IE, regime (CRT), endereço, série e CSC de homologação salvos; ao menos um produto com perfil fiscal e NCM; "Para ligar a emissão, falta:" vazio.
+   Perguntar antes ao contador a série e o CSC do caixa de hoje (a série do Comanda não pode ser uma das do caixa).
+2. `NFCE_AMBIENTE=homologacao` no `.env` do servidor e recriar só a API: `docker compose -f docker-compose.prod.yml up -d --no-deps api` (`docker restart` NÃO relê o `.env`). Ligar "Emitir cupons" em homologação, "Testar conexão" e emitir UM cupom de teste; depois cancelar o mesmo cupom (dentro de 29 min).
+3. O que nunca foi conferido contra a SEFAZ-SP e precisa ser anotado nesse 1º teste (se algo diferir, parar e relatar; não consertar no servidor):
+   - as URLs, as actions e os namespaces do WSDL de SP (seguem o padrão nacional, mas nunca foram conferidos);
+   - se SP devolve `protNFe`/`retEvento` com prefixo de namespace (o adaptador recusa a resposta: o cupom fica `sem_resposta` e o cancelamento `cancelando`; a saída é "Consultar na SEFAZ");
+   - o envelope SOAP **sem prefixo**: se vier 297/298 ou erro de esquema, a volta conhecida é `envelope: 'prefixado'` (uma linha em `modules/sefaz/nfce.adapter.ts` e em `eventos.adapter.ts`); conferir isto ANTES de outra hipótese;
+   - o formato do `digVal` devolvido (a conferência com o XML assinado); se o `retEvento` traz `chNFe`; o `dhRegEvento` de um 573 real;
+   - o 205 (NF-e denegada) e o código de "fora do prazo" do cancelamento (a tela só conta 29 min; o código real da SEFAZ nunca foi visto);
+   - a aspa simples sem escape dentro do XML (`'` em nome de produto);
+   - a URL do QR Code (as duas formas de SP, com e sem `p=`/`hash`) **e a leitura do QR pela câmera do celular**;
+   - a impressão: escolher o papel de **80 mm** no diálogo da impressora (o CSS não fixa o papel; a largura útil é de 72 mm) e conferir que o DANFE sai inteiro, sem cortar o QR;
+   - o 656 (consumo indevido): o adaptador respeita o bloqueio de 1 hora, e nunca há reenvio automático.
+4. Produção só depois do OK do contador e de um 2º "eu autorizo": a venda emitida no Comanda precisa ter uma única origem no estoque (pergunta 1 do README); responder o quadro "Caixa de hoje" (quem conta as vendas) e emitir e cancelar um cupom de teste em homologação são pré-condições que a própria tela cobra antes de ligar valendo.
+
+**Volta, nesta ordem:** (1) PRIMEIRO "Desligar a emissão" na tela (senão o botão fica ligado no banco e volta sozinho no dia em que a variável for posta de novo); (2) `NFCE_AMBIENTE` vazia no `.env`; (3) recriar só a API (`docker restart` não relê o `.env`);
+(4) conferir que Configurações diz "A emissão de cupom fiscal não está ativada neste servidor." Nunca apagar `nfce_*`: o cupom autorizado é documento fiscal e o XML precisa ser guardado por 5 anos. Pendente na SEFAZ (`sem_resposta`, `cancelando`): consultar pela tela antes de desligar.
+
+Registro: o `api/Dockerfile` roda `npm ci` com as devDependencies, então a imagem leva o `xml-crypto` (devDependency, só dos testes); nenhum código fora de `__tests__` o importa. Registrado, não mudado.

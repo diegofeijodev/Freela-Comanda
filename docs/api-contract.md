@@ -243,3 +243,102 @@ Ordem das recusas de `ignorar` com aviso: variável → respostas ligadas → mo
 **Paradas e recusas** (frases em `notas-sefaz/frases.ts`, `FRASE_RESPOSTA`; nunca texto da SEFAZ): `parada_656` (bloqueio duas vezes em 24 h), `parada_certificado` (códigos de certificado 280–286 no lote, 213 e 290–296 no evento, ou HTTP 403; e, na conferência antes de enviar, sem rede, certificado não cadastrado, vencido, ilegível ou de outra raiz de CNPJ: frase "As respostas pararam: não foi possível assinar as respostas com o certificado digital…"), `parada_configuracao` (defeito nosso: 250, 252, 489–493, 572, 594, 595, 297, 298, assinatura impossível, 3 respostas ilegíveis, outro código), `parada_relogio` (577–579 duas vezes seguidas, ou, na conferência antes de enviar, a última busca respondida nas 24 h com o relógio mais de 2 min diferente do da SEFAZ). Toda parada grava o histórico `respostas_paradas` e o log `sefaz.eventos` (só a situação e a classe da causa); o agendador registra cada tique que termina parado, sem CNPJ, no relógio ou no certificado. Recusa de um evento (linha `recusada`): 650/651 nota cancelada ou denegada; 596 passou o prazo; 575 não é para o CNPJ da empresa; 236, 496, 614–619 chave inválida; 655 na ciência = já respondida por outro sistema ou pelo portal; outro código = "A SEFAZ não aceitou a resposta (código N). Fale com o seu contador."
 **Tipos:** `TipoEvento` = `'210200'|'210210'|'210220'|'210240'`; `EstadoEvento`, `SituacaoRespostas` e `OrigemEvento` como acima, os mesmos literais no web (`erp-api.ts`).
 **Assinatura e envelope:** `modules/sefaz/assinatura-xml.ts` (`assinarXmlEnveloped`, interface fixa, a mesma da futura NFC-e: RSA-SHA1, C14N inclusiva, só a folha do certificado) e `eventos-xml.ts` (montagem do evento, leitura do retorno) atrás da porta `SEFAZ_EVENTOS`. O envelope SOAP 1.2 dos eventos é **sem prefixo** (`envelope: 'sem_prefixo'`), para a assinatura conferir dentro e fora dele; a distribuição mantém o envelope prefixado de sempre.
+
+## §17 Cupom fiscal — NFC-e modelo 65 (admin; pronto e DESLIGADO por padrão)
+
+Rotas `/v1/cupom-fiscal/*`. **Todas `@AdminOnly()`** (o cupom mostra preço de venda): a loja não alcança nenhuma, e as entradas estão em `permissoes-protecao.spec.ts`.
+Erros no formato do §1 (`{ error: { code, message } }`, frases em pt-BR fixas; nunca texto cru da SEFAZ, a não ser o `xMotivo` que a tela mostra à parte em `recusa.x_motivo`).
+**Dinheiro no fio é sempre inteiro em centavos** (`*_centavos`); a quantidade de item é texto com ponto e até 4 casas (`"0.350"`). Exceção: `GET cupons/:id/danfe` devolve os valores como texto do XML (`"24.00"`).
+Dias e horas são de Brasília; o servidor manda as horas e as ações prontas (a contagem na tela não depende do relógio do celular).
+
+**Tudo nasce desligado, em duas chaves:** (1) `NFCE_AMBIENTE` (ausente ou vazia = `desligado`; `homologacao`; `producao`; outro valor derruba a subida) — separada de `SEFAZ_DFE_AMBIENTE`;
+(2) o botão "Emitir cupons" de cada ambiente (`nfce_ambientes.emissao_ligada`, nasce `false`). Com `NFCE_AMBIENTE` desligada, as rotas que falam com a SEFAZ (`POST cupons`, `reenviar`, `consultar`, `cancelar`, `descartar`,
+`testar-conexao`, `PUT ambientes/:ambiente/emissao`) respondem **503 `NFCE_DESLIGADA`** "A emissão de cupom fiscal não está ativada neste servidor." e nenhuma conexão sai. Cadastro, leitura (lista, cupom, DANFE, XML, zip, vendas do período) e
+`lancar-venda` funcionam com o servidor desligado (nenhum fala com a SEFAZ). A emissão pelo cupom nunca é reenviada sozinha: só o clique em "Enviar de novo" (até 3 envios) manda de novo o mesmo número.
+`:id` é UUID e `:ambiente` é `homologacao | producao`; outro valor = 404 `NOT_FOUND` "Não encontrado.". Corpo de DTO fora do tipo ou do tamanho = 400 `VALIDATION_ERROR`; as faixas e os formatos fiscais são do serviço (422, mesma frase para texto ou número).
+
+| Método e caminho | Corpo / filtros | Resposta |
+|---|---|---|
+| `GET /situacao` | — | `SituacaoCupomFiscal` (200) |
+| `GET /emitente` · `PUT /emitente` | PUT: `SalvarEmitente` (cada quadro manda só os seus campos) | `EmitenteResposta` |
+| `GET /ambientes/:ambiente` · `PUT /ambientes/:ambiente` | PUT: `{ serie?, proximo_numero?, id_csc?, csc? }` | `AmbienteResposta` |
+| `PUT /ambientes/:ambiente/emissao` | `{ ligada: boolean, confirmado?: boolean }` | `SituacaoCupomFiscal` |
+| `POST /testar-conexao` | — | `{ em_operacao, codigo, frase, agora, testar_de_novo_em }` (200) |
+| `GET /cupons` | `ambiente`, `ini`, `fim` (AAAA-MM-DD), `situacao=a,b`, `atencao=true`, `chave_idempotencia`, `limite` (1–500, padrão 100) | `CupomLinha[]` (200) |
+| `GET /cupons/:id` | — | `CupomDetalhe` |
+| `GET /cupons/:id/danfe` | — | os dados do DANFE (só do cupom autorizado) |
+| `GET /cupons/:id/xml` | `tipo=nota` (padrão) ou `cancelamento` | o XML, `text/xml; charset=utf-8` |
+| `GET /xml-do-mes` | `mes=AAAA-MM`, `ambiente?` | zip (`application/zip`) para o contador |
+| `GET /vendas-no-periodo` | `ini`, `fim` | `{ quantidade, valor_centavos }` |
+| `POST /cupons` | `EmitirCupom` | **201** com o `CupomDetalhe`; **200** se a mesma chave e o mesmo corpo já foram emitidos |
+| `POST /cupons/:id/reenviar` · `/consultar` · `/descartar` · `/lancar-venda` | descartar: `{ motivo }` | `CupomDetalhe` (200) |
+| `POST /cupons/:id/cancelar` | `{ motivo }` | `CupomDetalhe` (200: `cancelado`, `cancelando` ou com a `recusa`) |
+| `GET /perfis` · `POST /perfis` · `PATCH /perfis/:id` | `PerfilFiscal` | `PerfilResposta` / lista |
+| `GET /produtos` | `prontos=true\|false` | `ProdutoCupom[]` |
+| `PUT /produtos/perfil` | `{ itens: uuid[1–500], perfil_fiscal_id }` | lote, numa transação |
+| `PUT /produtos/:itemCardapioId` | `{ ncm?, cest?, gtin?, origem?, descricao_cupom?, unidade?, perfil_fiscal_id? }` | `ProdutoCupom` |
+
+Rotas estáticas (`perfis`, `produtos/perfil`, `xml-do-mes`…) vêm antes das com parâmetro. O cabeçalho de arquivo (`xml`, zip) só é posto depois de o arquivo existir, para o erro continuar JSON.
+
+**`EmitirCupom`** = `{ chave_idempotencia: uuid, itens: [{ item_cardapio_id, quantidade }], desconto_centavos?, pagamentos: [{ t_pag, valor_centavos }], consumidor_doc?, total_esperado_centavos }`.
+`t_pag` ∈ `01` dinheiro, `03` crédito, `04` débito, `10` vale-alimentação, `11` vale-refeição, `17` Pix. Os **preços são do servidor**: a tela manda só o total que mostrou. Campo fora da lista (ex.: `entrega`) = 400.
+A mesma `chave_idempotencia` com o mesmo corpo devolve o cupom (200); com outro corpo = 409 `NFCE_CHAVE_REUSADA`. O CPF/CNPJ vai com ou sem máscara.
+
+**`SituacaoCupomFiscal`** = `{ ambiente: 'desligado'|'homologacao'|'producao', agora, emissao_ligada, situacao, mensagem, bloqueado_ate, recusas_ate, serie, proximo_numero, falta[{ codigo, texto }], certificado{ ok, mensagem }, pendentes{ total, primeiro{ id, serie, numero, tipo }|null } }`.
+`emissao_ligada` só é verdadeiro com o servidor ligado e o trio (ambiente, CNPJ, série) igual ao de quando foi ligada. `recusas_ate` = o teto de 10 recusas na última hora foi atingido e o envio volta a essa hora (`null` = há folga).
+`pendentes.primeiro.tipo` ∈ `sem_resposta | cancelando | nao_saiu | recusado | venda_pendente | venda_a_desfazer` (`cancelando` = pedido de cancelamento sem resposta; `venda_a_desfazer` = cupom cancelado com a venda ainda no estoque).
+
+**`CupomDetalhe`** (mesmo formato no GET e no POST; sem XML): `id, ambiente, serie, numero, chave, situacao, dh_emi, envios, numero_reaproveitavel, consumidor_doc` (**CPF completo só aqui e no DANFE**), `valor_produtos_centavos, valor_desconto_centavos, valor_total_centavos, valor_troco_centavos, itens[], pagamentos[], autorizada_em, n_prot, c_stat, x_motivo, alerta{ c_msg, x_msg }|null, cancelado_em, cancelamento_motivo, cancelamento_n_prot, cancelamento_pedido_em, venda_estoque, venda_erro, descartado_em, descarte_motivo, descartado_por_nome, emitido_por_nome, criado_em, agora, consultar_a_partir_de, cancelar_ate, acoes[], recusa{ codigo, familia, frase, x_motivo }|null, atalho, mensagem`.
+- `situacao` ∈ `enviando | nao_enviado | sem_resposta | nao_consta | rejeitado | autorizado | cancelando | denegado | cancelado | descartado` (o `enviando` de 2 min ou mais já sai como `sem_resposta`; "enviado sem resposta" NUNCA leva a reenvio, só à consulta).
+- `acoes` ⊆ `enviar_de_novo | consultar | cancelar | descartar | lancar_venda | imprimir`, calculadas no servidor. `cancelar_ate` = autorização + 29 min (a SEFAZ aceita 30).
+- `venda_estoque` ∈ `lancada | pendente | desfeita | desfazer_pendente | teste | nao_lanca`.
+- `atalho` ∈ `certificado | csc | empresa | serie | produtos | null`: o conserto da `recusa` (a tela só mostra o que vier, sem tabela de códigos). `recusa.familia` ∈ `produto | empresa | consumidor | valores | hora | outra`.
+- `CupomLinha` (a lista) é o mesmo cupom sem itens e sem XML, com o **CPF mascarado** (`***.982.247-**`; CNPJ inteiro) e `valor_total_centavos`.
+
+**`EmitenteResposta`** traz os dados da empresa no cupom (CNPJ, razão e município vêm de Configurações, só leitura), `crt`, `ie`, endereço, `nat_op`, `inf_cpl`, responsável técnico, `series_outro_sistema[]`, `sem_outro_sistema`,
+`cupom_lanca_venda` (`null` = ainda não respondido: "quem conta no estoque as vendas emitidas aqui?") com quem respondeu e quando, e `tp_regime_ibscbs`. **`AmbienteResposta`** traz `serie`, `proximo_numero`, `ultimo_numero_usado`, `pendentes_na_serie`,
+`id_csc`, **`csc_dica`** (o CSC nunca volta: só entra, cifrado com `CERTIFICADO_SECRET`), `emissao_ligada`, `situacao`, `bloqueado_ate` e as 5 últimas linhas de `historico`. `PerfilResposta` = os códigos fiscais + `produtos` (quantos usam) e `vale_no_regime`.
+`ProdutoCupom` = `item_cardapio_id, nome, categoria, unidade_venda, preco_venda_centavos` (`null` = sem preço que sirva), os dados fiscais, `perfil_nome`, `pronto` e `motivos[]` (o que falta).
+
+**Ligar a emissão** (`PUT ambientes/:ambiente/emissao`): só o ambiente do servidor (outro = 404). Em `producao`, `confirmado: true` (as 3 marcações; sem elas 400 `VALIDATION_ERROR` "Marque as três confirmações.").
+Confere a lista `falta` da situação (`certificado`, `cnpj`, `ie`, `crt`, `endereco`, `serie`, `csc`, `produto_pronto`; em produção também `teste_homologacao` e `lanca_venda`); o que falta = 422 `NFCE_CONFIG_INCOMPLETA` "Falta configurar o cupom fiscal: …" (inclui **ligar sem certificado**); valendo ainda pede um teste em homologação (422 `NFCE_PRODUCAO_SEM_TESTE`)
+e a resposta de quem conta as vendas no estoque (422 `NFCE_LANCA_VENDA_PENDENTE`). Mudou o CNPJ ou a série desde que foi ligada = 409 `NFCE_EMISSAO_DESLIGADA` "O CNPJ ou a série mudou desde que a emissão foi ligada. Ligue de novo."
+
+### Códigos de erro do cupom fiscal
+
+| HTTP | code | Quando |
+|---|---|---|
+| 503 | `NFCE_DESLIGADA` | `NFCE_AMBIENTE` ausente/`desligado` (rotas que falam com a SEFAZ) |
+| 503 | `NFCE_SEM_SEGREDO` | salvar o CSC sem `CERTIFICADO_SECRET` no servidor ("O servidor ainda não está pronto para guardar o código de segurança…") |
+| 409 | `NFCE_EMISSAO_DESLIGADA` | "Emitir cupons" desligado no ambiente (ou o trio mudou) |
+| 409 | `NFCE_PARADA` | a situação do ambiente parou a emissão (certificado, configuração, QR…); a frase é a `mensagem` gravada |
+| 409 | `NFCE_BLOQUEADA` | a SEFAZ bloqueou o CNPJ (656): volta na hora dita |
+| 409 | `NFCE_MUITAS_RECUSAS` | teto de 10 recusas na última hora; volta na hora dita |
+| 409 | `NFCE_CONSULTA_CEDO` / `NFCE_TESTE_CEDO` | consultar antes da hora (1ª consulta e repetidas) / testar a conexão de novo antes de 5 min |
+| 409 | `NFCE_CANCELAMENTO_CEDO` | pedir o cancelamento de novo antes da hora |
+| 409 | `NFCE_LIMITE_CANCELAMENTOS` | 3 pedidos de cancelamento já saíram: não sai outro (fale com o contador) |
+| 409 | `NFCE_LIMITE_ENVIOS` | 3 envios do mesmo cupom: "Descarte e emita outro." |
+| 409 | `NFCE_CANCELAMENTO_FORA_DO_PRAZO` | passaram 30 min da autorização |
+| 409 | `NFCE_SITUACAO` | a ação não vale para a situação do cupom ("Este cupom … ; não dá para …") |
+| 409 | `NFCE_CHAVE_REUSADA` | mesma `chave_idempotencia` com outro corpo |
+| 409 | `NFCE_TOTAL_MUDOU` | o preço de algum produto mudou: a frase diz o total novo; a tela relê `GET /produtos` |
+| 409 | `NFCE_SERIE_COM_PENDENTES` | trocar a série com cupom pendente nela |
+| 409 | `NFCE_PERFIL_REPETIDO` | já existe um perfil com esse nome |
+| 400 | `NFCE_SEM_ITENS` · `NFCE_DOC_INVALIDO` · `NFCE_MOTIVO` | lista vazia · CPF/CNPJ com dígito errado · motivo de cancelamento (15 a 255 letras, sem emoji) ou de descarte (3 a 255) ausente |
+| 422 | `NFCE_ITEM_INDISPONIVEL` | produto sem NCM, perfil, preço… ("X não pode entrar no cupom: …"); também produto que sumiu |
+| 422 | `NFCE_ITEM_SEM_VALOR` | item que arredonda para 0 centavo |
+| 422 | `NFCE_DESCONTO_INVALIDO` · `NFCE_PAGAMENTO_INSUFICIENTE` · `NFCE_TROCO_INVALIDO` | desconto ≥ produtos · pagamentos < total · troco que não sai do dinheiro |
+| 422 | `NFCE_DOC_OBRIGATORIO` | total acima de R$ 10.000,00 sem CPF/CNPJ |
+| 422 | `NFCE_VALOR_MAXIMO` | total de R$ 200.000,00 ou mais |
+| 422 | `NFCE_CUPOM_INVALIDO` | a montagem ou a assinatura do XML recusou (frase fixa, nunca o dado) |
+| 422 | `NFCE_CONFIG_INCOMPLETA` | ligar/emitir com algo por configurar (inclui certificado ausente) |
+| 422 | `CERTIFICADO_OUTRO_CNPJ` | o certificado é de outra empresa |
+| 422 | `NFCE_PRODUCAO_SEM_TESTE` · `NFCE_LANCA_VENDA_PENDENTE` | ligar valendo sem teste em homologação · sem a resposta de quem conta o estoque |
+| 422 | `NFCE_EMITENTE_INVALIDO` | dado da empresa fora do formato (IE, CEP, município, CRT…) |
+| 422 | `NFCE_SERIE_INVALIDA` · `NFCE_NUMERO_INVALIDO` · `NFCE_CSC_INVALIDO` | série fora de 0–889 ou igual à do caixa de hoje · próximo número menor ou igual ao último usado · CSC (16–36 letras e números) ou id (1–999999) |
+| 422 | `NFCE_PERFIL_INVALIDO` · `NFCE_PRODUTO_INVALIDO` | perfil ou dados do produto fora do formato (CSOSN × CFOP, NCM de 8 dígitos…) |
+| 404 | `NOT_FOUND` | cupom, perfil, produto ou ambiente inexistente; XML de cancelamento que não existe |
+
+O cupom é **documento fiscal** depois de autorizado: o banco o trava (gatilho `nfce_gatilho`) e só deixa mudar os campos de cancelamento, venda e descarte. O número é da nota para sempre (539 e SP sem inutilização: número pulado vai para o `numeros-nao-usados.csv` do zip do contador).
+A venda no estoque nasce do cupom (`nfce_lancar_venda`/`nfce_desfazer_venda`, só com `cupom_lanca_venda = true` e em produção); em homologação a venda nunca baixa estoque.
+**Porta interna** (sem rota): `SEFAZ_NFCE` (`modules/sefaz/nfce.port.ts`: autorizar, consultar, status e o registro do evento de cancelamento), sempre com o envelope SOAP `sem_prefixo`; só o certificado em `CERTIFICADO_DIGITAL` assina.
