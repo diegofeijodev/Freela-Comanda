@@ -21,7 +21,7 @@ import {
   type DadosNfce,
   type ItemXml,
 } from '../montagem-xml';
-import { qrCodeV2, URL_CHAVE, URL_QR } from '../qrcode-nfce';
+import { hashQrCode, qrCodeV2, URL_CHAVE, URL_QR } from '../qrcode-nfce';
 import { calcularTotais, type Totais, type TPag } from '../totais';
 
 const CSC_TESTE = 'CSCTESTE0123456789ABCDEF';
@@ -441,6 +441,19 @@ describe('montarNfe', () => {
     for (const [ajuste, campo] of casos) expect(erroDe(() => montarNfe(dados(ajuste))).message).toBe(FRASES_MONTAGEM.formato(campo));
   });
 
+  it('o código do município vai aparado também no cMunFG (nenhum dado entra cru)', () => {
+    const xml = montarNfe(dados({ emitente: { ...dados().emitente, codMunicipio: ' 3556206 ' } }));
+    expect(xml).toContain('<cMunFG>3556206</cMunFG>');
+    expect(xml).toContain('<cMun>3556206</cMun>');
+  });
+
+  it('quantidade com zero à esquerda ("02") sai no qCom/qTrib sem ele ("2.0000"): a mesma função decimal4 dos totais', () => {
+    const d = dados();
+    const xml = montarNfe({ ...d, itens: [{ ...d.itens[0], quantidade: '0' + d.itens[0].quantidade }, ...d.itens.slice(1)] });
+    expect(xml).not.toMatch(/<qCom>0[0-9]/);
+    expect(xml).not.toMatch(/<qTrib>0[0-9]/);
+  });
+
   it('o telefone da empresa aceita máscara (só os dígitos vão para o XML)', () => {
     const xml = montarNfe(dados({ emitente: { ...dados().emitente, telefone: '(19) 3222-0000' } }));
     expect(xml).toContain('<fone>1932220000</fone>');
@@ -452,6 +465,16 @@ describe('QR Code v2 (on-line)', () => {
     const chave = '28170800156225000131650110000151341562040824';
     const qr = qrCodeV2({ chave, tpAmb: 1, idCsc: 1, csc: 'SEU-CODIGO-CSC-CONTRIBUINTE-36-CARACTERES' });
     expect(qr).toBe(`${URL_QR.producao}?p=${chave}|2|1|1|DC6AE2C2B9A992BE59679AC365E29922DE6B7511`);
+  });
+
+  it('vetor OFICIAL OFF-LINE do Manual DANFE NFC-e v6.0, §4.3.6.2: a mesma regra do hash (7 campos + CSC colado, sem "|")', () => {
+    // a fase 2 (contingência, tpEmis 9) ainda não monta o QR; o vetor prova a regra comum do hash. Fonte: vetor-qrcode.md (sha1sum)
+    const digValHex = Buffer.from('yzGYhUx1/XYYzksWB+fPR3Qc50c=', 'utf8').toString('hex'); // o hex dos 28 CARACTERES base64
+    expect(digValHex).toBe('797a4759685578312f5859597a6b7357422b6650523351633530633d');
+    const p = `28170800156225000131650110000151349562040824|2|1|02|60.90|${digValHex}|1`;
+    expect(hashQrCode(p, 'SEU-CODIGO-CSC-CONTRIBUINTE-36-CARACTERES')).toBe('4615A93BB0D7C4E780F8D30EE77EDD5BA55C7D66');
+    // com "|" antes do CSC o hash é outro (contraprova do vetor)
+    expect(hashQrCode(`${p}|`, 'SEU-CODIGO-CSC-CONTRIBUINTE-36-CARACTERES')).not.toBe('4615A93BB0D7C4E780F8D30EE77EDD5BA55C7D66');
   });
 
   it('casa com o padrão v2 on-line do esquema e o hash é o SHA-1 maiúsculo de "<chave>|2|<tpAmb>|<IdCSC>" + CSC', () => {

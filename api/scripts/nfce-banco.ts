@@ -254,13 +254,43 @@ async function gatilhos(db: PrismaClient, item: Item): Promise<void> {
     FILHOS,
     'pagamento novo no autorizado',
   );
+  // leva pré-final, item 3 (migração 20261119120100_nfce_gatilho): a passagem do SET NULL é só da cascata do cardápio
+  await recusa(
+    db,
+    Prisma.sql`UPDATE nfce_cupom_itens SET item_cardapio_id = NULL WHERE cupom_id = ${g}::uuid`,
+    FILHOS,
+    'UPDATE direto do item_cardapio_id para nulo no autorizado (o item do cardápio existe)',
+  );
+  await recusa(
+    db,
+    Prisma.sql`UPDATE nfce_cupom_pagamentos SET valor = valor WHERE cupom_id = ${g}::uuid`,
+    FILHOS,
+    'UPDATE que não muda nada no pagamento do autorizado',
+  );
 
   // apagar o item do cardápio zera item_cardapio_id na linha do cupom (ON DELETE SET NULL) e a fotografia fica
   await db.itens_cardapio.delete({ where: { id: item.id } });
   const l = await db.nfce_cupom_itens.findFirstOrThrow({ where: { cupom_id: g } });
   conferir(l.item_cardapio_id === null && l.nome_cardapio === item.nome, 'item do cardápio apagado: SET NULL passa e o nome fica');
 
-  await db.$executeRaw`UPDATE nfce_cupons SET situacao = 'cancelando', cancelamento_motivo = 'Cliente desistiu da compra', cancelamento_pedido_em = now() WHERE id = ${g}::uuid`;
+  const pedirCancelamento = () =>
+    db.$executeRaw`UPDATE nfce_cupons SET situacao = 'cancelando', cancelamento_motivo = 'Cliente desistiu da compra', cancelamento_pedido_em = now() WHERE id = ${g}::uuid`;
+  await pedirCancelamento();
+  // leva pré-final, item 3: em `cancelando` os filhos também travam; a consulta pode voltar o cupom a `autorizado`, limpando o pedido
+  await recusa(db, Prisma.sql`UPDATE nfce_cupom_itens SET quantidade = 2 WHERE cupom_id = ${g}::uuid`, FILHOS, 'item do cancelando');
+  await recusa(
+    db,
+    Prisma.sql`INSERT INTO nfce_cupom_pagamentos (cupom_id, ordem, t_pag, valor) VALUES (${g}::uuid, 2, '17', 1)`,
+    FILHOS,
+    'pagamento novo no cancelando',
+  );
+  await db.$executeRaw`UPDATE nfce_cupons SET situacao = 'autorizado', cancelamento_motivo = NULL, cancelamento_pedido_em = NULL WHERE id = ${g}::uuid`;
+  const volta = await db.nfce_cupons.findUniqueOrThrow({ where: { id: g } });
+  conferir(
+    volta.situacao === 'autorizado' && volta.cancelamento_motivo === null && volta.cancelamento_pedido_em === null,
+    'cancelando → autorizado passa (limpando o motivo e a hora do pedido)',
+  );
+  await pedirCancelamento();
   await cancelar(db, g);
   const c = await db.nfce_cupons.findUniqueOrThrow({ where: { id: g } });
   conferir(c.situacao === 'cancelado' && c.cancelamento_n_prot !== null, 'autorizado → cancelando → cancelado passa');
@@ -276,6 +306,30 @@ async function gatilhos(db: PrismaClient, item: Item): Promise<void> {
     'não passa para autorizado',
     'cancelado → autorizado',
   );
+
+  // leva pré-final, item 3: autorizado → cancelado direto passa; o denegado é documento (travado), só a venda no estoque fica livre
+  const direto = await novoCupom(db, { ambiente: 'producao', serie: 3, numero: 2 });
+  await autorizar(db, direto);
+  await cancelar(db, direto);
+  conferir(
+    (await db.nfce_cupons.findUniqueOrThrow({ where: { id: direto } })).situacao === 'cancelado',
+    'autorizado → cancelado direto passa',
+  );
+  const neg = await novoCupom(db, { ambiente: 'producao', serie: 3, numero: 3 });
+  await db.nfce_cupom_pagamentos.create({ data: { cupom_id: neg, ordem: 1, t_pag: '01', valor: '12.00' } });
+  await db.$executeRaw`
+    UPDATE nfce_cupons SET situacao = 'denegado', envios = 1, c_stat = 302, x_motivo = 'Uso Denegado', n_prot = '135260000000777',
+           xml_autorizado = '<nfeProc/>' WHERE id = ${neg}::uuid`;
+  await recusa(db, Prisma.sql`UPDATE nfce_cupons SET valor_total = 1 WHERE id = ${neg}::uuid`, DOC_FISCAL, 'valor do denegado');
+  await recusa(
+    db,
+    Prisma.sql`UPDATE nfce_cupons SET situacao = 'autorizado' WHERE id = ${neg}::uuid`,
+    'não passa para autorizado',
+    'denegado → autorizado',
+  );
+  await recusa(db, Prisma.sql`UPDATE nfce_cupom_pagamentos SET valor = 1 WHERE cupom_id = ${neg}::uuid`, FILHOS, 'pagamento do denegado');
+  await db.$executeRaw`UPDATE nfce_cupons SET venda_erro = 'teste', atualizado_em = now() WHERE id = ${neg}::uuid`;
+  conferir((await db.nfce_cupons.findUniqueOrThrow({ where: { id: neg } })).venda_erro === 'teste', 'venda_* livre no denegado');
 }
 
 async function venda(db: PrismaClient, a: Item, b: Item, insumo: string): Promise<void> {
@@ -336,6 +390,11 @@ async function venda(db: PrismaClient, a: Item, b: Item, insumo: string): Promis
   await autorizar(db, semLanca);
   await recusa(db, Prisma.sql`SELECT nfce_lancar_venda(${semLanca}::uuid)`, 'não lança a venda', 'cupom sem lanca_venda');
   conferir((await db.vendas.count({ where: { nfce_cupom_id: { in: [h, semLanca] } } })) === 0, 'nenhuma venda dos recusados');
+  // leva pré-final, item 3: o cupom sem lanca_venda nunca lançou venda, então o desfazer não grava `venda_desfeita_em` nele
+  await cancelar(db, semLanca);
+  const [dSem] = await db.$queryRaw<{ n: number }[]>`SELECT nfce_desfazer_venda(${semLanca}::uuid) AS n`;
+  const cSem = await db.nfce_cupons.findUniqueOrThrow({ where: { id: semLanca } });
+  conferir(dSem?.n === 0 && cSem.venda_desfeita_em === null, 'desfazer no cupom sem lanca_venda: 0 e sem venda_desfeita_em');
 
   // desfazer: só no cancelado; apaga a venda e as baixas (cascata); idempotente
   await recusa(db, Prisma.sql`SELECT nfce_desfazer_venda(${c12}::uuid)`, 'Só o cupom cancelado', 'desfazer com o cupom autorizado');
@@ -442,9 +501,9 @@ async function emissaoNoBanco(db: PrismaClient, a: Item): Promise<void> {
 
   // a porta falsa responde a cada pedido com a chave e o DigestValue dele: autorizado (100), ou "não consegui falar" quando pedido;
   // o evento, com o código escolhido em `evento`; a consulta, com a nota (100) ou, com `consultaCancelada`, a nota e o cancelamento
-  let proxima: 'autorizar' | 'nao_enviado' = 'autorizar';
+  let proxima: 'autorizar' | 'nao_enviado' | 'sem_resposta' = 'autorizar';
   let evento: 135 | 573 | 501 = 135;
-  let consultaCancelada = false;
+  let consultaCancelada: boolean | 'sem_evento' = false;
   porta.aoChamar = () => {
     const ult = porta.chamadas[porta.chamadas.length - 1]!;
     if (ult.servico === 'autorizacao') {
@@ -452,13 +511,18 @@ async function emissaoNoBanco(db: PrismaClient, a: Item): Promise<void> {
       porta.respostas.push(
         proxima === 'nao_enviado'
           ? sefazErro('SEFAZ_REDE', false)
-          : lerRetornoAutorizacao(respostaDe('ret-autorizacao-100.xml', chave, ult.corpo)),
+          : proxima === 'sem_resposta'
+            ? sefazErro('SEFAZ_TEMPO', true)
+            : lerRetornoAutorizacao(respostaDe('ret-autorizacao-100.xml', chave, ult.corpo)),
       );
     } else if (ult.servico === 'consulta') {
       const chave = /<chNFe>([0-9A-Z]{44})<\/chNFe>/.exec(ult.corpo)![1]!;
       const base = porta.chamadas.find((c) => c.servico === 'autorizacao' && c.corpo.includes(`Id="NFe${chave}"`))!.corpo;
       const fixture = consultaCancelada ? 'ret-consulta-cancelada.xml' : 'ret-consulta-100.xml';
-      porta.respostas.push(lerRetornoConsulta(respostaDe(fixture, chave, base)));
+      let x = respostaDe(fixture, chave, base);
+      // 101 com o protNFe autorizado e SEM o procEventoNFe (leva pré-final, item 9)
+      if (consultaCancelada === 'sem_evento') x = x.replace(/<procEventoNFe[\s\S]*?<\/procEventoNFe>/, '');
+      porta.respostas.push(lerRetornoConsulta(x));
     } else if (ult.servico === 'evento') {
       const chave = /<chNFe>([0-9A-Z]{44})<\/chNFe>/.exec(ult.corpo)![1]!;
       const x = evento === 135 ? eventoDe('ret-evento-135.xml', chave) : eventoDe('ret-evento-573.xml', chave, evento);
@@ -573,7 +637,11 @@ async function emissaoNoBanco(db: PrismaClient, a: Item): Promise<void> {
   proxima = 'nao_enviado';
   const r4 = await svc.emitir(venda(), QUEM);
   conferir(r4.cupom.numero === n3 + 1 && r4.cupom.situacao === 'nao_enviado', 'falha antes de enviar: nao_enviado');
-  await svc.descartar(r4.cupom.id, 'Venda desfeita', QUEM);
+  const d4 = await svc.descartar(r4.cupom.id, 'Venda desfeita', QUEM);
+  conferir(
+    d4.descartado_por_nome === MARCA && (await db.nfce_cupons.findUniqueOrThrow({ where: { id: r4.cupom.id } })).descartado_por === QUEM.id,
+    'descarte: quem descartou gravado (migração 20261119120200_nfce_descartado_por)',
+  );
   proxima = 'autorizar';
   const r5 = await svc.emitir(venda(), QUEM);
   conferir(r5.cupom.numero === n3 + 1 && r5.cupom.situacao === 'autorizado' && r5.cupom.id !== r4.cupom.id, 'o número descartado volta');
@@ -728,6 +796,33 @@ async function emissaoNoBanco(db: PrismaClient, a: Item): Promise<void> {
     semCertificado = false;
   }
   await nada('sem certificado');
+
+  // 8. leva pré-final, item 9: o cupom sem resposta que a consulta mostra autorizado (protNFe conferido) mas "cancelado" sem o evento:
+  // o nfeProc autorizado e o `cancelando` num UPDATE só, aceitos pelo gatilho e pelos CHECKs; nenhuma venda lançada às cegas
+  proxima = 'sem_resposta';
+  const r8 = await svc.emitir(venda(), QUEM);
+  proxima = 'autorizar';
+  conferir(r8.cupom.situacao === 'sem_resposta', `sem resposta da SEFAZ: sem_resposta (veio ${r8.cupom.situacao})`);
+  consultaCancelada = 'sem_evento';
+  const k8 = await svc.consultar(r8.cupom.id, QUEM, new Date(Date.now() + 3 * 60_000));
+  consultaCancelada = false;
+  const c8 = await cupom(r8.cupom.id);
+  conferir(
+    k8.situacao === 'cancelando' &&
+      c8.situacao === 'cancelando' &&
+      c8.n_prot === '13526000000012345' &&
+      !!c8.xml_autorizado?.startsWith('<nfeProc') &&
+      c8.cancelamento_pedido_em === null &&
+      !c8.numero_reaproveitavel &&
+      (await vendaDo(r8.cupom.id)) === 0,
+    `101 sem evento num sem resposta: nfeProc + cancelando num UPDATE só, sem venda (veio ${k8.situacao})`,
+  );
+  await recusa(
+    db,
+    Prisma.sql`UPDATE nfce_cupons SET n_prot = '135260000000997' WHERE id = ${r8.cupom.id}::uuid`,
+    DOC_FISCAL,
+    'protocolo do cancelando gravado pela consulta',
+  );
 }
 
 async function main(): Promise<void> {

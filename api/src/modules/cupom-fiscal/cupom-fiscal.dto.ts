@@ -4,6 +4,7 @@
 
 import { Transform, Type } from 'class-transformer';
 import {
+  Allow,
   ArrayMaxSize,
   ArrayMinSize,
   IsArray,
@@ -16,12 +17,10 @@ import {
   IsUUID,
   MaxLength,
   Min,
-  ValidateBy,
   ValidateNested,
 } from 'class-validator';
-import { FRASE_ERRO, FRASES_EMISSAO, FRASES_VALIDACAO } from './frases';
-import { FRASES_CADASTRO } from './frases-cadastro';
-import { quantidadeValida, type TPag } from './totais';
+import { FRASE_ERRO, FRASES_CADASTRO, FRASES_EMISSAO, FRASES_VALIDACAO } from './frases';
+import type { TPag } from './totais';
 
 /** Alíquota (%) aceita como número ou texto; segue como texto ("18.5") para a validação fiscal, que confere as casas. */
 const DecimalComoTexto = () => Transform(({ value }: { value: unknown }) => (typeof value === 'number' ? String(value) : value));
@@ -125,23 +124,21 @@ export class PerfilEmLoteDto {
 }
 
 // ---------------------------------------------------------------------------------------------- corpo da emissão (Tarefa 11)
-// O pagamento > 0 e o `tPag` da lista, e a quantidade conferida por `quantidadeValida` ANTES de `calcularTotais` (nota 4 do controlador da
-// Tarefa 10). O serviço confere o mesmo (a frase é a mesma); o DTO barra antes, com `whitelist + forbidNonWhitelisted` (um campo
-// `entrega`, UX 10.9, é recusado).
+// O pagamento > 0 e o `tPag` da lista (nota 4 do controlador da Tarefa 10): o DTO barra antes, com `whitelist + forbidNonWhitelisted` (um
+// campo `entrega`, UX 10.9, é recusado), e o serviço confere o mesmo. A quantidade, o serviço confere (`quantidadeValida`, ANTES de
+// `calcularTotais`), para a frase ir ao fio sem o caminho do campo.
 
 /** Formas de pagamento aceitas (o CHECK de `nfce_cupom_pagamentos.t_pag`): dinheiro, crédito, débito, vale-alimentação, vale-refeição e Pix. */
 export const T_PAG_ACEITOS: readonly TPag[] = ['01', '03', '04', '10', '11', '17'];
 
-/** Quantidade em texto ("0.350"): ponto, até 4 casas, maior que zero. Uma frase só, venha número, vírgula ou zero. */
-const IsQuantidadeDoCupom = () =>
-  ValidateBy(
-    { name: 'quantidadeDoCupom', validator: { validate: (v: unknown) => typeof v === 'string' && quantidadeValida(v) } },
-    { message: FRASES_CADASTRO.quantidade },
-  );
-
 export class ItemDoCupomDto {
   @IsUUID('all', { message: FRASES_CADASTRO.produtoSumiu }) item_cardapio_id!: string;
-  @IsQuantidadeDoCupom() quantidade!: string;
+  /**
+   * Quantidade em texto ("0.350"): ponto, até 4 casas, maior que zero. Quem confere é o serviço (`quantidadeValida`, 400 com a frase
+   * literal do Review Focus 1): pelo DTO, a frase iria ao fio com o caminho do campo na frente ("itens.0.quantidade: …"; leva pré-final,
+   * item 8), como os itens vazios e o motivo.
+   */
+  @Allow() quantidade!: string;
 }
 
 export class PagamentoDoCupomDto {

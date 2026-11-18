@@ -136,11 +136,11 @@ export const FRASE_RETORNO = {
     `O pedido de cancelamento saiu às ${horaSp(pedidoEm)} e a SEFAZ não respondeu. ${consulteCancelando(consultarAPartirDe)}`,
   cancelandoJaRecebido: (consultarAPartirDe: Date) =>
     `A SEFAZ diz que já recebeu um pedido de cancelamento deste cupom. ${consulteCancelando(consultarAPartirDe)}`,
-  /** `cancelando` sem pedido nosso: a consulta disse "cancelada" sem mandar o evento (Ruling T12 fix-1, literal). */
+  /**
+   * A consulta disse "cancelada" sem mandar o evento deste cupom (Ruling T12 fix-1, literal): a frase do `cancelando` sem pedido nosso e a
+   * resposta do clique "Consultar" nesse caso (fonte única; leva pré-final, item 9).
+   */
   cancelandoSemComprovante: 'A SEFAZ informa que este cupom foi cancelado, mas não mandou o comprovante. Consulte de novo mais tarde.',
-  /** Nova (a UX não fixa; Ruling T12 I2), no estilo da UX §6.3: a consulta diz "cancelada" sem o registro do cancelamento deste cupom. */
-  cancelamentoSemRegistro: (consultarAPartirDe: Date) =>
-    `A SEFAZ diz que este cupom foi cancelado, mas não mandou o registro do cancelamento. Consulte de novo a partir das ${horaSp(consultarAPartirDe)}.`,
   // "Testar a conexão" (UX 5.1, a linha sob o botão; o certificado, o 656 e as paradas usam as frases acima)
   statusOk: (respondeuEm: Date) => `A SEFAZ respondeu às ${horaSp(respondeuEm)}: o serviço está funcionando.`,
   statusSemContato: 'Não consegui falar com a SEFAZ. Nada foi enviado.',
@@ -194,6 +194,8 @@ export const FRASE_ERRO = {
   NFCE_CONFIG_INCOMPLETA: (itens: readonly string[]) => `Falta configurar o cupom fiscal: ${lista(itens)}.`,
   NFCE_SEM_ITENS: 'Adicione pelo menos um produto.',
   NFCE_ITEM_INDISPONIVEL: (produto: string, motivo: MotivoProduto) => `${produto} não pode entrar no cupom: ${MOTIVO_PRODUTO[motivo]}.`,
+  /** Nova (leva pré-final, item 2; a UX não fixa), no estilo da UX §6.3: um item que arredonda para 0 centavo (ex.: 0,0001 × R$ 0,01). */
+  NFCE_ITEM_SEM_VALOR: 'Cada produto do cupom tem de valer pelo menos R$ 0,01. Confira a quantidade.',
   NFCE_DESCONTO_INVALIDO: (valorProdutos: bigint) => `O desconto tem de ser menor que o valor dos produtos (${reais(valorProdutos)}).`,
   NFCE_PAGAMENTO_INSUFICIENTE: (soma: bigint, total: bigint) =>
     `A soma dos pagamentos (${reais(soma)}) é menor que o total (${reais(total)}).`,
@@ -241,6 +243,8 @@ export const FRASES_EMISSAO = {
   valorEmCentavos: 'Os valores da venda chegaram fora do formato. Recarregue a página e monte a venda de novo.',
   /** vNF de R$ 200.000,00 em diante (B.3). */
   valorMaximo: 'O total do cupom tem de ser menor que R$ 200.000,00.',
+  /** Nova (leva pré-final, item 2): preço negativo chegando aos totais (o cardápio já barra antes, como "sem preço de venda"). */
+  precoInvalido: 'O preço de algum produto não confere. Confira o preço de venda no cardápio.',
   /** A linha "A venda deste cupom não baixou o estoque: <frase>." quando o erro não é uma recusa da função do banco. */
   vendaErro: 'o servidor não conseguiu gravar a venda agora',
 } as const;
@@ -280,4 +284,99 @@ export const FRASES_LEITURA = {
     recusado: (codigo: number | null) =>
       `Recusado pela SEFAZ${codigo === null ? '' : ` (código ${codigo})`}: a SEFAZ não registrou este número (ainda pendente no Comanda).`,
   },
+} as const;
+
+// ===================================================================================================== cadastro (Tarefa 10)
+// Vinham de `frases-cadastro.ts` (juntadas aqui na leva pré-final, item 6: fonte única): a empresa no cupom, a numeração e o CSC, os
+// perfis, os produtos e a lista "Para ligar a emissão, falta:". As da UX §5.1–§5.7 são literais (a UX vale letra por letra); as que a
+// UX não fixa seguem a UX §6.3 ("não confere", "modo de teste", "valendo", "caixa de hoje"). Nunca valor de CSC, chave ou CPF numa frase.
+
+/** Os 11 códigos de `falta` (desenho §8.2; UX ponto 10.5), na ordem da tabela da UX 5.1. */
+export type CodigoFalta =
+  | 'certificado'
+  | 'cnpj'
+  | 'ie'
+  | 'crt'
+  | 'endereco'
+  | 'serie'
+  | 'csc'
+  | 'produto_pronto'
+  | 'teste_homologacao'
+  | 'lanca_venda'
+  | 'series_outro_sistema';
+
+const doAmbiente = (a: AmbienteSefaz) => (a === 'producao' ? 'valendo' : 'do modo de teste');
+
+/** Texto de cada item de "Para ligar a emissão, falta:" (UX 5.1, literal). */
+export const TEXTO_FALTA = {
+  certificado: 'Certificado digital válido, do mesmo CNPJ da empresa',
+  cnpj: 'CNPJ da empresa',
+  ie: 'Inscrição estadual',
+  crt: 'Regime da empresa',
+  endereco: 'Endereço da empresa (rua, número, bairro e CEP)',
+  serie: (a: AmbienteSefaz) => `Série e próximo número ${doAmbiente(a)}`,
+  csc: (a: AmbienteSefaz) => `Código de segurança (CSC) e número do código (IdCSC) ${doAmbiente(a)}`,
+  produto_pronto: 'Pelo menos 1 produto pronto para o cupom',
+  teste_homologacao: 'Um cupom autorizado e um cancelado no modo de teste',
+  lanca_venda: 'Resposta: quem conta no estoque as vendas emitidas aqui',
+  series_outro_sistema: 'Séries do caixa de hoje (ou “nenhum outro sistema”), diferentes da série daqui',
+} as const;
+
+/** Rótulo de cada campo de texto da empresa no cupom, para as frases de tamanho e de caractere. */
+export const ROTULO_EMITENTE = {
+  logradouro: 'A rua',
+  numero: 'O número',
+  complemento: 'O complemento',
+  bairro: 'O bairro',
+  municipio: 'O nome do município',
+  nat_op: 'A natureza da operação',
+  inf_cpl: 'O texto do pé do cupom',
+  resp_tec_contato: 'O nome do contato',
+  resp_tec_email: 'O e-mail',
+} as const;
+
+export const FRASES_CADASTRO = {
+  // UX 5.2 (literais)
+  ie: 'A inscrição estadual de SP tem 12 números.',
+  crt: 'Escolha o regime da empresa.',
+  cep: 'O CEP tem 8 números.',
+  codMunicipio: 'O código do município tem 7 números.',
+  telefone: 'Use DDD + número.',
+  natOpLonga: 'Use até 60 letras.',
+  infCplLongo: 'Use no máximo 500 letras.',
+  // UX 5.4 e 5.5 (literais)
+  serieOutroSistema: 'A série vai de 0 a 889.',
+  respTecTudoOuNada: 'Preencha os quatro campos, ou deixe todos vazios.',
+  respTecCnpj: 'Este CNPJ não confere.',
+  // UX 5.1 (literal)
+  trioMudou: 'O CNPJ ou a série mudou desde que a emissão foi ligada. Ligue de novo.',
+  // UX 5.6 e 5.7 (literais)
+  perfilSemNome: 'Dê um nome ao perfil.',
+  perfilRepetido: 'Já existe um perfil com este nome.',
+  semPerfil: 'Escolha o perfil fiscal.',
+  // plano, Review Focus 1 (literal)
+  quantidade: 'Quantidade com até 4 casas, ponto como separador e maior que zero.',
+  // novas, no estilo da UX §6.3
+  municipioDeSp: 'O município tem de ser de SP (código começando com 35).',
+  semMunicipio: 'Preencha o nome do município.',
+  semNatOp: 'Preencha a natureza da operação (por exemplo, VENDA).',
+  campoLongo: (rotulo: string, max: number) => `${rotulo} tem até ${max} letras.`,
+  caractere: (rotulo: string) => `${rotulo} não confere: a SEFAZ não aceita emoji nem símbolos.`,
+  email: 'Este e-mail não confere.',
+  semOutroComSeries: 'Marque “nenhum outro sistema” ou informe as séries do caixa de hoje, não os dois.',
+  /** A série do caixa de hoje igual à do Comanda (num dos dois ambientes): os dois emitiriam na mesma série (539). */
+  serieDoComanda: (serie: number) => `A série ${serie} é a do Comanda. O caixa de hoje precisa usar outra série.`,
+  tpRegimeIbscbs: 'O regime do IBS/CBS não confere.',
+  numeroForaDaFaixa: 'O número do próximo cupom vai de 1 a 999999999.',
+  /** Sem `CERTIFICADO_SECRET` o CSC não é gravado (a frase do certificado, para o código de segurança). */
+  semSegredo: 'O servidor ainda não está pronto para guardar o código de segurança. Fale com o suporte do Freela Comanda.',
+  certificadoSemCnpj: 'Preencha o CNPJ da empresa na aba Geral para conferir o certificado digital.',
+  certificadoOutraEmpresa: 'O certificado digital é de outra empresa (outro CNPJ). Envie o certificado da empresa em Configurações.',
+  perfilNomeLongo: 'O nome do perfil tem até 60 letras.',
+  perfilDesativado: 'Este perfil fiscal está desativado. Escolha outro.',
+  loteTamanho: 'Escolha de 1 a 500 produtos.',
+  produtoSumiu: 'Algum produto escolhido não existe mais. Recarregue a lista.',
+  tPag: 'Escolha a forma de pagamento.',
+  valorPagamento: 'O valor de cada pagamento tem de ser maior que zero.',
+  naoEncontrado: 'Não encontrado.',
 } as const;

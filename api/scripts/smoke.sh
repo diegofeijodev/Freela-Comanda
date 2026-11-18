@@ -710,7 +710,8 @@ emitir_corpo() { # $1=quantidade
 req POST $CF/cupons "$ADM" "$(emitir_corpo 1)"; check "cupom: emitir desligado: 409" 409 "$CODE"
 check "cupom: emitir desligado: code" NFCE_EMISSAO_DESLIGADA "$(j .error.code)"
 req POST $CF/cupons "$ADM" "$(emitir_corpo '0,350')"; check "cupom: quantidade com vírgula: 400" 400 "$CODE"
-check "cupom: quantidade com vírgula: frase" "Quantidade com até 4 casas, ponto como separador e maior que zero." "$(j .error.message | cut -d' ' -f2-)"
+# a frase literal no fio, sem o caminho do campo na frente ("itens.0.quantidade: …"; leva pré-final, item 8: quem responde é o serviço)
+check "cupom: quantidade com vírgula: frase" "Quantidade com até 4 casas, ponto como separador e maior que zero." "$(j .error.message)"
 req POST $CF/cupons "$ADM" "$(emitir_corpo 1 | jq -c '. + {entrega:true}')"; check "cupom: campo a mais no corpo: 400" 400 "$CODE"
 check "cupom: emitir desligado: nenhum cupom gravado" 0 "$(sql "select count(*) from nfce_cupons")"
 trava_nfce "depois do emitir"

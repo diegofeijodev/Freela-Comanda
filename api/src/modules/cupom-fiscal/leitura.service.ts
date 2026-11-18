@@ -15,7 +15,7 @@ import type { AmbienteSefaz } from '../sefaz/distribuicao.port';
 import { elementos, lerXml, texto, xmlDoElemento, type NoXml } from '../sefaz/xml-leitura';
 import { CupomCadastroService, PENDENTES_NO_BANCO } from './cadastro.service';
 import { danfeDoNfeProc, type Danfe } from './danfe';
-import { CupomEmissaoService, paraAcoes, r409, type CupomDetalhe } from './emissao.service';
+import { CupomEmissaoService, horasDe, paraAcoes, r409, type CupomDetalhe } from './emissao.service';
 import { FRASE_ERRO, FRASES_LEITURA, type AcaoDaFrase } from './frases';
 import {
   acoesDoCupom,
@@ -173,9 +173,16 @@ export function procEventoDoCancelamento(
   for (const e of envios) {
     if (e.servico !== 'cancelamento' || e.c_stat === null || !EVENTO_REGISTRADO.has(e.c_stat) || e.n_prot !== nProt) continue;
     if (e.xml_enviado === null || e.xml_retorno === null) continue;
-    for (const ret of elementosDoXml(e.xml_retorno, 'retEvento')) {
-      const proc = `<procEventoNFe xmlns="${NS_NFE}" versao="1.00">${e.xml_enviado}${xmlDoElemento(ret)}</procEventoNFe>`;
-      if (eventoDoCupom(proc, c, nProt)) return proc;
+    const rets = elementosDoXml(e.xml_retorno, 'retEvento');
+    // leva pré-final, item 10: o `retEvento` sem prefixo vai com os BYTES que a SEFAZ mandou (a assinatura dela, se houver, confere
+    // byte a byte); o re-serializado pelo leitor (`xmlDoElemento`) é o plano B: com prefixo de namespace, ou se os bytes não conferem
+    const originais = retEventosSemPrefixo(e.xml_retorno);
+    for (const [k, ret] of rets.entries()) {
+      const original = !ret.prefix && originais.length === rets.length ? [originais[k]] : [];
+      for (const pedaco of [...original, xmlDoElemento(ret)]) {
+        const proc = `<procEventoNFe xmlns="${NS_NFE}" versao="1.00">${e.xml_enviado}${pedaco}</procEventoNFe>`;
+        if (eventoDoCupom(proc, c, nProt)) return proc;
+      }
     }
   }
   for (const e of envios) {
@@ -186,6 +193,14 @@ export function procEventoDoCancelamento(
     }
   }
   return null;
+}
+
+/**
+ * Os `<retEvento>` SEM prefixo, como texto cru do retorno (na ordem). O que sai daqui não é lido sem conferência: o `procEventoNFe`
+ * montado passa pelo leitor de XML (`eventoDoCupom`) antes de valer. Com prefixo (`ns2:retEvento`) não casa: vai o re-serializado.
+ */
+function retEventosSemPrefixo(xml: string): string[] {
+  return xml.match(/<retEvento(?=[\s>])[^>]*>[\s\S]*?<\/retEvento>/g) ?? [];
 }
 
 /** Os elementos `nomeLocal` (com ou sem prefixo) de um XML guardado no diário; ilegível = nenhum. */
@@ -297,10 +312,13 @@ export class CupomLeituraService {
     if (f.atencao === true) e.push({ OR: PENDENTES_NO_BANCO });
     if (e.length > 0) where.AND = e;
 
+    // sempre com limite (leva pré-final, item 10): no refino só o `enviando` muda de lado (o de 2 min ou mais vale como sem resposta; o
+    // mais novo não é pendente), então o banco traz o limite mais os `enviando` do mesmo filtro, e o corte de verdade é depois
+    const extra = refina ? await this.prisma.nfce_cupons.count({ where: { AND: [where, { situacao: 'enviando' }] } }) : 0;
     const linhas = await this.prisma.nfce_cupons.findMany({
       where,
       orderBy: [{ criado_em: 'desc' }, { numero: 'desc' }],
-      ...(refina ? {} : { take: limite }),
+      take: limite + extra,
       select: {
         id: true,
         ambiente: true,
@@ -339,6 +357,7 @@ export class CupomLeituraService {
           venda_desfeita_em: l.venda_desfeita_em,
           enviadoEm: h?.enviadoEm ?? null,
           ultimaConsultaDaChave: h?.ultimaConsulta ?? null,
+          cancelamentos: h?.cancelamentos ?? 0,
         };
         return { l, para, situacao: situacaoEfetiva(para, agora) };
       })
@@ -379,21 +398,17 @@ export class CupomLeituraService {
     });
   }
 
-  /** O último envio de autorização e a última consulta de cada cupom (as horas que a situação efetiva e as ações usam). */
-  private async horasDosCupons(ids: string[]): Promise<Map<string, { enviadoEm: Date | null; ultimaConsulta: Date | null }>> {
-    const m = new Map<string, { enviadoEm: Date | null; ultimaConsulta: Date | null }>();
+  /** As horas de cada cupom que a situação efetiva e as ações usam (`horasDe`, a mesma regra do cupom e das travas). */
+  private async horasDosCupons(ids: string[]): Promise<Map<string, ReturnType<typeof horasDe>>> {
+    const m = new Map<string, ReturnType<typeof horasDe>>();
     if (ids.length === 0) return m;
     const envios = await this.prisma.nfce_envios.findMany({
-      where: { cupom_id: { in: ids }, servico: { in: ['autorizacao', 'consulta'] } },
-      select: { cupom_id: true, servico: true, iniciada_em: true },
+      where: { cupom_id: { in: ids }, servico: { in: ['autorizacao', 'consulta', 'cancelamento'] } },
+      select: { cupom_id: true, servico: true, iniciada_em: true, resultado: true },
     });
-    for (const e of envios) {
-      if (e.cupom_id === null) continue;
-      const h = m.get(e.cupom_id) ?? { enviadoEm: null, ultimaConsulta: null };
-      const k = e.servico === 'autorizacao' ? 'enviadoEm' : 'ultimaConsulta';
-      if (h[k] === null || e.iniciada_em > (h[k] as Date)) h[k] = e.iniciada_em;
-      m.set(e.cupom_id, h);
-    }
+    const porCupom = new Map<string, typeof envios>();
+    for (const e of envios) if (e.cupom_id !== null) porCupom.set(e.cupom_id, [...(porCupom.get(e.cupom_id) ?? []), e]);
+    for (const [id, es] of porCupom) m.set(id, horasDe(es));
     return m;
   }
 

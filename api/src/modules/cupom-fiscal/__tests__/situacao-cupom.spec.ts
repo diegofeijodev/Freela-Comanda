@@ -24,6 +24,7 @@ const cupom = (situacao: SituacaoCupom, extra: Partial<CupomParaAcoes> = {}): Cu
   venda_desfeita_em: null,
   enviadoEm: ENVIO,
   ultimaConsultaDaChave: null,
+  cancelamentos: 0,
   ...extra,
 });
 const autorizado = (extra: Partial<CupomParaAcoes> = {}) =>
@@ -70,6 +71,12 @@ describe('acoesDoCupom', () => {
     const depois = acoesDoCupom(c, sp('14:34:32'));
     expect(depois.acoes).toEqual(['consultar', 'imprimir']);
     expect(depois.cancelar_ate).toEqual(sp('14:34:31')); // a tela ainda mostra "terminou às 14h34" (UX 4.4)
+  });
+
+  it('"Cancelar" some depois do 3º pedido de cancelamento que saiu (Ruling T9 fix: a contagem é a do limite do servidor)', () => {
+    expect(acoesDoCupom(autorizado({ cancelamentos: 2 }), sp('14:10:00')).acoes).toContain('cancelar');
+    expect(acoesDoCupom(autorizado({ cancelamentos: 3 }), sp('14:10:00')).acoes).toEqual(['consultar', 'imprimir']);
+    expect(acoesDoCupom(autorizado({ cancelamentos: 3 }), sp('14:10:00')).cancelar_ate).toEqual(sp('14:34:31'));
   });
 
   it('autorizado com a venda pendente: lancar_venda', () => {
@@ -190,12 +197,13 @@ describe('tipoPendente (ponto 10.7)', () => {
   it.each<[string, CupomParaAcoes, ReturnType<typeof tipoPendente>]>([
     ['sem_resposta', cupom('sem_resposta'), 'sem_resposta'],
     ['enviando vencido', cupom('enviando'), 'sem_resposta'],
-    ['cancelando', autorizado({ situacao: 'cancelando' }), 'sem_resposta'],
+    // leva pré-final, item 13 (Ruling T15): o servidor separa o que a frase da UX 4.2 não cobre
+    ['cancelando', autorizado({ situacao: 'cancelando' }), 'cancelando'],
     ['nao_enviado', cupom('nao_enviado'), 'nao_saiu'],
     ['nao_consta', cupom('nao_consta'), 'nao_saiu'],
     ['rejeitado', cupom('rejeitado'), 'recusado'],
     ['autorizado com venda pendente', autorizado({ venda_lancada_em: null }), 'venda_pendente'],
-    ['cancelado com a venda ainda no estoque', autorizado({ situacao: 'cancelado' }), 'venda_pendente'],
+    ['cancelado com a venda ainda no estoque', autorizado({ situacao: 'cancelado' }), 'venda_a_desfazer'],
     ['autorizado em dia', autorizado(), null],
     ['enviando dentro dos 2 min', cupom('enviando', { enviadoEm: sp('14:09:00') }), null],
     ['denegado', cupom('denegado'), null],

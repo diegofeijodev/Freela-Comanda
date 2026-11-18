@@ -18,7 +18,7 @@ import { cabeNoEsquema, textoDoCupom } from '../../common/fiscal/texto-fiscal';
 import { XMLDSIG } from '../sefaz/assinatura-xml';
 import { dhSefaz } from '../sefaz/eventos-xml';
 import { FRASES_VALIDACAO } from './frases';
-import { calcularTotais, decimal2, quantidadeValida, type Totais, type TPag } from './totais';
+import { calcularTotais, decimal2, decimal4, quantidadeValida, type Totais, type TPag } from './totais';
 import { CRT_COM_CSOSN, CST_PIS_COFINS_NT, CST_PIS_COFINS_OUTR_ZERADO, type Crt } from './validacao-fiscal';
 
 export const NS_NFE = 'http://www.portalfiscal.inf.br/nfe';
@@ -161,12 +161,6 @@ function telefone(v: string | null | undefined, campo: string, obrigatorio: bool
   return codigo(v.replace(/[^0-9]/g, ''), /^[0-9]{6,14}$/, campo);
 }
 
-/** Quantidade validada → "2.0000" (sem zero à esquerda: o esquema não aceita "02.0000"). */
-function quantidade4(q: string): string {
-  const [inteiro, frac = ''] = q.split('.');
-  return `${BigInt(inteiro)}.${frac.padEnd(4, '0')}`;
-}
-
 /** Alíquota de 0 a 100 com até 2 casas → centésimos de ponto percentual (18.5 → 1850). */
 function aliquotaCentesimos(a: string | null): bigint {
   const t = aparado(a);
@@ -289,7 +283,8 @@ function conferirChave(d: DadosNfce, dhEmi: string): void {
 
 // --- montagem ------------------------------------------------------------------------------------------------------------------------
 
-function emitXml(e: EmitenteXml): string {
+/** O grupo `emit` e o código do município já conferido e aparado (o mesmo vai no `cMunFG`: nenhum dado entra cru). */
+function emitXml(e: EmitenteXml): { xml: string; cMun: string } {
   if (!cnpjValido(e.cnpj)) recusa(F.formato('o CNPJ da empresa'));
   if (![1, 2, 3, 4].includes(e.crt)) recusa(F.formato('o regime da empresa'));
   const xNome = txt(e.razaoSocial, 60, 2, 'a razão social da empresa');
@@ -304,12 +299,12 @@ function emitXml(e: EmitenteXml): string {
   const cep = codigo(e.cep, /^[0-9]{8}$/, 'o CEP da empresa');
   const fone = telefone(e.telefone, 'o telefone da empresa', false);
   const ie = codigo(e.ie, /^[0-9]{2,14}$/, 'a IE da empresa');
-  return (
+  const xml =
     `<emit><CNPJ>${e.cnpj}</CNPJ><xNome>${xNome}</xNome>${xFant === null ? '' : `<xFant>${xFant}</xFant>`}` +
     `<enderEmit><xLgr>${xLgr}</xLgr><nro>${nro}</nro>${xCpl === null ? '' : `<xCpl>${xCpl}</xCpl>`}<xBairro>${xBairro}</xBairro>` +
     `<cMun>${cMun}</cMun><xMun>${xMun}</xMun><UF>${uf}</UF><CEP>${cep}</CEP>${fone === null ? '' : `<fone>${fone}</fone>`}</enderEmit>` +
-    `<IE>${ie}</IE><CRT>${e.crt}</CRT></emit>`
-  );
+    `<IE>${ie}</IE><CRT>${e.crt}</CRT></emit>`;
+  return { xml, cMun };
 }
 
 /** Só com documento: CPF ou CNPJ + indIEDest 9; sem nome e sem endereço (desenho §5.2). */
@@ -332,7 +327,7 @@ function detXml(i: ItemXml, n: number, d: DadosNfce, t: Totais): { xml: string; 
   if (!Number.isInteger(i.origem) || i.origem < 0 || i.origem > 8) recusa(F.formato('a origem do produto'));
   const u = txt(i.unidade, 6, 1, 'a unidade do produto');
   const { bruto, desconto } = t.itens[n - 1];
-  const q = quantidade4(i.quantidade);
+  const q = decimal4(i.quantidade);
   const vUn = decimal2(i.valorUnitario);
   const icms = icmsDoItem(i, d.emitente.crt, bruto - desconto);
   const prod =
@@ -371,7 +366,7 @@ export function montarNfe(d: DadosNfce): string {
   if (!Number.isInteger(d.serie) || d.serie < 0 || d.serie > 889) recusa(F.formato('a série do cupom'));
   if (!Number.isInteger(d.numero) || d.numero < 1 || d.numero > 999999999) recusa(F.formato('o número do cupom'));
   const natOp = txt(d.natOp, 60, 1, 'a natureza da operação');
-  const emit = emitXml(d.emitente);
+  const { xml: emit, cMun } = emitXml(d.emitente);
   if (!(d.dhEmi instanceof Date) || Number.isNaN(d.dhEmi.getTime())) recusa(F.chave);
   const dhEmi = dhSefaz(d.dhEmi);
   conferirChave(d, dhEmi);
@@ -390,7 +385,7 @@ export function montarNfe(d: DadosNfce): string {
 
   const ide =
     `<ide><cUF>35</cUF><cNF>${cNF}</cNF><natOp>${natOp}</natOp><mod>65</mod><serie>${d.serie}</serie><nNF>${d.numero}</nNF>` +
-    `<dhEmi>${dhEmi}</dhEmi><tpNF>1</tpNF><idDest>1</idDest><cMunFG>${d.emitente.codMunicipio}</cMunFG><tpImp>4</tpImp>` +
+    `<dhEmi>${dhEmi}</dhEmi><tpNF>1</tpNF><idDest>1</idDest><cMunFG>${cMun}</cMunFG><tpImp>4</tpImp>` +
     `<tpEmis>1</tpEmis><cDV>${d.chave[43]}</cDV><tpAmb>${d.tpAmb}</tpAmb><finNFe>1</finNFe><indFinal>1</indFinal>` +
     `<indPres>1</indPres><procEmi>0</procEmi><verProc>${VER_PROC}</verProc></ide>`;
   // todos os campos obrigatórios do ICMSTot, zeros quando não há; sem vTotTrib (pergunta 3)

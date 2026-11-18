@@ -14,8 +14,7 @@ import {
   SalvarEmitenteDto,
   SalvarProdutoDto,
 } from '../cupom-fiscal.dto';
-import { FRASE_ERRO, FRASES_EMISSAO } from '../frases';
-import { FRASES_CADASTRO } from '../frases-cadastro';
+import { FRASE_ERRO, FRASES_CADASTRO, FRASES_EMISSAO } from '../frases';
 
 // Como o ValidationPipe global (whitelist + forbidNonWhitelisted + transform).
 const erros = <T extends object>(cls: new () => T, o: unknown) =>
@@ -93,13 +92,9 @@ describe('SalvarProdutoDto (PUT produtos/:itemCardapioId)', () => {
 });
 
 describe('peças do corpo da emissão (preparadas para a Tarefa 11)', () => {
-  it('quantidade: texto com ponto, até 4 casas e maior que zero (frase do Review Focus 1)', () => {
-    for (const quantidade of ['1', '0.350', '2.5', '9999999.9999']) {
+  it('quantidade: o DTO deixa passar, o serviço confere (a frase do Review Focus 1 vai ao fio sem "itens.0.quantidade:"; leva item 8)', () => {
+    for (const quantidade of ['1', '0.350', '0,350', '0', '-1', '1.23456', '', ' 1', 1, '0.0000']) {
       expect(erros(ItemDoCupomDto, { item_cardapio_id: uuid(1), quantidade })).toHaveLength(0);
-    }
-    for (const quantidade of ['0,350', '0', '-1', '1.23456', '', ' 1', 1, '0.0000']) {
-      const e = erros(ItemDoCupomDto, { item_cardapio_id: uuid(1), quantidade });
-      expect(frases(e)).toEqual([FRASES_CADASTRO.quantidade]);
     }
   });
   it('pagamento: forma da lista (01, 03, 04, 10, 11, 17) e valor em centavos inteiros > 0', () => {
@@ -128,10 +123,9 @@ describe('EmitirCupomDto (POST cupons)', () => {
     const { desconto_centavos: _d, consumidor_doc: _c, ...minimo } = corpo();
     expect(erros(EmitirCupomDto, minimo)).toHaveLength(0);
   });
-  it('itens e pagamentos são conferidos um a um (aninhados): "0,350" e valor 0 falham com a frase', () => {
-    const q = erros(EmitirCupomDto, corpo({ itens: [{ item_cardapio_id: uuid(1), quantidade: '0,350' }] }));
-    expect(q.map((x) => x.property)).toEqual(['itens']);
-    expect(frases(q)).toEqual([FRASES_CADASTRO.quantidade]);
+  it('itens e pagamentos são conferidos um a um (aninhados): valor 0 falha com a frase; "0,350" fica para o serviço', () => {
+    expect(erros(EmitirCupomDto, corpo({ itens: [{ item_cardapio_id: uuid(1), quantidade: '0,350' }] }))).toHaveLength(0);
+    expect(erros(EmitirCupomDto, corpo({ itens: [{ item_cardapio_id: 'x', quantidade: '1' }] })).map((x) => x.property)).toEqual(['itens']);
     const p = erros(EmitirCupomDto, corpo({ pagamentos: [{ t_pag: '01', valor_centavos: 0 }] }));
     expect(frases(p)).toContain(FRASES_CADASTRO.valorPagamento);
     expect(frases(erros(EmitirCupomDto, corpo({ pagamentos: [] })))).toContain(FRASES_CADASTRO.tPag);

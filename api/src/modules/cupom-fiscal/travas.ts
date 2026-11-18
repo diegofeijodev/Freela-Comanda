@@ -32,7 +32,30 @@ export const ESPERA_CANCELAMENTO_MS = 120_000;
 const JANELA_MS = 60 * 60_000;
 const JANELA_656_MS = 24 * 60 * 60_000;
 
-export interface EstadoTravas {
+/**
+ * O que vem do cupom e liga os limites da consulta e do cancelamento. OBRIGATÓRIOS (Ruling T9 fix, leva pré-final item 5): um chamador
+ * que esquecesse um deles desligaria um limite sem perceber. Emissão e "Testar a conexão" passam `SEM_CUPOM`, de propósito.
+ */
+export interface TravasDoCupom {
+  /** Consulta: o início da espera (envio de autorização, ou pedido de cancelamento em `cancelando`; ver `inicioDaEspera`). */
+  enviadoEm: Date | null;
+  /** Consulta: a última consulta desta chave. */
+  ultimaConsultaDaChave: Date | null;
+  /** Evento: os pedidos de cancelamento deste cupom que saíram (ou podem ter saído: o aberto conta); a falha antes de enviar não conta. */
+  cancelamentosDoCupom: number;
+  /** Evento: `iniciada_em` do último desses pedidos. */
+  ultimoCancelamentoDoCupom: Date | null;
+}
+
+/** Emissão e "Testar a conexão": nenhum cupom em andamento (os limites da consulta e do cancelamento não se aplicam). */
+export const SEM_CUPOM: TravasDoCupom = Object.freeze({
+  enviadoEm: null,
+  ultimaConsultaDaChave: null,
+  cancelamentosDoCupom: 0,
+  ultimoCancelamentoDoCupom: null,
+});
+
+export interface EstadoTravas extends TravasDoCupom {
   situacao: SituacaoAmbiente;
   bloqueado_ate: Date | null;
   /** `iniciada_em` dos envios com `rejeicao = true` (todos os serviços) no ambiente; basta a última hora, em qualquer ordem. */
@@ -40,14 +63,6 @@ export interface EstadoTravas {
   /** `iniciada_em` das consultas no ambiente; basta a última hora, em qualquer ordem. */
   consultas: Date[];
   ultimo_status_em: Date | null;
-  /** Só na consulta: o início da espera (envio de autorização, ou pedido de cancelamento em `cancelando`; ver `inicioDaEspera`). */
-  enviadoEm?: Date | null;
-  /** Só na consulta: a última consulta desta chave. */
-  ultimaConsultaDaChave?: Date | null;
-  /** Só no evento: quantos pedidos de cancelamento este cupom já fez (`nfce_envios`, serviço `cancelamento`, qualquer resultado). */
-  cancelamentosDoCupom?: number;
-  /** Só no evento: `iniciada_em` do último pedido de cancelamento deste cupom. */
-  ultimoCancelamentoDoCupom?: Date | null;
 }
 
 export type CodigoTrava =
@@ -73,6 +88,14 @@ function tetoAte(marcas: readonly Date[], teto: number, agora: Date): Date | nul
     .filter((t) => t > inicio)
     .sort((a, b) => a - b);
   return na.length < teto ? null : new Date(na[na.length - teto] + JANELA_MS);
+}
+
+/**
+ * O teto de 10 recusas por hora atingido: até quando a emissão e o "Testar a conexão" ficam barrados (o mesmo cálculo de `podeChamar`);
+ * null = há folga. Para a tela avisar ANTES de enviar (UX 2.1, linha 7; leva pré-final, item 11).
+ */
+export function recusasAte(recusas: readonly Date[], agora: Date): Date | null {
+  return tetoAte(recusas, TETO_RECUSAS_HORA, agora);
 }
 
 /** A mais tarde das esperas que ainda não venceram; null = nenhuma. */
@@ -114,7 +137,7 @@ export function podeChamar(e: EstadoTravas, servico: ServicoNfce, agora: Date): 
     if (ate !== null) return { ok: false, code: 'NFCE_CONSULTA_CEDO', ate };
   }
   if (servico === 'evento') {
-    if ((e.cancelamentosDoCupom ?? 0) >= MAX_CANCELAMENTOS) return { ok: false, code: 'NFCE_LIMITE_CANCELAMENTOS', ate: null };
+    if (e.cancelamentosDoCupom >= MAX_CANCELAMENTOS) return { ok: false, code: 'NFCE_LIMITE_CANCELAMENTOS', ate: null };
     const ate = e.ultimoCancelamentoDoCupom ? mais(e.ultimoCancelamentoDoCupom, ESPERA_CANCELAMENTO_MS) : null;
     if (ate !== null && ate > agora) return { ok: false, code: 'NFCE_CANCELAMENTO_CEDO', ate };
   }

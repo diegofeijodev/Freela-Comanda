@@ -1,7 +1,7 @@
 // Cadastro do cupom fiscal (NFC-e), rotas /v1/cupom-fiscal de leitura e cadastro: situação ("Para ligar a emissão, falta:" e pendentes),
 // empresa no cupom, numeração e CSC de cada ambiente, perfis fiscais e dados do cupom de cada produto. Tudo só do admin e tudo funciona com
 // o servidor desligado (`NFCE_AMBIENTE` vazia): nada aqui fala com a SEFAZ.
-// Valida ANTES de gravar, com as frases de `frases.ts` / `frases-cadastro.ts` (um CHECK do banco que dispara vira 500): códigos aparados,
+// Valida ANTES de gravar, com as frases de `frases.ts` (um CHECK do banco que dispara vira 500): códigos aparados,
 // máscara de NCM/CEST/GTIN/CEP/IE/telefone limpa, "" e só espaços = NULL. As regras do regime (CSOSN × CST × CFOP) são de
 // `validacao-fiscal.ts`, com o CRT de agora.
 // O CSC só entra cifrado (`csc.ts`, `CERTIFICADO_SECRET`, rótulo `nfce-csc`); as respostas são montadas campo a campo (nunca a linha do
@@ -33,11 +33,10 @@ import type {
   SalvarEmitenteDto,
   SalvarProdutoDto,
 } from './cupom-fiscal.dto';
-import { FRASE_ERRO } from './frases';
-import { FRASES_CADASTRO, ROTULO_EMITENTE, TEXTO_FALTA, type CodigoFalta } from './frases-cadastro';
+import { FRASE_ERRO, FRASES_CADASTRO, ROTULO_EMITENTE, TEXTO_FALTA, type CodigoFalta } from './frases';
 import { tipoPendente, type SituacaoCupom, type TipoPendente } from './situacao-cupom';
 import { precoCentavos } from './totais';
-import type { SituacaoAmbiente } from './travas';
+import { recusasAte, type SituacaoAmbiente } from './travas';
 import {
   erroDoItemFiscal,
   erroDoPerfil,
@@ -63,6 +62,8 @@ export interface SituacaoCupomFiscal {
   situacao: SituacaoAmbiente;
   mensagem: string | null;
   bloqueado_ate: Date | null;
+  /** O teto de 10 recusas da SEFAZ na última hora atingido: o envio volta a esta hora (UX 2.1, linha 7); null = há folga. */
+  recusas_ate: Date | null;
   serie: number | null;
   proximo_numero: number;
   falta: ItemFalta[];
@@ -331,11 +332,15 @@ export class CupomCadastroService {
     const servidor = this.ambienteDoServidor();
     const ambiente: AmbienteSefaz = servidor === 'desligado' ? 'producao' : servidor;
     const [amb, emitente, cnpj] = await Promise.all([this.lerAmbiente(ambiente), this.lerEmitente(), this.cnpjDaEmpresa()]);
-    const [certificado, produtos, pendentes, testeFeito] = await Promise.all([
+    const [certificado, produtos, pendentes, testeFeito, recusas] = await Promise.all([
       this.certificadoInfo(cnpj, agora),
       this.linhasDeProdutos(crtDe(emitente)),
       this.pendentes(ambiente, agora),
       servidor === 'producao' && cnpj !== null ? this.testeHomologacao(cnpj) : Promise.resolve(false),
+      this.prisma.nfce_envios.findMany({
+        where: { ambiente, rejeicao: true, iniciada_em: { gte: new Date(agora.getTime() - 60 * 60_000) } },
+        select: { iniciada_em: true },
+      }),
     ]);
     const trioOk = this.trioOk(amb, cnpj);
     return {
@@ -345,6 +350,10 @@ export class CupomCadastroService {
       situacao: amb.situacao as SituacaoAmbiente,
       mensagem: amb.emissao_ligada && !trioOk ? F.trioMudou : amb.mensagem,
       bloqueado_ate: amb.bloqueado_ate,
+      recusas_ate: recusasAte(
+        recusas.map((r) => r.iniciada_em),
+        agora,
+      ),
       serie: amb.serie,
       proximo_numero: Number(amb.proximo_numero),
       falta: this.falta({
@@ -475,7 +484,6 @@ export class CupomCadastroService {
             ambiente: l.ambiente as AmbienteSefaz,
             situacao: l.situacao as SituacaoCupom,
             enviadoEm: enviadoEm.get(l.id) ?? null,
-            ultimaConsultaDaChave: null,
           },
           agora,
         ),
@@ -740,8 +748,9 @@ export class CupomCadastroService {
         throw new ConflictException({ code: 'NFCE_SERIE_COM_PENDENTES', message: FRASE_ERRO.NFCE_SERIE_COM_PENDENTES });
       }
       const novaSerie = trocaSerie ? serie : amb.serie;
-      // série nova sem número informado começa no 1 (UX 5.3), sem herdar o contador da velha; série já usada = 422 abaixo
-      const novoNumero = numero !== null ? BigInt(numero) : trocaSerie ? 1n : amb.proximo_numero;
+      // TROCA de série sem número informado começa no 1 (UX 5.3), sem herdar o contador da velha; a 1ª série cadastrada (sem série
+      // antes) fica com o número já salvo (leva pré-final, item 6); série já usada = 422 abaixo
+      const novoNumero = numero !== null ? BigInt(numero) : trocaSerie && amb.serie !== null ? 1n : amb.proximo_numero;
       const mudaNumero = novoNumero !== amb.proximo_numero;
       if ((trocaSerie || mudaNumero) && novaSerie !== null) {
         const ultimo = await this.ultimoUsado(tx, a, novaSerie);

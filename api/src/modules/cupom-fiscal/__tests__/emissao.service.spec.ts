@@ -13,8 +13,7 @@ import { sefazErro, type SefazErro } from '../../sefaz/sefaz-erro';
 import { CupomCadastroService, type Autor } from '../cadastro.service';
 import { cifrarCsc } from '../csc';
 import { CupomEmissaoService, pedidoHash, type VendaParaCupom } from '../emissao.service';
-import { FRASE_ERRO, FRASE_RETORNO, FRASES_EMISSAO } from '../frases';
-import { FRASES_CADASTRO } from '../frases-cadastro';
+import { FRASE_ERRO, FRASE_RETORNO, FRASES_CADASTRO, FRASES_EMISSAO } from '../frases';
 import { linhaCom, montarPrismaCupom, type TabelasCupom } from './prisma-cupom.falso';
 import type { Atalho } from '../retornos';
 import type { SituacaoCupom } from '../situacao-cupom';
@@ -394,6 +393,22 @@ describe('validação antes da T1: a porta não é chamada e nenhum cupom é cri
     await nada(m);
   });
 
+  it("item que arredonda para 0 centavo ('0.0001' de R$ 25,00) → 422 NFCE_ITEM_SEM_VALOR, não a frase do desconto", async () => {
+    const m = montar();
+    const { espeto } = await pronto(m);
+    const v = venda(espeto.id, {
+      itens: [{ item_cardapio_id: espeto.id, quantidade: '0.0001' }],
+      pagamentos: [{ t_pag: '01', valor_centavos: 100 }],
+      total_esperado_centavos: 0,
+    });
+    expect(await falha(m.svc.emitir(v, EU, AGORA))).toEqual({
+      status: 422,
+      code: 'NFCE_ITEM_SEM_VALOR',
+      message: FRASE_ERRO.NFCE_ITEM_SEM_VALOR,
+    });
+    await nada(m);
+  });
+
   it('montagem recusada (razão social vazia) → 422 NFCE_CUPOM_INVALIDO dentro da T1, desfeita: nada reservado', async () => {
     const m = montar();
     const { espeto } = await pronto(m);
@@ -580,6 +595,9 @@ describe('sem resposta, consulta e descarte', () => {
     });
     const r3 = await m.svc.descartar(id, '  Venda desfeita  ', EU, mais(AGORA, 3 * MIN));
     expect(r3).toMatchObject({ situacao: 'descartado', descarte_motivo: 'Venda desfeita', acoes: [] });
+    // quem descartou (Ruling T14; leva pré-final, item 11): "Descartado às … por Diego"
+    expect(r3.descartado_por_nome).toBe('Diego');
+    expect(cupomDe(m.t, id)).toMatchObject({ descartado_por: EU.id, descartado_por_nome: 'Diego' });
 
     const r4 = await m.svc.emitir(venda(espeto.id), EU, mais(AGORA, 5 * MIN));
     expect(r4.cupom).toMatchObject({ situacao: 'autorizado', numero: 1 });
@@ -698,6 +716,9 @@ describe('rodada 1 (I1): a autorização vale para a tentativa do digVal', () =>
     const c = cupomDe(m.t, r1.cupom.id);
     expect(c.xml_autorizado).toContain(t1);
     expect(c.xml_autorizado).not.toContain(t2);
+    // leva pré-final, item 7: o dh_emi é o da tentativa autorizada (a 1ª, às 14h30), não o do reenvio (14h31): a venda cai no dia certo
+    expect(c.dh_emi).toEqual(AGORA);
+    expect(t1).toContain(`<dhEmi>${dhSefaz(AGORA)}</dhEmi>`);
   });
 
   it('consulta com um digVal que não casa com nenhuma tentativa → resposta inválida: sem_resposta, número preso, sem nfeProc, log de erro', async () => {
@@ -839,6 +860,22 @@ describe('série em uso (539)', () => {
     expect(ambienteDe(m.t, 'homologacao')).toMatchObject({ situacao: 'ok', mensagem: null, emissao_ligada: true });
     const r2 = await m.svc.emitir(venda(espeto.id), EU, mais(AGORA, 4 * MIN));
     expect(r2.cupom.numero).toBe(2);
+  });
+
+  it('539 de um reenvio quando OUTRA tentativa do mesmo cupom já tem nota (virada do mês): a emissão não para; número preso, sem_resposta', async () => {
+    const m = montar();
+    const { espeto } = await pronto(m);
+    responder(m, aut('ret-autorizacao-386.xml'), recusaNota(539, 'Rejeição: Duplicidade de NF-e com diferença na Chave de Acesso'));
+    const r1 = await m.svc.emitir(venda(espeto.id), EU, AGORA);
+    expect(r1.cupom.situacao).toBe('rejeitado');
+    // a resposta atrasada da 1ª tentativa (outra chave) foi gravada no diário pela T2 dela (`autorizacao_fora_da_vez`)
+    Object.assign(m.t.nfce_envios[0], { c_stat: 100, n_prot: '135260000000123', dig_val: digestDoPedido(m.porta.chamadas[0].corpo) });
+    const r2 = await m.svc.reenviar(r1.cupom.id, EU, mais(AGORA, MIN));
+    expect(r2).toMatchObject({ situacao: 'sem_resposta', numero_reaproveitavel: false, recusa: null, atalho: null });
+    expect(ambienteDe(m.t, 'homologacao')).toMatchObject({ situacao: 'ok', mensagem: null });
+    expect(m.t.nfce_ambientes_historico.filter((h) => h.evento === 'parada_automatica')).toHaveLength(0);
+    expect(m.t.nfce_envios[1]).toMatchObject({ erro_code: 'SEFAZ_RESPOSTA_INVALIDA', rejeicao: true });
+    expect(logs.some((l) => l.includes('serie_em_uso_pela_propria_nota'))).toBe(true);
   });
 
   it('número reaproveitado que volta 539 não volta a ser escolhido (nem pelo descarte antigo dele)', async () => {

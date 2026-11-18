@@ -3,7 +3,7 @@
 // `cancelar_ate` prontos (a contagem não depende do relógio do celular). "Enviado sem resposta" NUNCA leva a reenvio: só a consulta.
 
 import type { AmbienteSefaz } from '../sefaz/distribuicao.port';
-import { ESPERA_CONSULTA_MS, MAX_ENVIOS } from './travas';
+import { ESPERA_CONSULTA_MS, MAX_CANCELAMENTOS, MAX_ENVIOS } from './travas';
 
 /** Os 10 valores do CHECK de `nfce_cupons.situacao`. */
 export type SituacaoCupom =
@@ -19,7 +19,11 @@ export type SituacaoCupom =
   | 'descartado';
 export type AcaoCupom = 'enviar_de_novo' | 'consultar' | 'cancelar' | 'descartar' | 'lancar_venda' | 'imprimir';
 export type VendaEstoque = 'lancada' | 'pendente' | 'desfeita' | 'desfazer_pendente' | 'teste' | 'nao_lanca';
-export type TipoPendente = 'sem_resposta' | 'nao_saiu' | 'recusado' | 'venda_pendente';
+/**
+ * O tipo do 1º pendente, para a frase da faixa (UX 4.2). `cancelando` e `venda_a_desfazer` (o cupom cancelado com a venda ainda no
+ * estoque) vêm separados de `sem_resposta` e de `venda_pendente`, porque a frase da UX deles não serve (Ruling T15).
+ */
+export type TipoPendente = 'sem_resposta' | 'cancelando' | 'nao_saiu' | 'recusado' | 'venda_pendente' | 'venda_a_desfazer';
 
 /** O botão e o servidor aceitam cancelar até a autorização (`dhRecbto`) + 29 min; a SEFAZ aceita 30 (1 min de folga, §5.4). */
 export const PRAZO_CANCELAR_MS = 29 * 60_000;
@@ -42,6 +46,11 @@ export interface CupomParaAcoes {
   enviadoEm: Date | null;
   /** `iniciada_em` da última consulta desta chave. */
   ultimaConsultaDaChave: Date | null;
+  /**
+   * Pedidos de cancelamento deste cupom que saíram (o aberto conta; a falha antes de enviar não), a MESMA contagem do limite do servidor
+   * (`TravasDoCupom.cancelamentosDoCupom`): do 3º em diante a tela não mostra "Cancelar" (Ruling T9 fix).
+   */
+  cancelamentos: number;
 }
 
 const mais = (d: Date, ms: number) => new Date(d.getTime() + ms);
@@ -112,7 +121,7 @@ export function acoesDoCupom(
       break;
     case 'autorizado':
       acoes.add('imprimir').add('consultar');
-      if (cancelar_ate !== null && agora <= cancelar_ate) acoes.add('cancelar');
+      if (cancelar_ate !== null && agora <= cancelar_ate && c.cancelamentos < MAX_CANCELAMENTOS) acoes.add('cancelar');
       if (vendaEstoque(c) === 'pendente') acoes.add('lancar_venda');
       break;
     case 'cancelado':
@@ -132,12 +141,16 @@ export function acoesDoCupom(
   return { acoes: ORDEM.filter((a) => acoes.has(a)), consultar_a_partir_de, cancelar_ate };
 }
 
-/** O tipo do cupom na faixa de pendentes (ponto 10.7): `cancelando` e o `enviando` vencido contam como sem resposta. */
-export function tipoPendente(c: CupomParaAcoes, agora: Date): TipoPendente | null {
+/** O tipo do cupom na faixa de pendentes (ponto 10.7): o `enviando` vencido conta como sem resposta; `cancelando` tem o seu tipo. */
+export function tipoPendente(
+  c: Pick<CupomParaAcoes, 'situacao' | 'enviadoEm' | 'ambiente' | 'lanca_venda' | 'venda_lancada_em' | 'venda_desfeita_em'>,
+  agora: Date,
+): TipoPendente | null {
   const s = situacaoEfetiva(c, agora);
-  if (s === 'sem_resposta' || s === 'cancelando') return 'sem_resposta';
+  if (s === 'sem_resposta') return 'sem_resposta';
+  if (s === 'cancelando') return 'cancelando';
   if (s === 'nao_enviado' || s === 'nao_consta') return 'nao_saiu';
   if (s === 'rejeitado') return 'recusado';
   const v = vendaEstoque(c);
-  return v === 'pendente' || v === 'desfazer_pendente' ? 'venda_pendente' : null;
+  return v === 'pendente' ? 'venda_pendente' : v === 'desfazer_pendente' ? 'venda_a_desfazer' : null;
 }

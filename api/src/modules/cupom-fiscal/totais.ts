@@ -3,7 +3,16 @@
 
 export type TPag = '01' | '03' | '04' | '10' | '11' | '17';
 
-export type ErroTotais = 'SEM_ITENS' | 'DESCONTO_INVALIDO' | 'PAGAMENTO_INSUFICIENTE' | 'TROCO_INVALIDO' | 'VALOR_MAXIMO';
+export type ErroTotais =
+  | 'SEM_ITENS'
+  | 'QUANTIDADE_INVALIDA'
+  | 'PRECO_INVALIDO'
+  | 'PAGAMENTO_INVALIDO'
+  | 'ITEM_SEM_VALOR'
+  | 'DESCONTO_INVALIDO'
+  | 'PAGAMENTO_INSUFICIENTE'
+  | 'TROCO_INVALIDO'
+  | 'VALOR_MAXIMO';
 
 export type Totais = {
   produtos: bigint;
@@ -24,7 +33,7 @@ export function quantidadeValida(q: string): boolean {
   return quantidadeMilesimos(q) > 0n;
 }
 
-/** Quantidade em décimos de milésimo (4 casas). Assume `q` já validada. */
+/** Quantidade em décimos de milésimo (1/10000; 4 casas). Assume `q` já validada (`quantidadeValida`). */
 function quantidadeMilesimos(q: string): bigint {
   const [inteiro, frac = ''] = q.split('.');
   return BigInt(inteiro + frac.padEnd(4, '0'));
@@ -64,7 +73,13 @@ export function calcularTotais(
   pagamentos: { tPag: TPag; valor: bigint }[],
 ): Totais | { erro: ErroTotais } {
   if (itens.length === 0) return { erro: 'SEM_ITENS' };
+  // as guardas vêm antes de qualquer conta: entrada torta é erro de regra (com frase), nunca o BigInt lançando
+  if (itens.some((i) => !quantidadeValida(i.quantidade))) return { erro: 'QUANTIDADE_INVALIDA' };
+  if (itens.some((i) => typeof i.precoCentavos !== 'bigint' || i.precoCentavos < 0n)) return { erro: 'PRECO_INVALIDO' };
+  if (pagamentos.some((p) => typeof p.valor !== 'bigint' || p.valor <= 0n)) return { erro: 'PAGAMENTO_INVALIDO' };
   const brutos = itens.map((i) => valorItemCentavos(i.quantidade, i.precoCentavos));
+  // item que arredonda para 0 centavo não entra no cupom (a montagem recusa vProd zero): sem isto, todos zerados sairiam como desconto
+  if (brutos.some((b) => b <= 0n)) return { erro: 'ITEM_SEM_VALOR' };
   const produtos = brutos.reduce((a, v) => a + v, 0n);
   if (desconto < 0n || desconto >= produtos) return { erro: 'DESCONTO_INVALIDO' };
   const total = produtos - desconto;
@@ -78,15 +93,16 @@ export function calcularTotais(
   return { produtos, desconto, total, troco, itens: brutos.map((bruto, i) => ({ bruto, desconto: descontos[i] })) };
 }
 
-/** Centavos -> "24.00". */
+/** Centavos (0 ou mais) -> "24.00". Negativo não é valor de cupom: lança. */
 export function decimal2(c: bigint): string {
-  const neg = c < 0n;
-  const s = (neg ? -c : c).toString().padStart(3, '0');
-  return `${neg ? '-' : ''}${s.slice(0, -2)}.${s.slice(-2)}`;
+  if (c < 0n) throw new Error('Valor negativo não entra no cupom.');
+  const s = c.toString().padStart(3, '0');
+  return `${s.slice(0, -2)}.${s.slice(-2)}`;
 }
 
-/** Quantidade validada -> "2.0000". */
+/** Quantidade (`quantidadeValida`) -> "2.0000", sem zero à esquerda ("02" -> "2.0000": o esquema não aceita "02.0000"). Fora do formato: lança. */
 export function decimal4(q: string): string {
+  if (!quantidadeValida(q)) throw new Error('Quantidade fora do formato.');
   const [inteiro, frac = ''] = q.split('.');
-  return `${inteiro}.${frac.padEnd(4, '0')}`;
+  return `${BigInt(inteiro)}.${frac.padEnd(4, '0')}`;
 }

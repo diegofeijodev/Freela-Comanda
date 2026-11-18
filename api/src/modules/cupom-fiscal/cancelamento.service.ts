@@ -38,6 +38,7 @@ import {
   erroDaTrava,
   eventoDoCupom,
   fechamento,
+  horasDe,
   nfce503,
   paraAcoes,
   r409,
@@ -89,17 +90,15 @@ export class CupomCancelamentoService {
       const c = await this.emissao.cupomOu404(tx, id);
       const para = await this.conferirSituacao(tx, c, agora);
       const pedidos = await this.pedidosDoCupom(tx, id);
-      // nota 2 do controlador: só o pedido que saiu (ou pode ter saído: o aberto conta) gasta uma das 3 e abre a espera de 2 min
-      const sairam = pedidos.filter((e) => e.resultado !== 'falha_antes_de_enviar');
-      const estado = {
-        ...(await this.emissao.estadoTravas(tx, a, amb, agora, {
-          enviadoEm: inicioDaEspera(para),
-          ultimaConsultaDaChave: para.ultimaConsultaDaChave,
-        })),
-        // nota 1: sempre presentes (sem eles os limites do cancelamento somem sem erro)
-        cancelamentosDoCupom: sairam.length,
-        ultimoCancelamentoDoCupom: sairam.reduce<Date | null>((u, e) => (u === null || e.iniciada_em > u ? e.iniciada_em : u), null),
-      };
+      // nota 2 do controlador: só o pedido que saiu (ou pode ter saído: o aberto conta) gasta uma das 3 e abre a espera de 2 min (a
+      // mesma contagem de `horasDe`, que esconde "Cancelar" na tela do 3º em diante)
+      const h = horasDe(pedidos.map((e) => ({ ...e, servico: 'cancelamento' })));
+      const estado = await this.emissao.estadoTravas(tx, a, amb, agora, {
+        enviadoEm: inicioDaEspera(para),
+        ultimaConsultaDaChave: para.ultimaConsultaDaChave,
+        cancelamentosDoCupom: h.cancelamentos,
+        ultimoCancelamentoDoCupom: h.ultimoCancelamento,
+      });
       const trava = podeChamar(estado, 'evento', agora);
       if (!trava.ok) throw erroDaTrava(trava, amb);
 

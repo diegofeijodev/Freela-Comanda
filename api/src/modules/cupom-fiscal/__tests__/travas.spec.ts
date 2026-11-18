@@ -10,7 +10,9 @@ import {
   type EstadoTravas,
   ESPERA_CANCELAMENTO_MS,
   MAX_CANCELAMENTOS,
+  SEM_CUPOM,
 } from '../travas';
+import { horasDe } from '../emissao.service';
 import { FRASE_ERRO } from '../frases';
 import { acoesDoCupom, inicioDaEspera, type CupomParaAcoes } from '../situacao-cupom';
 
@@ -27,6 +29,8 @@ const livre = (extra: Partial<EstadoTravas> = {}): EstadoTravas => ({
   ultimo_status_em: null,
   enviadoEm: null,
   ultimaConsultaDaChave: null,
+  cancelamentosDoCupom: 0,
+  ultimoCancelamentoDoCupom: null,
   ...extra,
 });
 const vezes = (n: number, d: (i: number) => Date) => Array.from({ length: n }, (_, i) => d(i));
@@ -108,6 +112,7 @@ describe('podeChamar', () => {
       venda_desfeita_em: null,
       enviadoEm: min(-3),
       ultimaConsultaDaChave: null,
+      cancelamentos: 0,
     };
     expect(acoesDoCupom(cupom, AGORA).acoes).toEqual(['consultar']);
     const amb = livre({ situacao: 'parada_serie_em_uso', recusas: vezes(10, () => min(-5)), consultas: vezes(5, () => min(-20)) });
@@ -219,6 +224,25 @@ describe('podeChamar', () => {
 
 // Rodada de correção 1 (Important): o cancelamento tem limite próprio por cupom — 1 pedido a cada 2 min e no máximo 3. As rejeições dele
 // contam no teto da hora (`acaoCancelamento` marca `rejeicao`), mas o teto não o barra (o prazo de 30 min não pode se perder).
+describe('horasDe: a contagem dos pedidos de cancelamento (a mesma do limite e do botão)', () => {
+  it('a falha antes de enviar não conta; o pedido aberto (sem resultado) conta; a última hora é a dos que contam', () => {
+    const h = horasDe([
+      { servico: 'cancelamento', iniciada_em: min(-9), resultado: 'falha_antes_de_enviar' },
+      { servico: 'cancelamento', iniciada_em: min(-7), resultado: 'rejeitado' },
+      { servico: 'cancelamento', iniciada_em: min(-5), resultado: null },
+      { servico: 'cancelamento', iniciada_em: min(-1), resultado: 'falha_antes_de_enviar' },
+      { servico: 'autorizacao', iniciada_em: min(-20), resultado: 'autorizado' },
+      { servico: 'consulta', iniciada_em: min(-15), resultado: 'ok' },
+    ]);
+    expect(h).toEqual({ enviadoEm: min(-20), ultimaConsulta: min(-15), cancelamentos: 2, ultimoCancelamento: min(-5) });
+  });
+
+  it('SEM_CUPOM (emissão e status) não liga limite nenhum do cupom', () => {
+    expect(SEM_CUPOM).toEqual({ enviadoEm: null, ultimaConsultaDaChave: null, cancelamentosDoCupom: 0, ultimoCancelamentoDoCupom: null });
+    expect(podeChamar({ ...livre(), ...SEM_CUPOM }, 'autorizacao', AGORA)).toEqual({ ok: true });
+  });
+});
+
 describe('podeChamar: limite do cancelamento por cupom', () => {
   it('constantes', () => {
     expect(MAX_CANCELAMENTOS).toBe(3);

@@ -8,7 +8,9 @@ import { FastifyReply } from 'fastify';
  * Erros do Postgres que o protótipo mostrava na tela (o Supabase repassava a mensagem) chegam aqui como erros do Prisma:
  *  - `raise exception` das funções de regra (SQLSTATE P0001) → 400 `REGRA` com o MESMO texto ("Já existe um inventário em
  *    andamento", "Há itens sem quantidade final"...);
- *  - unique (P2002 / 23505) → 409 `DUPLICADO`; chave estrangeira (P2003 / 23503) → 409 `EM_USO`.
+ *  - unique (P2002 / 23505) → 409 `DUPLICADO`; chave estrangeira (P2003 / 23503) → 409 `EM_USO`;
+ *  - outra violação de restrição (CHECK, NOT NULL…) → 500 genérico, e o log leva só o SQLSTATE e o nome da restrição, nunca a
+ *    mensagem do banco (a linha recusada pode ter o CPF do consumidor do cupom fiscal: `restricaoDoBanco`).
  */
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
@@ -33,7 +35,13 @@ export class HttpExceptionFilter implements ExceptionFilter {
     }
     const pg = postgresError(exception);
     if (pg) return pg;
-    if (exception instanceof Error) this.logger.error(exception.message, exception.stack);
+    const r = restricaoDoBanco(exception);
+    if (r) {
+      // nem a mensagem nem a pilha (a 1ª linha da pilha repete a mensagem): a linha recusada pode trazer o CPF do consumidor
+      this.logger.error(
+        `Violação de restrição do banco (SQLSTATE ${r.sqlstate}${r.restricao ? `, ${r.restricao}` : ''}); a mensagem do banco não vai para o log.`,
+      );
+    } else if (exception instanceof Error) this.logger.error(exception.message, exception.stack);
     return { status: HttpStatus.INTERNAL_SERVER_ERROR, code: 'INTERNAL_ERROR', message: 'Erro interno do servidor' };
   }
 }
@@ -53,8 +61,34 @@ export function postgresError(exception: unknown): { status: number; code: strin
   return null;
 }
 
+const SQLSTATE_23 = /(?:code: "|Code: `)(23[0-9A-Z]{3})\b/;
+const RESTRICAO = /constraint \\?"([A-Za-z0-9_]+)\\?"/;
+
+/**
+ * Violação de restrição do banco que não virou mensagem de tela (SQLSTATE da classe 23: CHECK, NOT NULL, FK, UNIQUE, EXCLUDE; os serviços
+ * validam antes de gravar, então é defeito): a mensagem crua do driver traz a linha recusada ("Failing row contains (...)"), e no cupom
+ * fiscal ela tem o CPF do consumidor. Devolve só o SQLSTATE e o nome da restrição (o que o log pode levar); null = outro erro.
+ */
+export function restricaoDoBanco(exception: unknown): { sqlstate: string; restricao: string | null } | null {
+  if (!(exception instanceof Error)) return null;
+  const known = exception instanceof Prisma.PrismaClientKnownRequestError ? exception : null;
+  const meta = (known?.meta ?? {}) as { code?: unknown; message?: unknown };
+  const texto = `${exception.message}\n${typeof meta.message === 'string' ? meta.message : ''}`;
+  const sqlstate =
+    (typeof meta.code === 'string' && /^23[0-9A-Z]{3}$/.test(meta.code) ? meta.code : null) ??
+    SQLSTATE_23.exec(texto)?.[1] ??
+    (known && (known.code === 'P2004' || known.code === 'P2011') ? '23000' : null) ??
+    (/Failing row contains|violates [a-z -]*constraint/i.test(texto) ? '23000' : null);
+  if (sqlstate === null) return null;
+  return { sqlstate, restricao: RESTRICAO.exec(texto)?.[1] ?? null };
+}
+
 function fromSqlState(sqlState: string | undefined, raw: string | undefined): { status: number; code: string; message: string } | null {
-  const message = (raw ?? '').replace(/^ERROR:\s*/, '').split('\n')[0]?.trim() ?? '';
+  const message =
+    (raw ?? '')
+      .replace(/^ERROR:\s*/, '')
+      .split('\n')[0]
+      ?.trim() ?? '';
   if (sqlState === 'P0001') return { status: 400, code: 'REGRA', message };
   if (sqlState === '23505') return { status: 409, code: 'DUPLICADO', message: 'Já existe um registro com esses dados.' };
   if (sqlState === '23503') return { status: 409, code: 'EM_USO', message: 'Registro em uso por outros dados.' };

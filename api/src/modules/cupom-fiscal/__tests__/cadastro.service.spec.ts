@@ -13,8 +13,7 @@ import { ROTULO_CERTIFICADO } from '../../certificado-digital/certificado-digita
 import { CupomCadastroService, type Autor } from '../cadastro.service';
 import { cifrarCsc, decifrarCsc } from '../csc';
 import type { PerfilFiscalDto, SalvarEmitenteDto, SalvarProdutoDto } from '../cupom-fiscal.dto';
-import { FRASE_ERRO, FRASES_VALIDACAO } from '../frases';
-import { FRASES_CADASTRO, TEXTO_FALTA } from '../frases-cadastro';
+import { FRASE_ERRO, FRASES_CADASTRO, FRASES_VALIDACAO, TEXTO_FALTA } from '../frases';
 import { linhaCom, montarPrismaCupom, type TabelasCupom } from './prisma-cupom.falso';
 
 const CSC_TESTE = 'CSCTESTE0123456789ABCDEF';
@@ -298,6 +297,17 @@ describe('cadastro: série e número', () => {
     expect(r).toMatchObject({ serie: 3, proximo_numero: 1, ultimo_numero_usado: null });
     expect(m.t.nfce_ambientes[0].proximo_numero).toBe(1n);
     expect(m.t.nfce_ambientes_historico.at(-1)?.campos).toEqual(['serie', 'proximo_numero']);
+  });
+
+  it('a 1ª série cadastrada (sem série antes) fica com o próximo número salvo antes; só a TROCA começa no 1', async () => {
+    const m = montar();
+    await m.svc.salvarAmbiente('homologacao', { proximo_numero: 50 }, EU, AGORA);
+    const r = await m.svc.salvarAmbiente('homologacao', { serie: 2 }, EU, AGORA);
+    expect(r).toMatchObject({ serie: 2, proximo_numero: 50 });
+    expect(m.t.nfce_ambientes[0]).toMatchObject({ serie: 2, proximo_numero: 50n });
+    expect(m.t.nfce_ambientes_historico.at(-1)?.campos).toEqual(['serie']);
+    await m.svc.salvarAmbiente('homologacao', { serie: 3 }, EU, AGORA);
+    expect(m.t.nfce_ambientes[0]).toMatchObject({ serie: 3, proximo_numero: 1n });
   });
 
   it('trocar a série confere o próximo número contra a série NOVA', async () => {
@@ -755,6 +765,16 @@ describe('cadastro: empresa no cupom', () => {
     expect(m.t.nfce_emitente[0].series_outro_sistema).toEqual([1, 3]);
   });
 
+  it('a série do Comanda só é conferida quando o pedido traz a lista: conflito antigo no banco + PUT { ie } grava', async () => {
+    const m = montar();
+    await m.svc.salvarAmbiente('homologacao', { serie: 2 }, EU, AGORA);
+    m.t.nfce_emitente[0].series_outro_sistema = [2]; // conflito gravado antes da regra (ou direto no banco)
+    await m.svc.salvarEmitente({ ie: '123456789012' }, EU, AGORA);
+    expect(m.t.nfce_emitente[0]).toMatchObject({ ie: '123456789012', series_outro_sistema: [2] });
+    // a lista no pedido é conferida (o conflito continua aparecendo na `falta` e na T1 da emissão)
+    expect((await erro(m.svc.salvarEmitente({ series_outro_sistema: [2] }, EU, AGORA))).code).toBe('NFCE_EMITENTE_INVALIDO');
+  });
+
   it('"quem conta no estoque": grava quem respondeu e quando; repetir a mesma resposta não troca o autor', async () => {
     const m = montar();
     await m.svc.salvarEmitente({ cupom_lanca_venda: true }, EU, AGORA);
@@ -808,6 +828,26 @@ describe('cadastro: situação', () => {
       'series_outro_sistema',
     ]);
     expect(r.falta).toContainEqual({ codigo: 'serie', texto: 'Série e próximo número valendo' });
+  });
+
+  it('recusas_ate: com 10 recusas da SEFAZ na última hora, até quando o envio fica barrado; com 9 (ou fora da hora), null', async () => {
+    const m = montar();
+    const recusa = (minAtras: number, ambiente = 'homologacao') =>
+      m.t.nfce_envios.push(
+        linhaCom('nfce_envios', {
+          ambiente,
+          servico: 'autorizacao',
+          rejeicao: true,
+          iniciada_em: new Date(AGORA.getTime() - minAtras * 60_000),
+        }),
+      );
+    for (let k = 0; k < 9; k++) recusa(50 - k);
+    recusa(70); // fora da hora
+    recusa(5, 'producao'); // outro ambiente
+    expect((await m.svc.situacao(AGORA)).recusas_ate).toBeNull();
+    recusa(1);
+    // a mais antiga da janela (50 min atrás) + 60 min = daqui a 10 min (o mesmo cálculo do `podeChamar`)
+    expect((await m.svc.situacao(AGORA)).recusas_ate).toEqual(new Date(AGORA.getTime() + 10 * 60_000));
   });
 
   it('tudo cadastrado no modo de teste: falta vazia; o CSC que não abre com o segredo de agora volta a faltar', async () => {

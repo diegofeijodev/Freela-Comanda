@@ -4,6 +4,8 @@ import { join } from 'node:path';
 import { crc32 } from 'node:zlib';
 import { HttpException, Logger } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
+// Oráculo: xml-crypto 6.4.0 (devDependency exata), importado SÓ em arquivos de __tests__.
+import { SignedXml } from 'xml-crypto';
 import { montarChaveNfce } from '../../../common/fiscal/chave-acesso';
 import { toWire } from '../../../common/http/wire';
 import type { CertificadoDigitalPort } from '../../certificado-digital/certificado-digital.port';
@@ -181,6 +183,22 @@ const comPrefixo = (raiz: string) => (x: string) =>
       .map((parte, i) => (i % 2 === 1 ? parte : parte.replace(/<(\/?)([A-Za-z][\w.-]*)(?=[\s>/])/g, '<$1ns2:$2')))
       .join(''),
   );
+
+/**
+ * Oráculo xml-crypto (devDependency, só em __tests__): a assinatura do `evento` (a nossa, do certificado fictício) confere DENTRO do
+ * `procEventoNFe` que vai ao contador. Leva pré-final, item 10 (Minor 4 da revisão da Tarefa 13).
+ */
+function assinaturaDoEventoConfere(proc: string): boolean {
+  const assinatura = /<Signature [\s\S]*?<\/Signature>/.exec(proc)?.[0];
+  if (!assinatura) return false;
+  const v = new SignedXml({ publicCert: CLIENTE.certificado.toString() });
+  v.loadSignature(assinatura);
+  try {
+    return v.checkSignature(proc);
+  } catch {
+    return false;
+  }
+}
 
 function responder(m: M, ...fila: Resposta[]) {
   m.porta.aoChamar = () => {
@@ -479,6 +497,28 @@ describe('lista de cupons (GET cupons)', () => {
     expect((await m.leitura.listar({ situacao: ['autorizado', 'enviando'] }, agora)).map((l) => l.id)).toEqual([novo.id, autorizado.id]);
   });
 
+  it('filtro que mistura sem_resposta com outra situação: o banco sempre com limite (o pedido mais os enviando), o corte depois', async () => {
+    const m = montar();
+    const ids = [1, 2, 3].map((n) => semear(m.t, { numero: n, situacao: 'sem_resposta', criado_em: mais(T0, n * MIN) }).id);
+    const aut = [4, 5, 6].map((n) => semear(m.t, { numero: n, situacao: 'autorizado', criado_em: mais(T0, -n * MIN) }).id);
+    const novo = semear(m.t, { numero: 7, situacao: 'enviando', criado_em: mais(T0, 9 * MIN) });
+    m.t.nfce_envios.push(
+      linhaCom('nfce_envios', { ambiente: 'producao', cupom_id: novo.id, servico: 'autorizacao', iniciada_em: mais(T0, 9 * MIN) }),
+    );
+    const agora = mais(T0, 10 * MIN);
+    const busca = jest.spyOn(m.prisma.nfce_cupons, 'findMany');
+    expect((await m.leitura.listar({ situacao: ['sem_resposta'], limite: 2 }, agora)).map((l) => l.id)).toEqual([ids[2], ids[1]]);
+    expect((await m.leitura.listar({ situacao: ['sem_resposta', 'autorizado'], limite: 4 }, agora)).map((l) => l.id)).toEqual([
+      ids[2],
+      ids[1],
+      ids[0],
+      aut[0],
+    ]);
+    expect((await m.leitura.listar({ atencao: true, limite: 1 }, agora)).map((l) => l.id)).toEqual([ids[2]]);
+    // 1 `enviando` no filtro: o banco traz o limite + 1, nunca a tabela inteira
+    expect(busca.mock.calls.map((c) => (c[0] as { take?: number }).take)).toEqual([3, 5, 2]);
+  });
+
   it('período em dias de Brasília (o cupom das 23h30 do dia 17 é do dia 17) e limite depois do filtro, os mais novos primeiro', async () => {
     const m = montar();
     const noite = semear(m.t, { numero: 1, situacao: 'autorizado', criado_em: new Date('2026-11-18T02:30:00Z') });
@@ -612,6 +652,14 @@ describe('XML do cupom e do cancelamento (GET cupons/:id/xml)', () => {
       '1',
     ]);
     expect(elementos(doc, 'Signature')).toHaveLength(1);
+    // leva pré-final, item 10: o retEvento sem prefixo vai com os bytes que a SEFAZ mandou; a assinatura do evento confere (oráculo)
+    const pedido = m.t.nfce_envios.find((e) => e.cupom_id === id && e.servico === 'cancelamento')!;
+    const retOriginal = /<retEvento(?=[\s>])[\s\S]*?<\/retEvento>/.exec(pedido.xml_retorno!)![0];
+    expect(canc.xml).toBe(`<procEventoNFe xmlns="${NS}" versao="1.00">${evento}${retOriginal}</procEventoNFe>`);
+    expect(assinaturaDoEventoConfere(canc.xml)).toBe(true);
+    expect(assinaturaDoEventoConfere(canc.xml.replace(`<xJust>${MOTIVO}</xJust>`, '<xJust>Outro motivo qualquer aqui</xJust>'))).toBe(
+      false,
+    );
   });
 
   it('cupom sem o arquivo pedido = 409 NFCE_SITUACAO com a frase do arquivo; id desconhecido = 404', async () => {
@@ -762,6 +810,8 @@ describe('XML do mês para o contador (GET xml-do-mes)', () => {
     ]);
     const nomes = lerZip((await m.leitura.xmlDoMes('2026-11', undefined, mais(T0, 6 * MIN))).zip).map((a) => a.nome);
     expect(nomes.sort()).toEqual([`NFCe-${c.chave}-cancelamento.xml`, `NFCe-${c.chave}.xml`, 'numeros-nao-usados.csv'].sort());
+    // com prefixo vai o re-serializado (plano B), e a assinatura do nosso evento continua conferindo (oráculo)
+    expect(assinaturaDoEventoConfere(xml)).toBe(true);
   });
 
   it('procEventoNFe da consulta com prefixo de namespace (ns2:retConsSitNFe): remonta com o namespace declarado na raiz', () => {

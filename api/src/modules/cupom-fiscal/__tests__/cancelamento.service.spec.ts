@@ -478,7 +478,8 @@ describe('a consulta só grava cancelado com o evento conferido (Ruling T12 I2)'
       cancelado_em: null,
       venda_estoque: 'lancada',
       acoes: ['consultar'],
-      mensagem: FRASE_RETORNO.cancelamentoSemRegistro(mais(tc, 2 * MIN)),
+      // a frase do Ruling T12 fix-1, a mesma do `cancelando` sem pedido nosso (fonte única; leva pré-final, item 9)
+      mensagem: 'A SEFAZ informa que este cupom foi cancelado, mas não mandou o comprovante. Consulte de novo mais tarde.',
     });
     expect(cupomDe(m.t, id)).toMatchObject({ situacao: 'cancelando', cancelamento_motivo: MOTIVO, numero_reaproveitavel: false });
     expect(m.est.vendas.desfazer).toEqual([]);
@@ -496,12 +497,34 @@ describe('a consulta só grava cancelado com o evento conferido (Ruling T12 I2)'
     expect(m.est.vendas.desfazer).toEqual([]);
   });
 
-  it('101 sem evento num cupom sem resposta: sem_resposta com o número preso, sem nfeProc', async () => {
+  it('101 sem evento num cupom sem resposta, com o protNFe autorizado conferido: grava o nfeProc e vai a cancelando (leva item 9)', async () => {
     const m = montar();
     const espeto = await pronto(m);
     responder(m, erro(true), cons(m, 'ret-consulta-cancelada.xml', mais(T0, 2 * MIN), 'producao', casos[3][1]));
     const e = await m.emissao.emitir(venda(espeto.id), EU, T0);
     expect(e.cupom.situacao).toBe('sem_resposta');
+    const c = await m.emissao.consultar(e.cupom.id, EU, mais(T0, 2 * MIN));
+    expect(c).toMatchObject({
+      situacao: 'cancelando',
+      n_prot: '13526000000012345',
+      cancelado_em: null,
+      mensagem: FRASE_RETORNO.cancelandoSemComprovante,
+    });
+    const nfe = /<NFe[\s\S]*<\/NFe>/.exec(m.porta.chamadas[0].corpo)![0];
+    expect(cupomDe(m.t, e.cupom.id)).toMatchObject({ situacao: 'cancelando', numero_reaproveitavel: false, cancelamento_pedido_em: null });
+    expect(cupomDe(m.t, e.cupom.id).xml_autorizado).toContain(nfe);
+    expect(cupomDe(m.t, e.cupom.id).xml_autorizado).toContain('<nProt>13526000000012345</nProt>');
+    // nenhuma venda lançada às cegas (a SEFAZ diz cancelado); a próxima consulta com o evento decide
+    expect(m.est.vendas.lancar).toEqual([]);
+    expect((await m.emissao.detalhe(e.cupom.id, mais(T0, 3 * MIN))).mensagem).toBe(FRASE_RETORNO.cancelandoSemComprovante);
+  });
+
+  it('101 sem evento num cupom sem resposta e SEM protNFe autorizado: sem_resposta com o número preso, sem nfeProc', async () => {
+    const m = montar();
+    const espeto = await pronto(m);
+    const semProt = (x: string) => casos[3][1](x).replace(/<protNFe[\s\S]*?<\/protNFe>/, '');
+    responder(m, erro(true), cons(m, 'ret-consulta-cancelada.xml', mais(T0, 2 * MIN), 'producao', semProt));
+    const e = await m.emissao.emitir(venda(espeto.id), EU, T0);
     const c = await m.emissao.consultar(e.cupom.id, EU, mais(T0, 2 * MIN));
     expect(c.situacao).toBe('sem_resposta');
     expect(cupomDe(m.t, e.cupom.id)).toMatchObject({ numero_reaproveitavel: false, xml_autorizado: null, cancelado_em: null });
@@ -547,8 +570,12 @@ describe('recusas e travas', () => {
     await m.svc.cancelar(id, MOTIVO, EU, t(0));
     const cedo = await falha(m.svc.cancelar(id, MOTIVO, EU, mais(t(0), 2 * MIN - SEG)));
     expect(cedo).toEqual({ status: 409, code: 'NFCE_CANCELAMENTO_CEDO', message: FRASE_ERRO.NFCE_CANCELAMENTO_CEDO(mais(t(0), 2 * MIN)) });
-    await m.svc.cancelar(id, MOTIVO, EU, t(1));
-    await m.svc.cancelar(id, MOTIVO, EU, t(2));
+    expect((await m.svc.cancelar(id, MOTIVO, EU, t(1))).acoes).toContain('cancelar');
+    // o 3º pedido que saiu: o cupom continua autorizado, mas a tela não oferece mais "Cancelar" (Ruling T9 fix)
+    const terceiro = await m.svc.cancelar(id, MOTIVO, EU, t(2));
+    expect(terceiro.situacao).toBe('autorizado');
+    expect(terceiro.acoes).not.toContain('cancelar');
+    expect((await m.emissao.detalhe(id, t(3))).acoes).not.toContain('cancelar');
     const chamadas = m.porta.chamadas.length;
     expect(await falha(m.svc.cancelar(id, MOTIVO, EU, t(3)))).toEqual({
       status: 409,

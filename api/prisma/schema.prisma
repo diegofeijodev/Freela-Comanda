@@ -454,6 +454,8 @@ model nfce_cupons {
   venda_erro             String?
   descartado_em          DateTime? @db.Timestamptz(6)
   descarte_motivo        String?
+  descartado_por         String?   @db.Uuid
+  descartado_por_nome    String?
   emitido_por            String?   @db.Uuid
   emitido_por_nome       String?
   criado_em              DateTime  @default(now()) @db.Timestamptz(6)

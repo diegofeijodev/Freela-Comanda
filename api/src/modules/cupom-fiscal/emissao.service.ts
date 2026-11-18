@@ -63,8 +63,7 @@ import {
 import { SefazErro, sefazErro } from '../sefaz/sefaz-erro';
 import { CupomCadastroService, type Autor, type SituacaoCupomFiscal } from './cadastro.service';
 import { decifrarCsc } from './csc';
-import { FRASE_ERRO, FRASE_RETORNO, FRASES_EMISSAO } from './frases';
-import { FRASES_CADASTRO, TEXTO_FALTA, type CodigoFalta } from './frases-cadastro';
+import { FRASE_ERRO, FRASE_RETORNO, FRASES_CADASTRO, FRASES_EMISSAO, TEXTO_FALTA, type CodigoFalta } from './frases';
 import { corpoEnviNfe, inserirSupl, MontagemNfceErro, montarNfe, montarNfeProc, type DadosNfce, type ItemXml } from './montagem-xml';
 import { qrCodeV2, URL_CHAVE } from './qrcode-nfce';
 import {
@@ -92,13 +91,14 @@ import {
 } from './situacao-cupom';
 import { calcularTotais, decimal2, precoCentavos, quantidadeValida, valorItemCentavos, type Totais, type TPag } from './totais';
 import {
-  ESPERA_CONSULTA_MS,
   MAX_ENVIOS,
   podeChamar,
+  SEM_CUPOM,
   STATUS_CADA_MS,
   type EstadoTravas,
   type ResultadoTrava,
   type SituacaoAmbiente,
+  type TravasDoCupom,
 } from './travas';
 import { motivosDoProduto, type Crt, type MotivoProduto, type PerfilFiscal } from './validacao-fiscal';
 
@@ -160,6 +160,8 @@ export interface CupomDetalhe {
   venda_erro: string | null;
   descartado_em: Date | null;
   descarte_motivo: string | null;
+  /** Quem descartou ("Descartado às 14h12 por Ana", UX 3.1); null nos descartes de antes da coluna. */
+  descartado_por_nome: string | null;
   emitido_por_nome: string | null;
   criado_em: Date;
   /** A hora do servidor, para a contagem da tela (UX 10.3). */
@@ -203,6 +205,7 @@ const DOCUMENTO: readonly SituacaoCupom[] = ['autorizado', 'cancelando', 'denega
 /** Situações em que a tela mostra o que a SEFAZ disse (a `recusa`). */
 const COM_RECUSA: readonly SituacaoCupom[] = ['nao_enviado', 'rejeitado', 'denegado', 'sem_resposta', 'nao_consta'];
 const AUTORIZADO_OU_DENEGADO = new Set([100, 150, 120, 110, 301, 302]);
+const AUTORIZADO = new Set([100, 150, 120]);
 const CANCELADA = new Set([101, 151]);
 const EVENTO_REGISTRADO = new Set([135, 155]);
 /** `erro_code` do envio da consulta cuja resposta chegou depois de um "Enviar de novo": não decidiu nada no cupom (Ruling T11 I2). */
@@ -362,6 +365,8 @@ type Cadastro = {
 };
 
 type Montado = { chave: string; nfe: string; enviNFe: string; idLote: bigint };
+/** A tentativa que a SEFAZ autorizou (ou negou): a NFe enviada e a hora dela (o `dhEmi`). */
+type Tentativa = { nfe: string; dhEmi: Date };
 
 /** O que a T1 deixou gravado para a rede e a T2. */
 type Reserva = {
@@ -387,7 +392,8 @@ type Efeito = {
   dhRecbto?: string | null;
 };
 
-type HorasDoCupom = { enviadoEm: Date | null; ultimaConsulta: Date | null };
+/** As horas do diário que a situação, as ações e as travas usam; `cancelamentos` = os pedidos de cancelamento que saíram (o aberto conta). */
+type HorasDoCupom = { enviadoEm: Date | null; ultimaConsulta: Date | null; cancelamentos: number; ultimoCancelamento: Date | null };
 
 @Injectable()
 export class CupomEmissaoService {
@@ -422,7 +428,7 @@ export class CupomEmissaoService {
         const amb = await this.travarAmbiente(tx, a);
         const existente = await this.porIdempotencia(tx, v.chave_idempotencia, hash);
         if (existente) return { existente };
-        const c = await this.conferirNaTrava(tx, a, amb, agora, { enviadoEm: null, ultimaConsultaDaChave: null });
+        const c = await this.conferirNaTrava(tx, a, amb, agora, SEM_CUPOM);
         const { numero, avancar } = await this.escolherNumero(tx, a, c.amb.serie as number, c.amb.proximo_numero);
         const cNF = novoCnf(numero);
         const m = await this.montarAssinado(tx, c, cert, {
@@ -539,7 +545,7 @@ export class CupomEmissaoService {
         const c = await this.cupomOu404(tx, id);
         if (c.envios >= MAX_ENVIOS) throw r409('NFCE_LIMITE_ENVIOS', FRASE_ERRO.NFCE_LIMITE_ENVIOS);
         await this.conferirAcao(tx, c, 'enviar_de_novo', agora);
-        const k = await this.conferirNaTrava(tx, a, amb, agora, { enviadoEm: null, ultimaConsultaDaChave: null });
+        const k = await this.conferirNaTrava(tx, a, amb, agora, SEM_CUPOM);
         if (k.amb.serie !== c.serie || c.chave.slice(6, 20) !== k.cnpj) throw situacaoErro(c.situacao as SituacaoCupom, 'enviar_de_novo');
         const m = await this.montarAssinado(tx, k, cert, {
           serie: c.serie,
@@ -614,6 +620,8 @@ export class CupomEmissaoService {
       const estado = await this.estadoTravas(tx, a, amb, agora, {
         enviadoEm: inicioDaEspera({ ...para, situacao: s }),
         ultimaConsultaDaChave: horas.ultimaConsulta,
+        cancelamentosDoCupom: horas.cancelamentos,
+        ultimoCancelamentoDoCupom: horas.ultimoCancelamento,
       });
       const trava = podeChamar(estado, 'consulta', agora);
       if (!trava.ok) throw erroDaTrava(trava, amb);
@@ -694,8 +702,17 @@ export class CupomEmissaoService {
         erroCode = 'SEFAZ_RESPOSTA_INVALIDA';
         acao = acaoConsulta(r, atual, ctx);
       }
+      // leva pré-final, item 9: o cupom que não é documento (sem resposta) e que a consulta mostra AUTORIZADO (protNFe conferido, com
+      // a tentativa do `digVal`), mas "cancelado" sem o evento: grava o nfeProc autorizado e vai a `cancelando` (Ruling T12 fix-1), para
+      // o protocolo não se perder se o evento nunca vier legível; sem a tentativa, fica `sem_resposta` com o número preso
+      let semProvaAut: { p: ProtocoloNfce; aut: Tentativa } | null = null;
+      if (semProva && !documento && !(resp instanceof SefazErro) && autorizadoComProtocolo(resp.protocolo)) {
+        const aut = await this.tentativaAutorizada(tx, id, c.chave, resp.protocolo.digVal);
+        if (aut === null) this.erroDigval(c, 'consulta');
+        else semProvaAut = { p: resp.protocolo, aut };
+      }
       // Ruling T11 I1: a autorização vale para a tentativa do `digVal`; sem ela no banco = resposta inválida (número preso)
-      let nfe: string | null = null;
+      let nfe: Tentativa | null = null;
       let semTentativa = false;
       if (mesma && !documento && !(r instanceof SefazErro) && precisaDaTentativa(acao, r.protocolo)) {
         nfe = await this.tentativaAutorizada(tx, id, c.chave, r.protocolo?.digVal ?? null);
@@ -732,17 +749,25 @@ export class CupomEmissaoService {
       } else if (semTentativa) {
         dados = documento ? null : { situacao: 'sem_resposta', numero_reaproveitavel: false, atualizado_em: agora };
       } else if (semProva) {
-        dados = !documento
-          ? { situacao: 'sem_resposta', numero_reaproveitavel: false, atualizado_em: agora }
-          : c.situacao === 'autorizado'
-            ? { situacao: 'cancelando', atualizado_em: agora }
-            : null;
+        dados = semProvaAut
+          ? { ...camposDaAutorizacao(semProvaAut.p, semProvaAut.aut, true, agora), situacao: 'cancelando', atualizado_em: agora }
+          : !documento
+            ? { situacao: 'sem_resposta', numero_reaproveitavel: false, atualizado_em: agora }
+            : c.situacao === 'autorizado'
+              ? { situacao: 'cancelando', atualizado_em: agora }
+              : null;
       } else {
         dados = cupomDepoisDaConsulta(c, acao, r, agora, nfe);
       }
       if (dados) await tx.nfce_cupons.update({ where: { id }, data: dados });
       await this.aplicarNoAmbiente(tx, amb, efeitoDe(acao, r instanceof SefazErro ? null : r.cStat), agora);
-      const depoisSemProva: SituacaoCupom = !documento ? 'sem_resposta' : c.situacao === 'autorizado' ? 'cancelando' : atual;
+      const depoisSemProva: SituacaoCupom = semProvaAut
+        ? 'cancelando'
+        : !documento
+          ? 'sem_resposta'
+          : c.situacao === 'autorizado'
+            ? 'cancelando'
+            : atual;
       return {
         antes: c.situacao as SituacaoCupom,
         depois: !mesma ? (c.situacao as SituacaoCupom) : semTentativa ? 'sem_resposta' : semProva ? depoisSemProva : acao.cupom,
@@ -757,9 +782,10 @@ export class CupomEmissaoService {
       await this.t3(id, 'lancar', agora);
     if (t2.depois === 'cancelado' && t2.antes !== 'cancelado' && t2.lancada) await this.t3(id, 'desfazer', agora);
     const d = await this.detalhe(id, agora);
-    // a frase do "consultar mais tarde" é a resposta deste clique (como a recusa do cancelamento): o GET depois não a repete
+    // a frase do "consulte de novo mais tarde" é a resposta deste clique (como a recusa do cancelamento): a MESMA do `cancelando` sem
+    // pedido nosso (Ruling T12 fix-1, fonte única; leva pré-final, item 9)
     if (!t2.semProva) return d;
-    return { ...d, mensagem: FRASE_RETORNO.cancelamentoSemRegistro(d.consultar_a_partir_de ?? mais(agora, ESPERA_CONSULTA_MS)) };
+    return { ...d, mensagem: FRASE_RETORNO.cancelandoSemComprovante };
   }
 
   // =========================================================================================================== descartar
@@ -781,7 +807,14 @@ export class CupomEmissaoService {
       await this.conferirAcao(tx, c, 'descartar', agora);
       await tx.nfce_cupons.update({
         where: { id },
-        data: { situacao: 'descartado', descartado_em: agora, descarte_motivo: m, atualizado_em: agora },
+        data: {
+          situacao: 'descartado',
+          descartado_em: agora,
+          descarte_motivo: m,
+          descartado_por: autor.id,
+          descartado_por_nome: autor.nome,
+          atualizado_em: agora,
+        },
       });
     }, TX);
     this.logger.log(JSON.stringify({ evento: 'nfce.descarte', ambiente: c0.ambiente, serie: c0.serie, numero: Number(c0.numero) }));
@@ -820,7 +853,7 @@ export class CupomEmissaoService {
     const envioId = randomUUID();
     await this.prisma.$transaction(async (tx) => {
       const amb = await this.travarAmbiente(tx, a);
-      const trava = podeChamar(await this.estadoTravas(tx, a, amb, agora, {}), 'status', agora);
+      const trava = podeChamar(await this.estadoTravas(tx, a, amb, agora, SEM_CUPOM), 'status', agora);
       if (!trava.ok) throw erroDaTrava(trava, amb);
       await tx.nfce_envios.create({
         data: {
@@ -943,7 +976,7 @@ export class CupomEmissaoService {
       this.prisma.nfce_cupom_itens.findMany({ where: { cupom_id: id }, orderBy: { n_item: 'asc' } }),
       this.prisma.nfce_cupom_pagamentos.findMany({ where: { cupom_id: id }, orderBy: { ordem: 'asc' } }),
       this.prisma.nfce_envios.findMany({
-        where: { cupom_id: id, servico: { in: ['autorizacao', 'consulta'] } },
+        where: { cupom_id: id, servico: { in: ['autorizacao', 'consulta', 'cancelamento'] } },
         orderBy: [{ iniciada_em: 'desc' }, { tentativa: 'desc' }],
         select: {
           servico: true,
@@ -964,8 +997,9 @@ export class CupomEmissaoService {
     const para = paraAcoes(c, horas);
     const s = situacaoEfetiva(para, agora);
     const { acoes, consultar_a_partir_de, cancelar_ate } = acoesDoCupom(para, agora);
-    // a consulta que voltou depois de um "Enviar de novo" não decidiu nada: não é ela que explica a situação
-    const ultimo = envios.find((e) => e.erro_code !== ERRO_CUPOM_MUDOU);
+    // a consulta que voltou depois de um "Enviar de novo" não decidiu nada: não é ela que explica a situação; o pedido de cancelamento
+    // só entra na contagem do "Cancelar" (a recusa dele fica no diálogo)
+    const ultimo = envios.find((e) => e.servico !== 'cancelamento' && e.erro_code !== ERRO_CUPOM_MUDOU);
     const recusa = COM_RECUSA.includes(s) && ultimo?.resultado === 'respondida' ? recusaDoEnvio(ultimo, c, s) : null;
     const mensagem =
       recusa?.frase ??
@@ -1017,6 +1051,7 @@ export class CupomEmissaoService {
       venda_erro: c.venda_erro,
       descartado_em: c.descartado_em,
       descarte_motivo: c.descarte_motivo,
+      descartado_por_nome: c.descartado_por_nome,
       emitido_por_nome: c.emitido_por_nome,
       criado_em: c.criado_em,
       agora,
@@ -1093,8 +1128,8 @@ export class CupomEmissaoService {
   /** As horas do diário que as travas e as ações usam: o último envio de autorização e a última consulta deste cupom. */
   async horasDoCupom(tx: Pick<Tx, 'nfce_envios'>, id: string): Promise<HorasDoCupom> {
     const envios = await tx.nfce_envios.findMany({
-      where: { cupom_id: id, servico: { in: ['autorizacao', 'consulta'] } },
-      select: { servico: true, iniciada_em: true },
+      where: { cupom_id: id, servico: { in: ['autorizacao', 'consulta', 'cancelamento'] } },
+      select: { servico: true, iniciada_em: true, resultado: true },
       orderBy: { iniciada_em: 'desc' },
     });
     return horasDe(envios);
@@ -1106,7 +1141,7 @@ export class CupomEmissaoService {
     a: AmbienteSefaz,
     amb: nfce_ambientes,
     agora: Date,
-    doCupom: Pick<EstadoTravas, 'enviadoEm' | 'ultimaConsultaDaChave'>,
+    doCupom: TravasDoCupom,
   ): Promise<EstadoTravas> {
     const desde = new Date(agora.getTime() - HORA_MS);
     // em sequência: dentro da transação interativa as consultas vão por uma conexão só
@@ -1124,9 +1159,11 @@ export class CupomEmissaoService {
       recusas: recusas.map((r) => r.iniciada_em),
       consultas: consultas.map((r) => r.iniciada_em),
       ultimo_status_em: amb.ultimo_status_em,
-      // nota 5: sempre presentes (sem eles as esperas da consulta somem sem erro)
-      enviadoEm: doCupom.enviadoEm ?? null,
-      ultimaConsultaDaChave: doCupom.ultimaConsultaDaChave ?? null,
+      // obrigatórios no tipo (Ruling T9 fix): sem eles as esperas da consulta e os limites do cancelamento sumiriam sem erro
+      enviadoEm: doCupom.enviadoEm,
+      ultimaConsultaDaChave: doCupom.ultimaConsultaDaChave,
+      cancelamentosDoCupom: doCupom.cancelamentosDoCupom,
+      ultimoCancelamentoDoCupom: doCupom.ultimoCancelamentoDoCupom,
     };
   }
 
@@ -1181,13 +1218,7 @@ export class CupomEmissaoService {
    * Dentro da T1, sob a trava: o cadastro de novo (nota 12: o trio e a série fora das do caixa de hoje, cinto e suspensório) e as travas
    * da emissão (`podeChamar`, com todas as paradas e o teto de recusas).
    */
-  private async conferirNaTrava(
-    tx: Tx,
-    a: AmbienteSefaz,
-    amb: nfce_ambientes,
-    agora: Date,
-    doCupom: Pick<EstadoTravas, 'enviadoEm' | 'ultimaConsultaDaChave'>,
-  ): Promise<Cadastro> {
+  private async conferirNaTrava(tx: Tx, a: AmbienteSefaz, amb: nfce_ambientes, agora: Date, doCupom: TravasDoCupom): Promise<Cadastro> {
     const c = await this.cadastroPronto(a, tx);
     if (c.emitente.series_outro_sistema.includes(c.amb.serie as number)) throw r422('NFCE_SERIE_INVALIDA', FRASE_ERRO.NFCE_SERIE_INVALIDA);
     const trava = podeChamar(await this.estadoTravas(tx, a, amb, agora, doCupom), 'autorizacao', agora);
@@ -1341,12 +1372,12 @@ export class CupomEmissaoService {
         ultimo656: amb.ultimo_656_em,
       };
       // `acao` = o que a resposta faz no ambiente e no teto (vale sempre, inclusive o 656 do lote que trouxe protNFe)
-      const acao = acaoAutorizacao(validada, ctx);
+      let acao = acaoAutorizacao(validada, ctx);
       const p = validada instanceof SefazErro ? null : validada.protocolo;
       // Ruling T11 I1: o nfeProc é da tentativa do `digVal` (sem `digVal`, a única desta chave que saiu); sem ela = resposta inválida
       let efetiva = validada;
       let doCupom = acao;
-      let nfe = r.nfe;
+      let aut: Tentativa = { nfe: r.nfe, dhEmi: r.iniciadaEm };
       let semTentativa = false;
       if ((acao.cupom === 'autorizado' || acao.cupom === 'denegado') && p !== null) {
         const t = await this.tentativaAutorizada(tx, r.cupomId, r.chave, p.digVal);
@@ -1357,8 +1388,27 @@ export class CupomEmissaoService {
           erroCode = 'SEFAZ_RESPOSTA_INVALIDA';
           doCupom = acaoAutorizacao(efetiva, ctx);
         } else {
-          nfe = t;
+          aut = t;
         }
+      }
+      // leva pré-final, item 7: o 539 desta tentativa com outra tentativa do MESMO cupom já autorizada (a virada do mês trocou a chave)
+      // é a nossa própria nota, não o caixa de hoje na série: a emissão NÃO para; como no `digVal` sem tentativa, é resposta inválida
+      // (o número fica preso, o cupom vai a `sem_resposta`, sem a frase falsa de "série em uso") e o suporte acha a nota no diário
+      if (acao.ambiente === 'parada_serie_em_uso' && (await this.outraTentativaComNota(tx, r.cupomId, r.envioId))) {
+        semTentativa = true;
+        this.logger.error(
+          JSON.stringify({
+            evento: 'nfce.envio',
+            alerta: 'serie_em_uso_pela_propria_nota',
+            ambiente: c.ambiente,
+            serie: c.serie,
+            numero: Number(c.numero),
+          }),
+        );
+        efetiva = sefazErro('SEFAZ_RESPOSTA_INVALIDA', true);
+        erroCode = 'SEFAZ_RESPOSTA_INVALIDA';
+        acao = { ...acao, ambiente: undefined };
+        doCupom = acaoAutorizacao(efetiva, ctx);
       }
       const pe = efetiva instanceof SefazErro ? null : efetiva.protocolo;
       await tx.nfce_envios.update({
@@ -1387,8 +1437,9 @@ export class CupomEmissaoService {
         await tx.nfce_cupons.update({
           where: { id: r.cupomId },
           data: {
-            ...dadosDaAutorizacao(doCupom, efetiva, nfe, agora),
-            ...(foraDaVez ? { dh_emi: r.iniciadaEm } : {}),
+            ...dadosDaAutorizacao(doCupom, efetiva, aut.nfe, agora),
+            // a nota é da tentativa conferida: o `dh_emi` também (leva pré-final, item 7; no mesmo UPDATE: depois o gatilho congela)
+            ...(temNota ? { dh_emi: aut.dhEmi } : {}),
             ...(semTentativa ? { numero_reaproveitavel: false } : {}),
           },
         });
@@ -1426,18 +1477,39 @@ export class CupomEmissaoService {
    * protocolo; sem `digVal`, só se UMA tentativa desta chave saiu do servidor (`resultado` ≠ `falha_antes_de_enviar`; a que está em
    * andamento conta). null = a NFe autorizada não está no banco: resposta inválida, nunca outra NFe no `nfeProc`.
    */
-  private async tentativaAutorizada(tx: Tx, cupomId: string, chave: string, digVal: string | null): Promise<string | null> {
+  private async tentativaAutorizada(tx: Tx, cupomId: string, chave: string, digVal: string | null): Promise<Tentativa | null> {
     const envios = await tx.nfce_envios.findMany({
       where: { cupom_id: cupomId, servico: 'autorizacao' },
       orderBy: { iniciada_em: 'desc' },
-      select: { xml_enviado: true, resultado: true },
+      select: { xml_enviado: true, resultado: true, iniciada_em: true },
     });
-    const desta = envios.filter((e): e is { xml_enviado: string; resultado: string | null } =>
+    const desta = envios.filter((e): e is { xml_enviado: string; resultado: string | null; iniciada_em: Date } =>
       (e.xml_enviado ?? '').includes(`Id="NFe${chave}"`),
     );
-    if (digVal !== null) return desta.find((e) => digestDa(e.xml_enviado) === digVal)?.xml_enviado ?? null;
-    const sairam = desta.filter((e) => e.resultado !== 'falha_antes_de_enviar');
-    return sairam.length === 1 ? sairam[0].xml_enviado : null;
+    const achada =
+      digVal !== null
+        ? desta.find((e) => digestDa(e.xml_enviado) === digVal)
+        : ((s) => (s.length === 1 ? s[0] : undefined))(desta.filter((e) => e.resultado !== 'falha_antes_de_enviar'));
+    // o `dhEmi` da NFe autorizada é a hora da tentativa dela (a T1 grava `dh_emi` = `iniciada_em` = o `dhEmi` do XML): a venda no
+    // estoque cai no dia certo mesmo quando a autorizada é uma tentativa anterior (leva pré-final, item 7)
+    return achada ? { nfe: achada.xml_enviado, dhEmi: achada.iniciada_em } : null;
+  }
+
+  /**
+   * Outra tentativa DESTE cupom já foi autorizada ou denegada (com protocolo, no diário): o número é da nota dela. Um 539 de uma tentativa
+   * nova (a virada do mês trocou a chave) é então a nossa própria nota, não o caixa de hoje usando a série (leva pré-final, item 7).
+   */
+  private async outraTentativaComNota(tx: Tx, cupomId: string, envioId: string): Promise<boolean> {
+    const n = await tx.nfce_envios.count({
+      where: {
+        cupom_id: cupomId,
+        servico: 'autorizacao',
+        id: { not: envioId },
+        c_stat: { in: [...AUTORIZADO_OU_DENEGADO] },
+        n_prot: { not: null },
+      },
+    });
+    return n > 0;
   }
 
   /** A SEFAZ diz que tem a nota, mas a NFe dela não está no banco: erro para o suporte (sem XML, chave, CPF ou CSC). */
@@ -1668,7 +1740,10 @@ function conferirDoc(s: string | null | undefined): string | null {
  * novo, o que a tela cobrou pode não bastar, e o que o admin precisa saber é que o preço mudou (UX 10.1).
  */
 function totaisDaVenda(linhas: Linha[], v: Venda): Totais {
-  const produtos = linhas.reduce((s, l) => s + valorItemCentavos(l.xml.quantidade, l.xml.valorUnitario), 0n);
+  const brutos = linhas.map((l) => valorItemCentavos(l.xml.quantidade, l.xml.valorUnitario));
+  // item que arredonda para 0 centavo: a frase dele, não a do desconto (leva pré-final, item 2)
+  if (brutos.some((b) => b <= 0n)) throw r422('NFCE_ITEM_SEM_VALOR', FRASE_ERRO.NFCE_ITEM_SEM_VALOR);
+  const produtos = brutos.reduce((s, b) => s + b, 0n);
   if (v.desconto >= produtos) throw r422('NFCE_DESCONTO_INVALIDO', FRASE_ERRO.NFCE_DESCONTO_INVALIDO(produtos));
   const total = produtos - v.desconto;
   if (total !== v.totalEsperado) throw r409('NFCE_TOTAL_MUDOU', FRASE_ERRO.NFCE_TOTAL_MUDOU(total));
@@ -1682,6 +1757,15 @@ function totaisDaVenda(linhas: Linha[], v: Venda): Totais {
   switch (t.erro) {
     case 'SEM_ITENS':
       throw new BadRequestException({ code: 'NFCE_SEM_ITENS', message: FRASE_ERRO.NFCE_SEM_ITENS });
+    // as três de entrada já saem antes (`conferirCorpo`, o cardápio e o `sem_preco`): aqui é o cinto, com as mesmas frases
+    case 'QUANTIDADE_INVALIDA':
+      throw invalido(FRASES_CADASTRO.quantidade);
+    case 'PAGAMENTO_INVALIDO':
+      throw invalido(FRASES_CADASTRO.valorPagamento);
+    case 'PRECO_INVALIDO':
+      throw r422('NFCE_ITEM_INDISPONIVEL', FRASES_EMISSAO.precoInvalido);
+    case 'ITEM_SEM_VALOR':
+      throw r422('NFCE_ITEM_SEM_VALOR', FRASE_ERRO.NFCE_ITEM_SEM_VALOR);
     case 'DESCONTO_INVALIDO':
       throw r422('NFCE_DESCONTO_INVALIDO', FRASE_ERRO.NFCE_DESCONTO_INVALIDO(produtos));
     case 'PAGAMENTO_INSUFICIENTE':
@@ -1876,7 +1960,7 @@ function cupomDepoisDaConsulta(
   acao: AcaoRetorno,
   r: RespostaConsulta | SefazErro,
   agora: Date,
-  nfe: string | null,
+  aut: Tentativa | null,
 ): Prisma.nfce_cuponsUpdateInput | null {
   const dados: Prisma.nfce_cuponsUpdateInput = {};
   if (acao.cupom !== c.situacao) dados.situacao = acao.cupom;
@@ -1890,18 +1974,8 @@ function cupomDepoisDaConsulta(
     const p = r.protocolo;
     if (mostraANota(r)) dados.numero_reaproveitavel = false;
     if (precisaDaTentativa(acao, p) && comProtocolo(p)) {
-      if (nfe === null) throw new Error('consulta: autorização sem a tentativa conferida');
-      Object.assign(dados, {
-        c_stat: cStatGravavel(p.cStat),
-        x_motivo: motivoSefaz(p.xMotivo) || null,
-        n_prot: p.nProt,
-        dig_val: p.digVal,
-        autorizada_em: acao.cupom === 'denegado' ? null : (dataSefaz(p.dhRecbto) ?? agora),
-        alerta_c_msg: acao.alerta?.c_msg ?? null,
-        alerta_x_msg: acao.alerta?.x_msg ?? null,
-        xml_autorizado: montarNfeProc(nfe, p.xml),
-        numero_reaproveitavel: false,
-      });
+      if (aut === null) throw new Error('consulta: autorização sem a tentativa conferida');
+      Object.assign(dados, camposDaAutorizacao(p, aut, acao.cupom !== 'denegado', agora));
     } else if (acao.cupom === 'nao_consta') {
       Object.assign(dados, { c_stat: cStatGravavel(r.cStat), x_motivo: motivoSefaz(r.xMotivo) || null });
     }
@@ -1916,6 +1990,28 @@ function cupomDepoisDaConsulta(
 }
 
 /** O cancelamento que a consulta mostra é deste cupom: o `procEventoNFe` registrado (135/155) e conferido (`eventoDoCupom`). */
+/**
+ * Os campos da autorização (ou do uso negado) a partir do protocolo conferido e da tentativa dele, no UPDATE único que congela o cupom:
+ * o `dh_emi` é o da tentativa autorizada (pode ser uma anterior; leva pré-final, item 7); o aviso do 120 vem do próprio protocolo.
+ */
+function camposDaAutorizacao(p: ProtocoloNfce, aut: Tentativa, autorizado: boolean, agora: Date): Prisma.nfce_cuponsUpdateInput {
+  return {
+    dh_emi: aut.dhEmi,
+    c_stat: cStatGravavel(p.cStat),
+    x_motivo: motivoSefaz(p.xMotivo) || null,
+    n_prot: p.nProt,
+    dig_val: p.digVal,
+    autorizada_em: autorizado ? (dataSefaz(p.dhRecbto) ?? agora) : null,
+    alerta_c_msg: p.cStat === 120 ? p.cMsg : null,
+    alerta_x_msg: p.cStat === 120 ? p.xMsg : null,
+    xml_autorizado: montarNfeProc(aut.nfe, p.xml),
+    numero_reaproveitavel: false,
+  };
+}
+
+/** O protocolo mostra a nota AUTORIZADA (100, 150 ou 120), com `nProt` (o adaptador já o anula fora do formato). */
+const autorizadoComProtocolo = (p: ProtocoloNfce | null): p is ProtocoloNfce => p !== null && p.nProt !== null && AUTORIZADO.has(p.cStat);
+
 function cancelamentoProvado(r: RespostaConsulta, chave: string, a: AmbienteSefaz): boolean {
   return r.cancelamento !== null && EVENTO_REGISTRADO.has(r.cancelamento.cStat) && eventoDoCupom(r.cancelamento, chave, a);
 }
@@ -1940,10 +2036,17 @@ export function efeitoDe(acao: AcaoRetorno, codigo: number | null): Efeito {
   };
 }
 
-function horasDe(envios: { servico: string; iniciada_em: Date }[]): HorasDoCupom {
-  const ultima = (s: string) =>
-    envios.filter((e) => e.servico === s).reduce<Date | null>((m, e) => (m === null || e.iniciada_em > m ? e.iniciada_em : m), null);
-  return { enviadoEm: ultima('autorizacao'), ultimaConsulta: ultima('consulta') };
+export function horasDe(envios: { servico: string; iniciada_em: Date; resultado: string | null }[]): HorasDoCupom {
+  const ultima = (xs: typeof envios) => xs.reduce<Date | null>((m, e) => (m === null || e.iniciada_em > m ? e.iniciada_em : m), null);
+  const de = (s: string) => envios.filter((e) => e.servico === s);
+  // a mesma regra do limite do servidor (nota T9→T12): só o pedido de cancelamento que saiu (ou pode ter saído) conta
+  const cancelamentos = de('cancelamento').filter((e) => e.resultado !== 'falha_antes_de_enviar');
+  return {
+    enviadoEm: ultima(de('autorizacao')),
+    ultimaConsulta: ultima(de('consulta')),
+    cancelamentos: cancelamentos.length,
+    ultimoCancelamento: ultima(cancelamentos),
+  };
 }
 
 export function paraAcoes(c: nfce_cupons, h: HorasDoCupom): CupomParaAcoes {
@@ -1959,6 +2062,7 @@ export function paraAcoes(c: nfce_cupons, h: HorasDoCupom): CupomParaAcoes {
     venda_desfeita_em: c.venda_desfeita_em,
     enviadoEm: h.enviadoEm,
     ultimaConsultaDaChave: h.ultimaConsulta,
+    cancelamentos: h.cancelamentos,
   };
 }
 

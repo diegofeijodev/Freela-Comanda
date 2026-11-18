@@ -197,6 +197,8 @@ function padroes(tabela: NomeTabela): Record<string, unknown> {
         venda_erro: null,
         descartado_em: null,
         descarte_motivo: null,
+        descartado_por: null,
+        descartado_por_nome: null,
         emitido_por: null,
         emitido_por_nome: null,
         criado_em: agora,

@@ -20,6 +20,19 @@ describe('peças fiscais da NFC-e', () => {
     expect(() => montarChaveNfce({ ...base, cnpj: '123' })).toThrow();
   });
 
+  it('recusa série acima de 999, tpEmis fora de 1/9 e AAMM torto (cada um com a sua frase)', () => {
+    const base = { aamm: '2611', cnpj: '12345678000195', serie: 1, numero: 1, tpEmis: 1 as const, cNF: '00000001' };
+    expect(chaveValida(montarChaveNfce({ ...base, serie: 999 }))).toBe(true);
+    expect(() => montarChaveNfce({ ...base, serie: 1000 })).toThrow('Série da chave fora de 0–999.');
+    expect(() => montarChaveNfce({ ...base, serie: -1 })).toThrow('Série da chave fora de 0–999.');
+    expect(() => montarChaveNfce({ ...base, serie: 1.5 })).toThrow('Série da chave fora de 0–999.');
+    expect(() => montarChaveNfce({ ...base, tpEmis: 2 as unknown as 1 })).toThrow('Tipo de emissão da chave deve ser 1 ou 9.');
+    expect(() => montarChaveNfce({ ...base, tpEmis: 0 as unknown as 1 })).toThrow('Tipo de emissão da chave deve ser 1 ou 9.');
+    for (const aamm of ['261', '26110', '26a1', ' 2611', '']) {
+      expect(() => montarChaveNfce({ ...base, aamm })).toThrow('AAMM da chave deve ter 4 dígitos.');
+    }
+  });
+
   it('CPF', () => {
     expect(cpfValido('52998224725')).toBe(true);
     expect(cpfValido('52998224726')).toBe(false);

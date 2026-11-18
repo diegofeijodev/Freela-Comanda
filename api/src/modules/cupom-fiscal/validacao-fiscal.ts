@@ -32,7 +32,8 @@ export type MotivoProduto =
 /** CRT que pedem CSOSN (Simples, excesso de sublimite e MEI); o CRT 3 (regime normal) pede CST. Desenho §3.2. */
 export const CRT_COM_CSOSN: readonly Crt[] = [1, 2, 4];
 export const CSOSN_ACEITOS = ['102', '103', '300', '400', '500', '900'] as const;
-export const CST_ACEITOS = ['00', '20', '40', '41', '60', '90'] as const;
+/** Os CST que entram no cupom agora: o 20 fica fora até o perfil ter a redução da base (pRedBC; decisão T6-2, com a frase própria). */
+export const CST_ACEITOS = ['00', '40', '41', '60', '90'] as const;
 /** Ficam fora: 5933 (só com ISSQN) e 5949 (gorjeta, fase 2). */
 export const CFOP_ACEITOS = ['5101', '5102', '5103', '5104', '5115', '5405', '5656', '5667'] as const;
 /** CSOSN 102, 103, 300, 400 e 900 (N12a-40). */
@@ -98,8 +99,8 @@ export function erroDoPerfil(p: PerfilFiscal, crt: Crt | null): string | null {
       return F.csosnSemSt(csosn, CFOP_SEM_ST);
     }
   } else if (cst !== null) {
-    if (!contem(CST_ACEITOS, cst)) return F.cstFora(cst);
     if (cst === '20') return F.cst20; // o grupo ICMS20 pede a redução da base (pRedBC), que o perfil não tem (T6-2)
+    if (!contem(CST_ACEITOS, cst)) return F.cstFora(cst);
     if (cst === '60' && !contem(CFOP_CST_60, cfop)) return F.cst60(CFOP_CST_60);
     if (cst === '00' && aliq === null) return F.semAliqIcms;
   }

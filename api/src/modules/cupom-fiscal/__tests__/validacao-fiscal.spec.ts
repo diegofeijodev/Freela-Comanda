@@ -1,4 +1,4 @@
-import { erroDoItemFiscal, erroDoPerfil, motivosDoProduto, perfilValeNoRegime, type PerfilFiscal } from '../validacao-fiscal';
+import { CST_ACEITOS, erroDoItemFiscal, erroDoPerfil, motivosDoProduto, perfilValeNoRegime, type PerfilFiscal } from '../validacao-fiscal';
 
 const p: PerfilFiscal = {
   cfop: '5102',
@@ -96,6 +96,11 @@ describe('validação fiscal: perfil', () => {
     expect(erroDoPerfil({ ...normal, cst_icms: '20' }, 3)).toBe(cst20);
     expect(erroDoPerfil({ ...normal, cst_icms: '20', aliq_icms: null }, null)).toBe(cst20);
     expect(perfilValeNoRegime({ ...normal, cst_icms: '20' }, 3)).toBe(false);
+  });
+
+  it('CST_ACEITOS = os que entram no cupom agora (sem o 20, que tem a frase própria)', () => {
+    expect([...CST_ACEITOS]).toEqual(['00', '40', '41', '60', '90']);
+    expect(erroDoPerfil({ ...normal, cst_icms: '10' }, 3)).toBe('O CST 10 não entra no cupom.');
   });
 
   it('CST 00 pede a alíquota do ICMS (os outros CST não)', () => {
