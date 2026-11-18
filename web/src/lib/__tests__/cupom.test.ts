@@ -482,16 +482,29 @@ describe('rodada de correção 1: trava e chave da venda (I1) e o atalho do serv
   });
 
   it('linkDoAtalho: só o atalho que o servidor manda (sem tabela de códigos na tela)', () => {
-    expect(linkDoAtalho('produtos', 'c1')).toEqual({ rotulo: 'Corrigir os produtos', href: '/cupom?aba=produtos&cupom=c1', primario: true });
-    expect(linkDoAtalho('certificado', 'c1')).toEqual({
+    expect(linkDoAtalho('produtos', 'c1', 'producao')).toEqual({ rotulo: 'Corrigir os produtos', href: '/cupom?aba=produtos&cupom=c1', primario: true });
+    expect(linkDoAtalho('certificado', 'c1', 'producao')).toEqual({
       rotulo: 'Ir para o certificado',
       href: '/configuracoes#certificado-digital',
       primario: false,
     });
-    expect(linkDoAtalho('csc', 'c1')).toEqual({ rotulo: 'Ir para Configurações', href: '/configuracoes?aba=cupom', primario: false });
-    expect(linkDoAtalho('empresa', 'c1')).toEqual({ rotulo: 'Ir para Configurações', href: '/configuracoes?aba=cupom', primario: false });
-    expect(linkDoAtalho('serie', 'c1')).toEqual({ rotulo: 'Trocar a série', href: '/configuracoes?aba=cupom', primario: false });
-    expect(linkDoAtalho(null, 'c1')).toBeNull();
+    // rodada de correção 1 da T15 (M2): os de Configurações levam ao CAMPO (âncora do ambiente do cupom), não ao topo da aba
+    expect(linkDoAtalho('csc', 'c1', 'producao')).toEqual({
+      rotulo: 'Ir para Configurações',
+      href: '/configuracoes?aba=cupom#cupom-csc-producao',
+      primario: false,
+    });
+    expect(linkDoAtalho('empresa', 'c1', 'homologacao')).toEqual({
+      rotulo: 'Ir para Configurações',
+      href: '/configuracoes?aba=cupom#cupom-ie',
+      primario: false,
+    });
+    expect(linkDoAtalho('serie', 'c1', 'homologacao')).toEqual({
+      rotulo: 'Trocar a série',
+      href: '/configuracoes?aba=cupom#cupom-serie-homologacao',
+      primario: false,
+    });
+    expect(linkDoAtalho(null, 'c1', 'producao')).toBeNull();
   });
 });
 
@@ -503,6 +516,7 @@ import {
   mesesDoContador, mesPadraoContador, motivoCfopFora, nomeDoMes, ordenarFalta, perfilParaSalvar, periodoDoArquivo, produtoParaSalvar,
   proximaAcao, quandoNaLista, tagDaEmissao, textoAvisoImportacao, textoPendentes, textoVendasPendentes,
 } from '../cupom';
+import { ambienteDoContador, caixaDoTopo as caixaDoTopoT15, linkDaFalta as linkDaFaltaT15 } from '../cupom';
 
 describe('Tarefa 15: faixa de pendentes, importação e inventário', () => {
   it('textoPendentes: nenhum = null; um de cada tipo; vários', () => {
@@ -755,5 +769,41 @@ describe('Tarefa 15: Configurações → Cupom fiscal', () => {
       'Guardado: ••••1234 (por Diego em 18/11/2026)',
     );
     expect(linhaCscGuardado({ csc_dica: null, historico: h, alterada_por_nome: null, alterada_em: null })).toBeNull();
+  });
+});
+
+describe('Tarefa 15, rodada de correção 1: âncoras dos atalhos (M2) e o zip do servidor (M7)', () => {
+  const agora = new Date('2026-11-17T17:20:00Z');
+  const sit = (x: Partial<SituacaoCupomFiscal>): SituacaoCupomFiscal => ({
+    ambiente: 'homologacao', agora: agora.toISOString(), emissao_ligada: true, situacao: 'ok', mensagem: 'Parou.', bloqueado_ate: null, serie: 2,
+    proximo_numero: 1, falta: [], certificado: { ok: true, mensagem: null }, pendentes: { total: 0, primeiro: null }, ...x,
+  });
+
+  it('as paradas da aba Emitir levam ao campo que corrige (série, código de segurança) ou ao certificado', () => {
+    expect(caixaDoTopoT15(sit({ situacao: 'parada_serie_em_uso' }), agora)).toMatchObject({
+      link: { rotulo: 'Trocar a série', href: '/configuracoes?aba=cupom#cupom-serie-homologacao' },
+    });
+    expect(caixaDoTopoT15(sit({ ambiente: 'producao', situacao: 'parada_configuracao' }), agora)).toMatchObject({
+      link: { rotulo: 'Ir para Configurações', href: '/configuracoes?aba=cupom#cupom-csc-producao' },
+    });
+    expect(caixaDoTopoT15(sit({ situacao: 'parada_certificado' }), agora)).toMatchObject({
+      link: { rotulo: 'Ir para o certificado', href: '/configuracoes#certificado-digital' },
+    });
+  });
+
+  it('"Para emitir, falta:" leva ao campo de cada item (aba Geral ou Cupom fiscal)', () => {
+    expect(linkDaFaltaT15('ie', 'homologacao')).toEqual({ rotulo: 'Preencher', href: '/configuracoes?aba=cupom#cupom-ie' });
+    expect(linkDaFaltaT15('serie', 'producao')).toEqual({ rotulo: 'Preencher', href: '/configuracoes?aba=cupom#cupom-serie-producao' });
+    expect(linkDaFaltaT15('cnpj', 'producao')).toEqual({ rotulo: 'Preencher', href: '/configuracoes#empresa-cnpj' });
+    expect(linkDaFaltaT15('certificado', 'producao')).toEqual({ rotulo: 'Ir para o certificado', href: '/configuracoes#certificado-digital' });
+    expect(linkDaFaltaT15('produto_pronto', 'producao')).toEqual({ rotulo: 'Ver produtos', href: '/cupom?aba=produtos' });
+    expect(linkDaFaltaT15('teste_homologacao', 'producao')).toBeNull();
+  });
+
+  it('ambienteDoContador: o zip é do ambiente do SERVIDOR (desligado = valendo; sem a situação = o servidor escolhe)', () => {
+    expect(ambienteDoContador('homologacao')).toBe('homologacao');
+    expect(ambienteDoContador('producao')).toBe('producao');
+    expect(ambienteDoContador('desligado')).toBe('producao');
+    expect(ambienteDoContador(undefined)).toBeUndefined();
   });
 });

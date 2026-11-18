@@ -7,7 +7,7 @@ import { Ban, CheckCircle2, CircleAlert, Loader2 } from 'lucide-react';
 import { listarCupons, xmlDoMesCupom, type AmbienteSefaz, type CupomLinha, type FiltroCupons, type SituacaoCupomFiscal } from '@/lib/erp-api';
 import { errMsg } from '@/lib/db';
 import {
-  dataHoraNaLista, diaSpDe, documentoNaLista, intervaloDoPeriodo, mesesDoContador, mesPadraoContador, nomeDoMes, nomesDosPagamentos,
+  ambienteDoContador, dataHoraNaLista, diaSpDe, documentoNaLista, intervaloDoPeriodo, mesesDoContador, mesPadraoContador, nomeDoMes, nomesDosPagamentos,
   proximaAcao, quandoNaLista, reais, ROTULO_PERIODO, SITUACOES_DO_FILTRO, tagDoCupom, type IconeCupom, type PeriodoEmitidos,
   type SituacaoEmitidos,
 } from '@/lib/cupom';
@@ -175,7 +175,7 @@ export function Emitidos({ situacao, situacaoEm, inicial }: { situacao: Situacao
               );
             })}
           </ul>
-          <div className="hidden md:block">
+          <div className="hidden overflow-x-auto md:block">
             <table className="w-full text-sm">
               <thead className="text-left text-sm text-muted-foreground">
                 <tr>
@@ -217,7 +217,7 @@ export function Emitidos({ situacao, situacaoEm, inicial }: { situacao: Situacao
         </>
       )}
 
-      <ParaOContador ambiente={ambiente} hoje={hoje} />
+      <ParaOContador ambiente={ambienteDoContador(servidor)} hoje={hoje} />
     </div>
   );
 }
@@ -247,7 +247,7 @@ function Vazio({ filtro, periodo, onVerTodos }: { filtro: SituacaoEmitidos; peri
 }
 
 /**
- * "Para o contador" (UX 4.6): o zip do mês (`GET …/xml-do-mes`) do ambiente que a lista mostra. Mês padrão: o passado até o dia 10. Erro
+ * "Para o contador" (UX 4.6): o zip do mês (`GET …/xml-do-mes`) do ambiente do SERVIDOR ("Ver cupons de teste" não muda o arquivo). Mês padrão: o passado até o dia 10. Erro
  * em caixa no painel, com "Tentar de novo"; o arquivo é baixado pelo navegador (nada fica no storage).
  */
 function ParaOContador({ ambiente, hoje }: { ambiente: AmbienteSefaz | undefined; hoje: string }) {

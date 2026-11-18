@@ -43,7 +43,7 @@ type Aba = "geral" | "despesas" | "cupom";
  * Leva ao campo de um item de "Para ligar a emissão, falta:" (UX 5.1, ponto 10.5): espera o campo existir (a aba acabou de trocar ou o
  * dado ainda chega), abre o bloco recolhido em volta, rola até ele e põe o foco (num grupo de opções, na 1ª opção).
  */
-function focarCampo(id: string, tentativas = 20) {
+function focarCampo(id: string, tentativas = 40) {
   const el = document.getElementById(id);
   if (!el) {
     if (tentativas > 0) setTimeout(() => focarCampo(id, tentativas - 1), 150);
@@ -74,11 +74,12 @@ function Config() {
     if (alvo.aba !== aba) trocarAba(alvo.aba);
     focarCampo(alvo.id);
   };
-  // um link com âncora (`/configuracoes?aba=cupom#cupom-crt`, `/configuracoes#certificado-digital`) leva ao campo quando ele aparecer
+  // um link com âncora (`/configuracoes?aba=cupom#cupom-crt`, `/configuracoes#certificado-digital`, os atalhos da recusa e das paradas)
+  // leva ao campo quando ele aparecer; vale também numa navegação que só troca a aba (a busca muda)
   useEffect(() => {
     const h = decodeURIComponent(window.location.hash.slice(1));
     if (/^[a-z0-9-]+$/.test(h)) focarCampo(h);
-  }, []);
+  }, [params]);
   const queryClient = useQueryClient();
   const { data: cfg, refetch } = useQuery({ queryKey: ["config"], queryFn: getConfig });
   const { data: saz, refetch: rS } = useQuery({ queryKey: ["sazonalidade"], queryFn: listarSazonalidade });

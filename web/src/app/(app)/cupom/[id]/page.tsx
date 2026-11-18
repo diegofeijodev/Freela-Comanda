@@ -147,7 +147,7 @@ export default function CupomPage() {
   const topo = s ? caixaDoTopo(s, agora) : null;
   const envioBarrado = topo && topo.formulario ? topo.texto : null;
   const reenviavel = ['nao_enviado', 'nao_consta', 'rejeitado'].includes(cupom.situacao);
-  const atalho = linkDoAtalho(cupom.atalho, cupom.id);
+  const atalho = linkDoAtalho(cupom.atalho, cupom.id, cupom.ambiente);
   const esgotou = reenviavel && cupom.numero_reaproveitavel && cupom.envios >= MAX_ENVIOS;
 
   function atualizar(r: CupomDetalhe) {

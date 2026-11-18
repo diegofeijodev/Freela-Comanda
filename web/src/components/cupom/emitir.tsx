@@ -454,7 +454,7 @@ export function Emitir({ situacao, situacaoEm, situacaoErro, onTentarSituacao }:
         </p>
       )}
 
-      <CaixaDoTopo topo={topo} refTopo={refTopo} />
+      <CaixaDoTopo topo={topo} refTopo={refTopo} ambiente={situacao.ambiente} />
       {topo && !topo.formulario ? null : (
         <div className="min-w-0 space-y-4">
           {travada && (
@@ -766,7 +766,12 @@ export function Emitir({ situacao, situacaoEm, situacaoErro, onTentarSituacao }:
 }
 
 /** A caixa do alto da aba (UX 2.1). */
-function CaixaDoTopo({ topo, refTopo }: { topo: ReturnType<typeof caixaDoTopo>; refTopo: React.RefObject<HTMLDivElement | null> }) {
+function CaixaDoTopo({ topo, refTopo, ambiente }: {
+  topo: ReturnType<typeof caixaDoTopo>;
+  refTopo: React.RefObject<HTMLDivElement | null>;
+  /** O ambiente do servidor: "Para emitir, falta:" leva à série e ao código de segurança dele. */
+  ambiente: SituacaoCupomFiscal['ambiente'];
+}) {
   if (topo === null) return null;
   if (topo.linha === 1) {
     return (
@@ -774,20 +779,20 @@ function CaixaDoTopo({ topo, refTopo }: { topo: ReturnType<typeof caixaDoTopo>; 
         <p>A emissão de cupom fiscal não está ativada neste servidor. Você já pode cadastrar os dados fiscais dos produtos e da empresa; para ativar, fale com o suporte do Freela Comanda.</p>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <Button asChild className="h-11 w-full sm:w-auto"><Link href="/cupom?aba=produtos">Preparar os produtos</Link></Button>
-          <Link href="/configuracoes?aba=cupom" className="inline-flex min-h-11 items-center text-primary underline underline-offset-2">Dados da empresa no cupom</Link>
+          <Link href="/configuracoes?aba=cupom#cupom-ie" className="inline-flex min-h-11 items-center text-primary underline underline-offset-2">Dados da empresa no cupom</Link>
         </div>
       </div>
     );
   }
   if (topo.linha === 2) {
     const primeiro = topo.falta[0];
-    const link = primeiro ? linkDaFalta(primeiro.codigo) : null;
+    const link = primeiro ? linkDaFalta(primeiro.codigo, ambiente) : null;
     return (
       <div role="status" className="space-y-3 rounded-lg border bg-muted/40 p-4 text-sm">
         <p className="font-medium">Para emitir, falta:</p>
         <ul className="space-y-1">
           {topo.falta.map((f) => {
-            const l = linkDaFalta(f.codigo);
+            const l = linkDaFalta(f.codigo, ambiente);
             return (
               <li key={f.codigo} className="flex flex-wrap items-start gap-x-2">
                 <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" aria-hidden />

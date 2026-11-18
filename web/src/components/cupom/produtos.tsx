@@ -189,7 +189,7 @@ export function Produtos({ itemInicial, cupomId }: { itemInicial: string | null;
               </li>
             ))}
           </ul>
-          <div className="hidden md:block">
+          <div className="hidden overflow-x-auto md:block">
             <table className="w-full text-sm">
               <thead className="text-left text-sm text-muted-foreground">
                 <tr>

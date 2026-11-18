@@ -666,20 +666,20 @@ export function novaChaveIdempotencia(): string {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 }
 
-/** Para onde leva cada item de "Para emitir, falta:" (UX 5.1). */
-export function linkDaFalta(codigo: CodigoFalta): { rotulo: string; href: string } | null {
-  switch (codigo) {
-    case 'certificado':
-      return { rotulo: 'Ir para o certificado', href: '/configuracoes#certificado-digital' };
-    case 'cnpj':
-      return { rotulo: 'Preencher', href: '/configuracoes' };
-    case 'produto_pronto':
-      return { rotulo: 'Ver produtos', href: '/cupom?aba=produtos' };
-    case 'teste_homologacao':
-      return null;
-    default:
-      return { rotulo: 'Preencher', href: '/configuracoes?aba=cupom' };
-  }
+/** O endereço de um campo de Configurações (UX 5.1, ponto 10.5): a aba e a âncora; a página põe o foco nele quando ele aparece. */
+export const hrefDoCampo = (alvo: { aba: 'geral' | 'cupom'; id: string }) =>
+  alvo.aba === 'geral' ? `/configuracoes#${alvo.id}` : `/configuracoes?aba=cupom#${alvo.id}`;
+const ambienteDaTela = (a: AmbienteServidor): AmbienteSefaz => (a === 'homologacao' ? 'homologacao' : 'producao');
+
+/**
+ * Para onde leva cada item de "Para emitir, falta:" (UX 5.1): o campo em Configurações (o mesmo alvo do painel, `alvoDaFalta`, com a
+ * série e o código de segurança do ambiente do servidor), ou a aba Produtos. O teste no modo de teste se faz aqui mesmo: sem link.
+ */
+export function linkDaFalta(codigo: CodigoFalta, ambiente: AmbienteServidor = 'producao'): { rotulo: string; href: string } | null {
+  if (codigo === 'teste_homologacao') return null;
+  const alvo = alvoDaFalta(codigo, ambienteDaTela(ambiente));
+  if ('href' in alvo) return { rotulo: alvo.rotulo, href: alvo.href };
+  return { rotulo: codigo === 'certificado' ? alvo.rotulo : 'Preencher', href: hrefDoCampo(alvo) };
 }
 
 /** A caixa do alto da aba Emitir (UX 2.1): só a 1ª linha que se aplica. `formulario` = dá para montar a venda (linhas 4 a 6). */
@@ -689,11 +689,21 @@ export type CaixaTopo =
   | { linha: 3; formulario: false; aviso: string | null }
   | { linha: 4 | 5 | 6; formulario: true; tom: 'bad' | 'warn'; texto: string; link: { rotulo: string; href: string } | null; botao: string };
 
-const LINK_DA_PARADA: Record<Exclude<SituacaoCupomFiscal['situacao'], 'ok' | 'parada_656'>, { rotulo: string; href: string }> = {
-  parada_certificado: { rotulo: 'Ir para o certificado', href: '/configuracoes#certificado-digital' },
-  parada_configuracao: { rotulo: 'Ir para Configurações', href: '/configuracoes?aba=cupom' },
-  parada_serie_em_uso: { rotulo: 'Trocar a série', href: '/configuracoes?aba=cupom' },
-};
+/** O link de cada parada (UX 6.1), até o campo que corrige: o certificado, o código de segurança (QR) ou a série do ambiente. */
+function linkDaParada(
+  p: Exclude<SituacaoCupomFiscal['situacao'], 'ok' | 'parada_656'>,
+  ambiente: AmbienteServidor,
+): { rotulo: string; href: string } {
+  const a = ambienteDaTela(ambiente);
+  switch (p) {
+    case 'parada_certificado':
+      return { rotulo: 'Ir para o certificado', href: hrefDoCampo({ aba: 'geral', id: 'certificado-digital' }) };
+    case 'parada_configuracao':
+      return { rotulo: 'Ir para Configurações', href: hrefDoCampo({ aba: 'cupom', id: `cupom-csc-${a}` }) };
+    case 'parada_serie_em_uso':
+      return { rotulo: 'Trocar a série', href: hrefDoCampo({ aba: 'cupom', id: `cupom-serie-${a}` }) };
+  }
+}
 
 /**
  * UX 2.1 pela situação do servidor (`agora` = a hora do servidor). A parada vem antes do "Tudo pronto" (a do 656 desliga a emissão) e o
@@ -709,7 +719,7 @@ export function caixaDoTopo(s: SituacaoCupomFiscal, agora: Date): CaixaTopo | nu
       formulario: true,
       tom: 'bad',
       texto: s.mensagem ?? 'A emissão parou.',
-      link: s.situacao === 'parada_656' ? null : LINK_DA_PARADA[s.situacao],
+      link: s.situacao === 'parada_656' ? null : linkDaParada(s.situacao, s.ambiente),
       botao: 'A emissão parou',
     };
   }
@@ -802,20 +812,26 @@ export const toqueNoBotao = (travada: boolean, alvo: AlvoBotao): AlvoBotao | 're
 // ----------------------------------------------------------------------------------------------------------------- atalho da recusa
 /**
  * O link do atalho que o SERVIDOR manda no cupom (`atalho`, calculado em `retornos.ts` junto da frase; Ruling T14 I2 e "T14 atalhos"): a
- * tela não classifica por código. Os rótulos são os links da UX 6.1; os destinos são as rotas da UX 1 (a aba "Cupom fiscal" de
- * Configurações e a aba Produtos chegam na Tarefa 15). `primario` = é a ação principal ("Corrigir os produtos", e então "Enviar de novo").
+ * tela não classifica por código. Os rótulos são os links da UX 6.1; os destinos são as rotas da UX 1, até o CAMPO que corrige (rodada
+ * de correção 1 da T15: o código de segurança e a série do ambiente do cupom; a empresa = a inscrição estadual, 1º campo do quadro).
+ * `primario` = é a ação principal ("Corrigir os produtos", e então "Enviar de novo").
  */
-export function linkDoAtalho(a: AtalhoCupom | null, cupomId: string): { rotulo: string; href: string; primario: boolean } | null {
+export function linkDoAtalho(
+  a: AtalhoCupom | null,
+  cupomId: string,
+  ambiente: AmbienteSefaz,
+): { rotulo: string; href: string; primario: boolean } | null {
   switch (a) {
     case 'produtos':
       return { rotulo: 'Corrigir os produtos', href: `/cupom?aba=produtos&cupom=${cupomId}`, primario: true };
     case 'certificado':
-      return { rotulo: 'Ir para o certificado', href: '/configuracoes#certificado-digital', primario: false };
+      return { rotulo: 'Ir para o certificado', href: hrefDoCampo({ aba: 'geral', id: 'certificado-digital' }), primario: false };
     case 'csc':
+      return { rotulo: 'Ir para Configurações', href: hrefDoCampo({ aba: 'cupom', id: `cupom-csc-${ambiente}` }), primario: false };
     case 'empresa':
-      return { rotulo: 'Ir para Configurações', href: '/configuracoes?aba=cupom', primario: false };
+      return { rotulo: 'Ir para Configurações', href: hrefDoCampo({ aba: 'cupom', id: 'cupom-ie' }), primario: false };
     case 'serie':
-      return { rotulo: 'Trocar a série', href: '/configuracoes?aba=cupom', primario: false };
+      return { rotulo: 'Trocar a série', href: hrefDoCampo({ aba: 'cupom', id: `cupom-serie-${ambiente}` }), primario: false };
     default:
       return null;
   }
@@ -963,6 +979,14 @@ export const dataHoraNaLista = (iso: string) => `${diaMesSp(iso)} ${horaSp(iso)}
 export function documentoNaLista(d: string | null): string {
   if (d === null || d === '') return '—';
   return d.includes('*') ? d : documentoFormatado(d);
+}
+
+/**
+ * O ambiente do zip do contador (UX 4.6): o do SERVIDOR, não o da lista ("Ver cupons de teste" não muda o arquivo). Desligado = valendo
+ * (como a lista); sem a situação ainda = o servidor escolhe (o dele).
+ */
+export function ambienteDoContador(servidor: AmbienteServidor | undefined): AmbienteSefaz | undefined {
+  return servidor === undefined ? undefined : ambienteDaTela(servidor);
 }
 
 /** O mês do contador (UX 4.6): até o dia 10, o mês passado; depois, este mês ("AAAA-MM"). */

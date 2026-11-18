@@ -242,7 +242,8 @@ function QuadroSituacao({ irPara }: { irPara(alvo: AlvoFalta): void }) {
           </div>
         )}
 
-        <CaixaErro erro={acao.erro} caixa={acao.caixa} />
+        {/* com o diálogo "Ligar valendo" aberto, o erro aparece DENTRO dele (o resto da página fica atrás do overlay e sem foco) */}
+        {!valendo && <CaixaErro erro={acao.erro} caixa={acao.caixa} />}
 
         {botao && ligado && (
           <div className="space-y-1">
@@ -275,14 +276,28 @@ function QuadroSituacao({ irPara }: { irPara(alvo: AlvoFalta): void }) {
       </div>
 
       {valendo && (
-        <LigarValendo serie={s.serie} ocupado={acao.ocupado} onFechar={() => setValendo(false)} onLigar={() => void ligar('producao', true)} />
+        <LigarValendo
+          serie={s.serie} ocupado={acao.ocupado} erro={acao.erro} caixa={acao.caixa}
+          onFechar={() => { setValendo(false); acao.setErro(null); }} onLigar={() => void ligar('producao', true)}
+        />
       )}
     </Panel>
   );
 }
 
-/** "Ligar a emissão valendo?" (UX 5.1, E13): as três confirmações obrigatórias; o foco começa em "Agora não". */
-function LigarValendo({ serie, ocupado, onFechar, onLigar }: { serie: number | null; ocupado: boolean; onFechar(): void; onLigar(): void }) {
+/**
+ * "Ligar a emissão valendo?" (UX 5.1, E13): as três confirmações obrigatórias; o foco começa em "Agora não". Se o servidor recusar, a
+ * frase dele aparece numa caixa vermelha DENTRO do diálogo, com o foco nela (rodada de correção 1, I1); as marcas ficam, e dá para tentar
+ * de novo ou desistir.
+ */
+function LigarValendo({ serie, ocupado, erro, caixa, onFechar, onLigar }: {
+  serie: number | null;
+  ocupado: boolean;
+  erro: string | null;
+  caixa: React.RefObject<HTMLDivElement | null>;
+  onFechar(): void;
+  onLigar(): void;
+}) {
   const [marcas, setMarcas] = useState([false, false, false]);
   const todas = marcas.every(Boolean);
   const textos = [
@@ -292,7 +307,7 @@ function LigarValendo({ serie, ocupado, onFechar, onLigar }: { serie: number | n
   ];
   return (
     <AlertDialog open onOpenChange={(o) => { if (!o && !ocupado) onFechar(); }}>
-      <AlertDialogContent className="max-h-[90dvh] overflow-y-auto">
+      <AlertDialogContent className="max-h-[90dvh] overflow-y-auto" onEscapeKeyDown={(e) => { if (ocupado) e.preventDefault(); }}>
         <AlertDialogHeader>
           <AlertDialogTitle>Ligar a emissão valendo?</AlertDialogTitle>
           <AlertDialogDescription>Os cupons passam a valer como documento fiscal, emitidos em nome da empresa e com o certificado digital.</AlertDialogDescription>
@@ -306,6 +321,7 @@ function LigarValendo({ serie, ocupado, onFechar, onLigar }: { serie: number | n
           ))}
           <p className="text-sm font-semibold">Se a SEFAZ bloquear este sistema por excesso de recusas, o caixa da loja pode parar junto por até 1 hora.</p>
         </div>
+        <CaixaErro erro={erro} caixa={caixa} />
         <AlertDialogFooter className="gap-2">
           <AlertDialogCancel className="h-11" disabled={ocupado}>Agora não</AlertDialogCancel>
           <Button className="h-11" disabled={!todas || ocupado} aria-describedby={!todas ? 'ligar-valendo-ajuda' : undefined} onClick={onLigar}>
