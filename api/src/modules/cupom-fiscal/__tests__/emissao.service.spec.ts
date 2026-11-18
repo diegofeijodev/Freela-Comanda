@@ -184,6 +184,7 @@ beforeEach(() => {
   const guardar = (...a: unknown[]) => void logs.push(a.map(String).join(' '));
   jest.spyOn(Logger.prototype, 'log').mockImplementation(guardar);
   jest.spyOn(Logger.prototype, 'warn').mockImplementation(guardar);
+  jest.spyOn(Logger.prototype, 'error').mockImplementation(guardar);
 });
 afterEach(() => jest.restoreAllMocks());
 
@@ -645,6 +646,163 @@ describe('sem resposta, consulta e descarte', () => {
     expect(rb).toMatchObject({ situacao: 'autorizado', venda_estoque: 'lancada' });
     expect(m.est.vendas.desfazer).toEqual([a.cupom.id]);
     expect(m.est.vendas.lancar).toEqual([a.cupom.id, b.cupom.id]);
+  });
+});
+
+// --- rodada de correção 1 (Rulings T11 I1 e I2) -------------------------------------------------------------------------------------
+
+/** O DigestValue de um pedido de autorização (o da NFe assinada que saiu). */
+const digestDoPedido = (corpo: string) => /<DigestValue>([^<]+)<\/DigestValue>/.exec(corpo)![1];
+/** Consulta 100 com a chave do pedido de consulta e o `digVal` dado (null = protocolo sem `digVal`). */
+const consulta100 =
+  (digVal: string | null): Resposta =>
+  (corpo) => {
+    const x = fixture('ret-consulta-100.xml', corpo, AGORA, 'homologacao');
+    return lerRetornoConsulta(digVal === null ? x.replace(/<digVal>[^<]*<\/digVal>/, '') : x.replaceAll(DIG_FIXTURE, digVal));
+  };
+
+/** Segura a próxima chamada a `metodo` da porta: a resposta já sai da fila na hora (como a SEFAZ que respondeu), mas só volta ao soltar. */
+function segurar(m: M, metodo: 'autorizar' | 'consultar') {
+  let soltar!: () => void;
+  let chegou!: () => void;
+  const aberto = new Promise<void>((r) => (soltar = r));
+  const chegada = new Promise<void>((r) => (chegou = r));
+  const porta = m.porta as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>;
+  const original = porta[metodo].bind(m.porta);
+  porta[metodo] = async (...a: unknown[]) => {
+    porta[metodo] = original;
+    const r = original(...a);
+    chegou();
+    await aberto;
+    return r;
+  };
+  return { chegada, soltar };
+}
+
+describe('rodada 1 (I1): a autorização vale para a tentativa do digVal', () => {
+  it('duas tentativas desta chave, consulta com o digVal da 1ª → o nfeProc leva a 1ª', async () => {
+    const m = montar();
+    const { espeto } = await pronto(m);
+    responder(m, recusaNota(108, 'Serviço Paralisado Momentaneamente'), erro(true), (corpo) =>
+      consulta100(digestDoPedido(m.porta.chamadas[0].corpo))(corpo),
+    );
+    const r1 = await m.svc.emitir(venda(espeto.id), EU, AGORA);
+    expect(r1.cupom.situacao).toBe('nao_enviado');
+    await m.svc.reenviar(r1.cupom.id, EU, mais(AGORA, MIN));
+    const [t1, t2] = [nfeDoPedido(m.porta.chamadas[0].corpo), nfeDoPedido(m.porta.chamadas[1].corpo)];
+    expect(t1).not.toBe(t2);
+    const r = await m.svc.consultar(r1.cupom.id, EU, mais(AGORA, 3 * MIN));
+    expect(r.situacao).toBe('autorizado');
+    const c = cupomDe(m.t, r1.cupom.id);
+    expect(c.xml_autorizado).toContain(t1);
+    expect(c.xml_autorizado).not.toContain(t2);
+  });
+
+  it('consulta com um digVal que não casa com nenhuma tentativa → resposta inválida: sem_resposta, número preso, sem nfeProc, log de erro', async () => {
+    const m = montar();
+    const { espeto } = await pronto(m);
+    responder(m, aut('ret-autorizacao-386.xml'), consulta100('AAAAAAAAAAAAAAAAAAAAAAAAAAA='));
+    const r1 = await m.svc.emitir(venda(espeto.id), EU, AGORA);
+    expect(r1.cupom.situacao).toBe('rejeitado');
+    const r = await m.svc.consultar(r1.cupom.id, EU, mais(AGORA, 2 * MIN));
+    expect(r).toMatchObject({ situacao: 'sem_resposta', numero_reaproveitavel: false, acoes: ['consultar'], n_prot: null });
+    const c = cupomDe(m.t, r1.cupom.id);
+    expect(c.xml_autorizado).toBeNull();
+    expect(m.t.nfce_envios.find((e) => e.servico === 'consulta')).toMatchObject({
+      resultado: 'sem_resposta',
+      erro_code: 'SEFAZ_RESPOSTA_INVALIDA',
+    });
+    expect(logs.some((l) => l.includes('digval_sem_tentativa'))).toBe(true);
+    expect(logs.join('\n')).not.toContain(c.chave);
+    expect(await falha(m.svc.descartar(r1.cupom.id, 'Venda desfeita', EU, mais(AGORA, 3 * MIN)))).toMatchObject({ code: 'NFCE_SITUACAO' });
+  });
+
+  it('protocolo sem digVal: aceita com UMA tentativa desta chave que saiu; com duas → sem_resposta e número preso', async () => {
+    const uma = montar();
+    const a = await pronto(uma);
+    responder(uma, erro(false), erro(true), consulta100(null));
+    const u = await uma.svc.emitir(venda(a.espeto.id), EU, AGORA);
+    await uma.svc.reenviar(u.cupom.id, EU, mais(AGORA, MIN));
+    expect((await uma.svc.consultar(u.cupom.id, EU, mais(AGORA, 3 * MIN))).situacao).toBe('autorizado');
+    expect(cupomDe(uma.t, u.cupom.id).xml_autorizado).toContain(nfeDoPedido(uma.porta.chamadas[1].corpo));
+
+    const duas = montar();
+    const b = await pronto(duas);
+    responder(duas, aut('ret-autorizacao-386.xml'), erro(true), consulta100(null));
+    const d = await duas.svc.emitir(venda(b.espeto.id), EU, AGORA);
+    await duas.svc.reenviar(d.cupom.id, EU, mais(AGORA, MIN));
+    const r = await duas.svc.consultar(d.cupom.id, EU, mais(AGORA, 3 * MIN));
+    expect(r).toMatchObject({ situacao: 'sem_resposta', numero_reaproveitavel: false });
+    expect(cupomDe(duas.t, d.cupom.id).xml_autorizado).toBeNull();
+  });
+
+  it('T2 do envio com digVal diferente do DigestValue enviado → sem_resposta, número preso, sem nfeProc', async () => {
+    const m = montar();
+    const { espeto } = await pronto(m);
+    responder(m, (corpo) =>
+      lerRetornoAutorizacao(
+        fixture('ret-autorizacao-100.xml', corpo, AGORA, 'homologacao').replaceAll(digestDoPedido(corpo), 'AAAAAAAAAAAAAAAAAAAAAAAAAAA='),
+      ),
+    );
+    const r = await m.svc.emitir(venda(espeto.id), EU, AGORA);
+    expect(r.cupom).toMatchObject({ situacao: 'sem_resposta', numero_reaproveitavel: false, n_prot: null });
+    expect(cupomDe(m.t, r.cupom.id).xml_autorizado).toBeNull();
+    expect(m.t.nfce_envios[0]).toMatchObject({ resultado: 'sem_resposta', erro_code: 'SEFAZ_RESPOSTA_INVALIDA' });
+    expect(logs.some((l) => l.includes('digval_sem_tentativa'))).toBe(true);
+  });
+});
+
+describe('rodada 1 (I2): consulta e "Enviar de novo" cruzados', () => {
+  it('consulta na rede enquanto sai um reenvio: o 217 da consulta não sobrescreve; o 100 do reenvio grava autorizado; descartar = 409', async () => {
+    const m = montar();
+    const { espeto } = await pronto(m);
+    responder(m, aut('ret-autorizacao-386.xml'), cons('ret-consulta-217.xml'), aut('ret-autorizacao-100.xml', mais(AGORA, 3 * MIN)));
+    const r1 = await m.svc.emitir(venda(espeto.id), EU, AGORA);
+    const id = r1.cupom.id;
+
+    const consulta = segurar(m, 'consultar');
+    const pConsulta = m.svc.consultar(id, EU, mais(AGORA, 3 * MIN));
+    await consulta.chegada; // a T1 da consulta gravou e a consulta está "na rede"
+    const reenvio = segurar(m, 'autorizar');
+    const pReenvio = m.svc.reenviar(id, EU, mais(AGORA, 3 * MIN));
+    await reenvio.chegada; // a T1 do reenvio gravou `enviando` (envios 2) e o envio está "na rede"
+    consulta.soltar();
+    const rc = await pConsulta; // a consulta volta 217 (a SEFAZ ainda não tinha o 2º envio)
+    expect(rc.situacao).toBe('enviando');
+    expect(m.t.nfce_envios.find((e) => e.servico === 'consulta')).toMatchObject({
+      resultado: 'respondida',
+      erro_code: 'CUPOM_MUDOU',
+      c_stat_lote: 217,
+    });
+    reenvio.soltar();
+    const rr = await pReenvio;
+    expect(rr).toMatchObject({ situacao: 'autorizado', envios: 2 });
+    expect(cupomDe(m.t, id).xml_autorizado).toContain(nfeDoPedido(m.porta.chamadas[2].corpo));
+    expect(await falha(m.svc.descartar(id, 'Venda desfeita', EU, mais(AGORA, 4 * MIN)))).toMatchObject({
+      status: 409,
+      code: 'NFCE_SITUACAO',
+    });
+  });
+
+  it('a resposta de uma tentativa que já não é a atual, com protocolo válido desta chave, grava a autorização assim mesmo', async () => {
+    const m = montar();
+    const { espeto } = await pronto(m);
+    responder(m, aut('ret-autorizacao-386.xml'), aut('ret-autorizacao-100.xml', mais(AGORA, 3 * MIN)), cons('ret-consulta-217.xml'));
+    const r1 = await m.svc.emitir(venda(espeto.id), EU, AGORA);
+    const id = r1.cupom.id;
+    const reenvio = segurar(m, 'autorizar');
+    const pReenvio = m.svc.reenviar(id, EU, mais(AGORA, 3 * MIN));
+    await reenvio.chegada;
+    // 2 min depois do envio o `enviando` vale como sem resposta: a consulta sai e volta 217 (a SEFAZ ainda processava)
+    const rc = await m.svc.consultar(id, EU, mais(AGORA, 5 * MIN));
+    expect(rc.situacao).toBe('nao_consta');
+    reenvio.soltar();
+    const rr = await pReenvio;
+    expect(rr).toMatchObject({ situacao: 'autorizado', numero_reaproveitavel: false });
+    expect(ambienteDe(m.t, 'homologacao').situacao).toBe('ok');
+    const c = cupomDe(m.t, id);
+    expect(c.xml_autorizado).toContain(nfeDoPedido(m.porta.chamadas[1].corpo));
+    expect(c.dh_emi).toEqual(mais(AGORA, 3 * MIN));
   });
 });
 

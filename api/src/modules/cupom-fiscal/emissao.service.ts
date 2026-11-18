@@ -187,6 +187,8 @@ const COM_RECUSA: readonly SituacaoCupom[] = ['nao_enviado', 'rejeitado', 'deneg
 const AUTORIZADO_OU_DENEGADO = new Set([100, 150, 120, 110, 301, 302]);
 const CANCELADA = new Set([101, 151]);
 const EVENTO_REGISTRADO = new Set([135, 155]);
+/** `erro_code` do envio da consulta cuja resposta chegou depois de um "Enviar de novo": não decidiu nada no cupom (Ruling T11 I2). */
+export const ERRO_CUPOM_MUDOU = 'CUPOM_MUDOU';
 /** Os itens da `falta` que ligar a emissão trata com código próprio (desenho §8.4). */
 const FALTA_VALENDO: readonly CodigoFalta[] = ['teste_homologacao', 'lanca_venda'];
 
@@ -601,7 +603,8 @@ export class CupomEmissaoService {
           certificado_impressao: cert.impressaoDigital.slice(0, 64),
         },
       });
-      return { envioId, chave: c.chave, enviadoEm: inicioDaEspera({ ...para, situacao: s }) ?? agora };
+      // `envios` e `chave` de agora: a T2 só aplica a resposta se o cupom ainda está nesta tentativa (Ruling T11 I2)
+      return { envioId, chave: c.chave, envios: c.envios, enviadoEm: inicioDaEspera({ ...para, situacao: s }) ?? agora };
     }, TX);
 
     const inicio = Date.now();
@@ -619,9 +622,13 @@ export class CupomEmissaoService {
       const c = await this.cupomOu404(tx, id);
       const horas = await this.horasDoCupom(tx, id);
       const atual = situacaoEfetiva(paraAcoes(c, horas), agora);
+      const documento = DOCUMENTO.includes(c.situacao as SituacaoCupom);
+      // Ruling T11 I2: a resposta é da tentativa que existia na T1 da consulta; um "Enviar de novo" no meio (outra tentativa ou outra
+      // chave) = a resposta não decide nada no cupom (só prende o número se mostra a nota) e fica no diário com `CUPOM_MUDOU`
+      const mesma = c.envios === r1.envios && c.chave === r1.chave;
       // nota 7: protocolo de outra chave ou de outro ambiente = resposta inválida (não decide nada)
       let r = resp;
-      if (!(r instanceof SefazErro) && r.protocolo !== null && !protocoloDoCupom(r.protocolo, c.chave, a)) {
+      if (!(r instanceof SefazErro) && r.protocolo !== null && !protocoloDoCupom(r.protocolo, r1.chave, a)) {
         r = sefazErro('SEFAZ_RESPOSTA_INVALIDA', true);
         erroCode = 'SEFAZ_RESPOSTA_INVALIDA';
       }
@@ -633,11 +640,25 @@ export class CupomEmissaoService {
         enviadoEm: r1.enviadoEm,
         ultimo656: amb.ultimo_656_em,
       };
-      const acao = acaoConsulta(r, atual, ctx);
+      let acao = acaoConsulta(r, atual, ctx);
+      // Ruling T11 I1: a autorização vale para a tentativa do `digVal`; sem ela no banco = resposta inválida (número preso)
+      let nfe: string | null = null;
+      let semTentativa = false;
+      if (mesma && !documento && !(r instanceof SefazErro) && precisaDaTentativa(acao, r.protocolo)) {
+        nfe = await this.tentativaAutorizada(tx, id, c.chave, r.protocolo?.digVal ?? null);
+        if (nfe === null) {
+          semTentativa = true;
+          this.erroDigval(c, 'consulta');
+          r = sefazErro('SEFAZ_RESPOSTA_INVALIDA', true);
+          erroCode = 'SEFAZ_RESPOSTA_INVALIDA';
+          acao = acaoConsulta(r, atual, ctx);
+        }
+      }
       await tx.nfce_envios.update({
         where: { id: r1.envioId },
         data: {
           ...fechamento(r, erroCode, duracao, agora, acao.rejeicao),
+          ...(resp instanceof SefazErro ? {} : { xml_retorno: resp.xmlRetorno }),
           ...(r instanceof SefazErro
             ? {}
             : {
@@ -647,16 +668,24 @@ export class CupomEmissaoService {
                 n_prot: r.protocolo?.nProt ?? null,
                 dh_recbto: r.protocolo?.dhRecbto ?? null,
                 dig_val: r.protocolo?.digVal ?? null,
-                xml_retorno: r.xmlRetorno,
               }),
+          ...(mesma || r instanceof SefazErro ? {} : { erro_code: ERRO_CUPOM_MUDOU }),
         },
       });
-      const dados = await this.cupomDepoisDaConsulta(tx, c, atual, acao, r, agora);
+      let dados: Prisma.nfce_cuponsUpdateInput | null;
+      if (!mesma) {
+        const prende = !documento && c.numero_reaproveitavel && !(r instanceof SefazErro) && mostraANota(r);
+        dados = prende ? { numero_reaproveitavel: false, atualizado_em: agora } : null;
+      } else if (semTentativa) {
+        dados = documento ? null : { situacao: 'sem_resposta', numero_reaproveitavel: false, atualizado_em: agora };
+      } else {
+        dados = cupomDepoisDaConsulta(c, acao, r, agora, nfe);
+      }
       if (dados) await tx.nfce_cupons.update({ where: { id }, data: dados });
       await this.aplicarNoAmbiente(tx, amb, efeitoDe(acao, r instanceof SefazErro ? null : r.cStat), agora);
       return {
         antes: c.situacao as SituacaoCupom,
-        depois: acao.cupom,
+        depois: !mesma ? (c.situacao as SituacaoCupom) : semTentativa ? 'sem_resposta' : acao.cupom,
         lanca: c.lanca_venda && c.ambiente === 'producao',
         lancada: c.venda_lancada_em !== null,
       };
@@ -863,6 +892,7 @@ export class CupomEmissaoService {
           n_prot: true,
           dh_recbto: true,
           dig_val: true,
+          erro_code: true,
         },
       }),
     ]);
@@ -870,7 +900,8 @@ export class CupomEmissaoService {
     const para = paraAcoes(c, horas);
     const s = situacaoEfetiva(para, agora);
     const { acoes, consultar_a_partir_de, cancelar_ate } = acoesDoCupom(para, agora);
-    const ultimo = envios[0];
+    // a consulta que voltou depois de um "Enviar de novo" não decidiu nada: não é ela que explica a situação
+    const ultimo = envios.find((e) => e.erro_code !== ERRO_CUPOM_MUDOU);
     const recusa = COM_RECUSA.includes(s) && ultimo?.resultado === 'respondida' ? recusaDoEnvio(ultimo, c, s) : null;
     const mensagem =
       recusa?.frase ??
@@ -1207,10 +1238,12 @@ export class CupomEmissaoService {
 
     const t2 = await this.prisma.$transaction(async (tx) => {
       const amb = await this.travarAmbiente(tx, r.ambiente);
+      const c = await this.cupomOu404(tx, r.cupomId);
+      const documento = DOCUMENTO.includes(c.situacao as SituacaoCupom);
       // nota 7: protocolo de outra chave ou de outro ambiente = resposta inválida: não grava autorização (o número fica preso)
-      let efetiva = resp;
-      if (!(efetiva instanceof SefazErro) && efetiva.protocolo !== null && !protocoloDoCupom(efetiva.protocolo, r.chave, r.ambiente)) {
-        efetiva = sefazErro('SEFAZ_RESPOSTA_INVALIDA', true);
+      let validada = resp;
+      if (!(validada instanceof SefazErro) && validada.protocolo !== null && !protocoloDoCupom(validada.protocolo, r.chave, r.ambiente)) {
+        validada = sefazErro('SEFAZ_RESPOSTA_INVALIDA', true);
         erroCode = 'SEFAZ_RESPOSTA_INVALIDA';
       }
       const ctx: ContextoRetorno = {
@@ -1221,8 +1254,27 @@ export class CupomEmissaoService {
         enviadoEm: r.iniciadaEm,
         ultimo656: amb.ultimo_656_em,
       };
-      const acao = acaoAutorizacao(efetiva, ctx);
-      const p = efetiva instanceof SefazErro ? null : efetiva.protocolo;
+      // `acao` = o que a resposta faz no ambiente e no teto (vale sempre, inclusive o 656 do lote que trouxe protNFe)
+      const acao = acaoAutorizacao(validada, ctx);
+      const p = validada instanceof SefazErro ? null : validada.protocolo;
+      // Ruling T11 I1: o nfeProc é da tentativa do `digVal` (sem `digVal`, a única desta chave que saiu); sem ela = resposta inválida
+      let efetiva = validada;
+      let doCupom = acao;
+      let nfe = r.nfe;
+      let semTentativa = false;
+      if ((acao.cupom === 'autorizado' || acao.cupom === 'denegado') && p !== null) {
+        const t = await this.tentativaAutorizada(tx, r.cupomId, r.chave, p.digVal);
+        if (t === null) {
+          semTentativa = true;
+          this.erroDigval(c, 'autorizacao');
+          efetiva = sefazErro('SEFAZ_RESPOSTA_INVALIDA', true);
+          erroCode = 'SEFAZ_RESPOSTA_INVALIDA';
+          doCupom = acaoAutorizacao(efetiva, ctx);
+        } else {
+          nfe = t;
+        }
+      }
+      const pe = efetiva instanceof SefazErro ? null : efetiva.protocolo;
       await tx.nfce_envios.update({
         where: { id: r.envioId },
         data: {
@@ -1232,27 +1284,51 @@ export class CupomEmissaoService {
             ? {}
             : {
                 c_stat_lote: cStatGravavel(efetiva.cStatLote),
-                c_stat: cStatGravavel(p?.cStat),
-                x_motivo: motivoSefaz(p ? p.xMotivo : efetiva.xMotivoLote) || null,
-                n_prot: p?.nProt ?? null,
-                dh_recbto: p?.dhRecbto ?? efetiva.dhRecbto,
-                dig_val: p?.digVal ?? null,
+                c_stat: cStatGravavel(pe?.cStat),
+                x_motivo: motivoSefaz(pe ? pe.xMotivo : efetiva.xMotivoLote) || null,
+                n_prot: pe?.nProt ?? null,
+                dh_recbto: pe?.dhRecbto ?? efetiva.dhRecbto,
+                dig_val: pe?.digVal ?? null,
               }),
         },
       });
-      // a T2 só mexe no cupom se ele ainda está nesta tentativa (uma consulta pode tê-lo resolvido depois de 2 min)
-      const c = await this.cupomOu404(tx, r.cupomId);
+      // a T2 grava no cupom se ele ainda está nesta tentativa; ou, se ele já seguiu (uma consulta o resolveu depois de 2 min) mas a
+      // SEFAZ autorizou ou negou ESTA chave, grava assim mesmo (Ruling T11 I2): a nota é dela, e o número nunca pode voltar
       const desta = c.situacao === 'enviando' && c.envios === r.tentativa;
-      if (desta) await tx.nfce_cupons.update({ where: { id: r.cupomId }, data: dadosDaAutorizacao(acao, efetiva, r.nfe, agora) });
-      const codigo = efetiva instanceof SefazErro ? null : (p?.cStat ?? efetiva.cStatLote);
+      const temNota = !semTentativa && (doCupom.cupom === 'autorizado' || doCupom.cupom === 'denegado');
+      const foraDaVez = !desta && temNota && !documento && c.situacao !== 'descartado' && c.chave === r.chave;
+      if (desta || foraDaVez) {
+        await tx.nfce_cupons.update({
+          where: { id: r.cupomId },
+          data: {
+            ...dadosDaAutorizacao(doCupom, efetiva, nfe, agora),
+            ...(foraDaVez ? { dh_emi: r.iniciadaEm } : {}),
+            ...(semTentativa ? { numero_reaproveitavel: false } : {}),
+          },
+        });
+      } else if (!documento && (temNota || semTentativa) && c.numero_reaproveitavel) {
+        // a SEFAZ tem a nota deste número, mas o cupom já é outra coisa: o número não volta, e o suporte precisa ver
+        await tx.nfce_cupons.update({ where: { id: r.cupomId }, data: { numero_reaproveitavel: false, atualizado_em: agora } });
+        this.logger.error(
+          JSON.stringify({
+            evento: 'nfce.envio',
+            alerta: 'autorizacao_fora_da_vez',
+            ambiente: c.ambiente,
+            serie: c.serie,
+            numero: Number(c.numero),
+            situacao: c.situacao,
+          }),
+        );
+      }
+      const codigo = validada instanceof SefazErro ? null : (p?.cStat ?? validada.cStatLote);
       await this.aplicarNoAmbiente(
         tx,
         amb,
-        { ...efeitoDe(acao, codigo), dhRecbto: efetiva instanceof SefazErro ? null : (p?.dhRecbto ?? efetiva.dhRecbto) },
+        { ...efeitoDe(acao, codigo), dhRecbto: validada instanceof SefazErro ? null : (p?.dhRecbto ?? validada.dhRecbto) },
         agora,
       );
       // a T3 só se esta T2 gravou a autorização (quem resolveu o cupom antes já cuidou da venda)
-      return { acao, lanca: desta && c.lanca_venda && c.ambiente === 'producao' };
+      return { acao: doCupom, lanca: (desta || foraDaVez) && c.lanca_venda && c.ambiente === 'producao' };
     }, TX);
     this.logEnvio({ a: r.ambiente, servico: 'autorizacao', serie: r.serie, numero: r.numero, resp, duracao, tentativa: r.tentativa });
 
@@ -1260,74 +1336,36 @@ export class CupomEmissaoService {
   }
 
   /**
-   * O que a consulta muda no cupom (§5.1 e §5.3), num UPDATE só e respeitando o gatilho de imutável: num cupom que já é documento
-   * fiscal, só a situação e os campos do cancelamento. A nota na SEFAZ (autorizada, denegada ou cancelada) prende o número (nota 9).
-   * null = nada a gravar.
+   * A NFe da tentativa autorizada (§5.1; Ruling T11 I1), entre as tentativas desta chave: a de DigestValue igual ao `digVal` do
+   * protocolo; sem `digVal`, só se UMA tentativa desta chave saiu do servidor (`resultado` ≠ `falha_antes_de_enviar`; a que está em
+   * andamento conta). null = a NFe autorizada não está no banco: resposta inválida, nunca outra NFe no `nfeProc`.
    */
-  private async cupomDepoisDaConsulta(
-    tx: Tx,
-    c: nfce_cupons,
-    atual: SituacaoCupom,
-    acao: AcaoRetorno,
-    r: RespostaConsulta | SefazErro,
-    agora: Date,
-  ): Promise<Prisma.nfce_cuponsUpdateInput | null> {
-    const dados: Prisma.nfce_cuponsUpdateInput = {};
-    if (acao.cupom !== c.situacao) dados.situacao = acao.cupom;
-    const documento = DOCUMENTO.includes(c.situacao as SituacaoCupom);
-    if (!(r instanceof SefazErro) && !documento) {
-      const p = r.protocolo;
-      if (mostraANota(r)) dados.numero_reaproveitavel = false;
-      const comProtocolo = p !== null && p.nProt !== null && AUTORIZADO_OU_DENEGADO.has(p.cStat);
-      if ((acao.cupom === 'autorizado' || acao.cupom === 'denegado' || acao.cupom === 'cancelado') && comProtocolo) {
-        const nfe = await this.nfeDaTentativa(tx, c, p.digVal);
-        Object.assign(dados, {
-          c_stat: cStatGravavel(p.cStat),
-          x_motivo: motivoSefaz(p.xMotivo) || null,
-          n_prot: p.nProt,
-          dig_val: p.digVal,
-          autorizada_em: acao.cupom === 'denegado' ? null : (dataSefaz(p.dhRecbto) ?? agora),
-          alerta_c_msg: acao.alerta?.c_msg ?? null,
-          alerta_x_msg: acao.alerta?.x_msg ?? null,
-          xml_autorizado: nfe === null ? null : montarNfeProc(nfe, p.xml),
-          numero_reaproveitavel: false,
-        });
-      } else if (acao.cupom === 'nao_consta') {
-        Object.assign(dados, { c_stat: cStatGravavel(r.cStat), x_motivo: motivoSefaz(r.xMotivo) || null });
-      }
-    }
-    if (acao.cupom === 'cancelado' && c.situacao !== 'cancelado' && !(r instanceof SefazErro)) {
-      dados.cancelado_em = c.cancelado_em ?? agora;
-      dados.cancelamento_n_prot = r.cancelamento?.nProt ?? null;
-    }
-    if (Object.keys(dados).length === 0) return null;
-    dados.atualizado_em = agora;
-    return dados;
+  private async tentativaAutorizada(tx: Tx, cupomId: string, chave: string, digVal: string | null): Promise<string | null> {
+    const envios = await tx.nfce_envios.findMany({
+      where: { cupom_id: cupomId, servico: 'autorizacao' },
+      orderBy: { iniciada_em: 'desc' },
+      select: { xml_enviado: true, resultado: true },
+    });
+    const desta = envios.filter((e): e is { xml_enviado: string; resultado: string | null } =>
+      (e.xml_enviado ?? '').includes(`Id="NFe${chave}"`),
+    );
+    if (digVal !== null) return desta.find((e) => digestDa(e.xml_enviado) === digVal)?.xml_enviado ?? null;
+    const sairam = desta.filter((e) => e.resultado !== 'falha_antes_de_enviar');
+    return sairam.length === 1 ? sairam[0].xml_enviado : null;
   }
 
-  /**
-   * A NFe da tentativa autorizada: a de DigestValue igual ao `digVal` do protocolo (§5.1); sem `digVal`, ou sem tentativa que case, a
-   * última desta chave (com aviso no log: o `nfeProc` pode não casar com o protocolo).
-   */
-  private async nfeDaTentativa(tx: Tx, c: nfce_cupons, digVal: string | null): Promise<string | null> {
-    const envios = await tx.nfce_envios.findMany({
-      where: { cupom_id: c.id, servico: 'autorizacao' },
-      orderBy: { iniciada_em: 'desc' },
-      select: { xml_enviado: true },
-    });
-    const nfes = envios.map((e) => e.xml_enviado).filter((x): x is string => x !== null);
-    const casa = digVal === null ? undefined : nfes.find((n) => digestDa(n) === digVal);
-    if (casa) return casa;
-    this.logger.warn(
+  /** A SEFAZ diz que tem a nota, mas a NFe dela não está no banco: erro para o suporte (sem XML, chave, CPF ou CSC). */
+  private erroDigval(c: nfce_cupons, servico: 'autorizacao' | 'consulta'): void {
+    this.logger.error(
       JSON.stringify({
         evento: 'nfce.envio',
         alerta: 'digval_sem_tentativa',
         ambiente: c.ambiente,
+        servico,
         serie: c.serie,
         numero: Number(c.numero),
       }),
     );
-    return nfes.find((n) => n.includes(`Id="NFe${c.chave}"`)) ?? null;
   }
 
   /**
@@ -1733,6 +1771,57 @@ function fechamento(r: unknown, erroCode: string | null, duracao: number, agora:
 function comoSefazErro(e: unknown): { resp: SefazErro; erroCode: string | null } {
   if (e instanceof SefazErro) return { resp: e, erroCode: null };
   return { resp: sefazErro('SEFAZ_REDE', false), erroCode: 'ERRO_LOCAL' };
+}
+
+/** Protocolo autorizado ou denegado, com `nProt`: o que a SEFAZ diz que tem e que o `nfeProc` guarda. */
+const comProtocolo = (p: ProtocoloNfce | null): p is ProtocoloNfce => p !== null && p.nProt !== null && AUTORIZADO_OU_DENEGADO.has(p.cStat);
+
+/** A consulta vai gravar a autorização (ou a denegação, ou o cancelamento de uma nota que ainda não tínhamos): precisa da tentativa. */
+const precisaDaTentativa = (acao: AcaoRetorno, p: ProtocoloNfce | null): boolean =>
+  (acao.cupom === 'autorizado' || acao.cupom === 'denegado' || acao.cupom === 'cancelado') && comProtocolo(p);
+
+/**
+ * O que a consulta muda no cupom (§5.1 e §5.3), num UPDATE só e respeitando o gatilho de imutável: num cupom que já é documento
+ * fiscal, só a situação e os campos do cancelamento. A nota na SEFAZ (autorizada, denegada ou cancelada) prende o número (nota 9).
+ * `nfe` = a tentativa autorizada (`tentativaAutorizada`), já conferida quando `precisaDaTentativa`. null = nada a gravar.
+ */
+function cupomDepoisDaConsulta(
+  c: nfce_cupons,
+  acao: AcaoRetorno,
+  r: RespostaConsulta | SefazErro,
+  agora: Date,
+  nfe: string | null,
+): Prisma.nfce_cuponsUpdateInput | null {
+  const dados: Prisma.nfce_cuponsUpdateInput = {};
+  if (acao.cupom !== c.situacao) dados.situacao = acao.cupom;
+  const documento = DOCUMENTO.includes(c.situacao as SituacaoCupom);
+  if (!(r instanceof SefazErro) && !documento) {
+    const p = r.protocolo;
+    if (mostraANota(r)) dados.numero_reaproveitavel = false;
+    if (precisaDaTentativa(acao, p) && comProtocolo(p)) {
+      if (nfe === null) throw new Error('consulta: autorização sem a tentativa conferida');
+      Object.assign(dados, {
+        c_stat: cStatGravavel(p.cStat),
+        x_motivo: motivoSefaz(p.xMotivo) || null,
+        n_prot: p.nProt,
+        dig_val: p.digVal,
+        autorizada_em: acao.cupom === 'denegado' ? null : (dataSefaz(p.dhRecbto) ?? agora),
+        alerta_c_msg: acao.alerta?.c_msg ?? null,
+        alerta_x_msg: acao.alerta?.x_msg ?? null,
+        xml_autorizado: montarNfeProc(nfe, p.xml),
+        numero_reaproveitavel: false,
+      });
+    } else if (acao.cupom === 'nao_consta') {
+      Object.assign(dados, { c_stat: cStatGravavel(r.cStat), x_motivo: motivoSefaz(r.xMotivo) || null });
+    }
+  }
+  if (acao.cupom === 'cancelado' && c.situacao !== 'cancelado' && !(r instanceof SefazErro)) {
+    dados.cancelado_em = c.cancelado_em ?? agora;
+    dados.cancelamento_n_prot = r.cancelamento?.nProt ?? null;
+  }
+  if (Object.keys(dados).length === 0) return null;
+  dados.atualizado_em = agora;
+  return dados;
 }
 
 /** A resposta mostra a nota na SEFAZ (autorizada, denegada ou cancelada): o número é dela para sempre (nota 9). */
