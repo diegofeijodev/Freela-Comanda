@@ -148,6 +148,9 @@ export default function CupomPage() {
   const envioBarrado = topo && topo.formulario ? topo.texto : null;
   const reenviavel = ['nao_enviado', 'nao_consta', 'rejeitado'].includes(cupom.situacao);
   const atalho = linkDoAtalho(cupom.atalho, cupom.id, cupom.ambiente);
+  const botaoDoAtalho = atalho && (atalho.primario
+    ? <Button asChild className="h-11 w-full sm:w-auto"><Link href={atalho.href}>{atalho.rotulo}</Link></Button>
+    : <Link href={atalho.href} className={LINK}>{atalho.rotulo}</Link>);
   const esgotou = reenviavel && cupom.numero_reaproveitavel && cupom.envios >= MAX_ENVIOS;
 
   function atualizar(r: CupomDetalhe) {
@@ -429,11 +432,11 @@ export default function CupomPage() {
             </div>
           )}
           <div className="flex flex-col gap-2">
-            {/* o atalho que conserta a recusa vem do servidor (Ruling T14 I2): a tela não decide por código */}
-            {atalho && (atalho.primario
-              ? <Button asChild className="h-11 w-full sm:w-auto"><Link href={atalho.href}>{atalho.rotulo}</Link></Button>
-              : <Link href={atalho.href} className={LINK}>{atalho.rotulo}</Link>)}
+            {/* o atalho que conserta a recusa vem do servidor (Ruling T14 I2): a tela não decide por código; a ordem é a da UX 6.1 (no 539,
+                "Descartar · [Trocar a série]": o atalho depois dos botões) */}
+            {atalho && !atalho.depoisDasAcoes && botaoDoAtalho}
             {acoes}
+            {atalho && atalho.depoisDasAcoes && botaoDoAtalho}
           </div>
         </div>
 

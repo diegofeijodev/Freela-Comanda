@@ -814,24 +814,26 @@ export const toqueNoBotao = (travada: boolean, alvo: AlvoBotao): AlvoBotao | 're
  * O link do atalho que o SERVIDOR manda no cupom (`atalho`, calculado em `retornos.ts` junto da frase; Ruling T14 I2 e "T14 atalhos"): a
  * tela não classifica por código. Os rótulos são os links da UX 6.1; os destinos são as rotas da UX 1, até o CAMPO que corrige (rodada
  * de correção 1 da T15: o código de segurança e a série do ambiente do cupom; a empresa = a inscrição estadual, 1º campo do quadro).
- * `primario` = é a ação principal ("Corrigir os produtos", e então "Enviar de novo").
+ * `primario` = é a ação principal ("Corrigir os produtos", e então "Enviar de novo"). `depoisDasAcoes` = a ordem da UX 6.1: o atalho vem
+ * antes dos botões ("[Ir para Configurações] · Enviar de novo"), menos no 539, em que vem depois ("Descartar · [Trocar a série]").
  */
 export function linkDoAtalho(
   a: AtalhoCupom | null,
   cupomId: string,
   ambiente: AmbienteSefaz,
-): { rotulo: string; href: string; primario: boolean } | null {
+): { rotulo: string; href: string; primario: boolean; depoisDasAcoes: boolean } | null {
+  const antes = { primario: false, depoisDasAcoes: false };
   switch (a) {
     case 'produtos':
-      return { rotulo: 'Corrigir os produtos', href: `/cupom?aba=produtos&cupom=${cupomId}`, primario: true };
+      return { rotulo: 'Corrigir os produtos', href: `/cupom?aba=produtos&cupom=${cupomId}`, primario: true, depoisDasAcoes: false };
     case 'certificado':
-      return { rotulo: 'Ir para o certificado', href: hrefDoCampo({ aba: 'geral', id: 'certificado-digital' }), primario: false };
+      return { rotulo: 'Ir para o certificado', href: hrefDoCampo({ aba: 'geral', id: 'certificado-digital' }), ...antes };
     case 'csc':
-      return { rotulo: 'Ir para Configurações', href: hrefDoCampo({ aba: 'cupom', id: `cupom-csc-${ambiente}` }), primario: false };
+      return { rotulo: 'Ir para Configurações', href: hrefDoCampo({ aba: 'cupom', id: `cupom-csc-${ambiente}` }), ...antes };
     case 'empresa':
-      return { rotulo: 'Ir para Configurações', href: hrefDoCampo({ aba: 'cupom', id: 'cupom-ie' }), primario: false };
+      return { rotulo: 'Ir para Configurações', href: hrefDoCampo({ aba: 'cupom', id: 'cupom-ie' }), ...antes };
     case 'serie':
-      return { rotulo: 'Trocar a série', href: hrefDoCampo({ aba: 'cupom', id: `cupom-serie-${ambiente}` }), primario: false };
+      return { rotulo: 'Trocar a série', href: hrefDoCampo({ aba: 'cupom', id: `cupom-serie-${ambiente}` }), primario: false, depoisDasAcoes: true };
     default:
       return null;
   }

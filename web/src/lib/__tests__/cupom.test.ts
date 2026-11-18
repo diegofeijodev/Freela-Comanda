@@ -482,29 +482,44 @@ describe('rodada de correção 1: trava e chave da venda (I1) e o atalho do serv
   });
 
   it('linkDoAtalho: só o atalho que o servidor manda (sem tabela de códigos na tela)', () => {
-    expect(linkDoAtalho('produtos', 'c1', 'producao')).toEqual({ rotulo: 'Corrigir os produtos', href: '/cupom?aba=produtos&cupom=c1', primario: true });
+    expect(linkDoAtalho('produtos', 'c1', 'producao')).toEqual({
+      rotulo: 'Corrigir os produtos',
+      href: '/cupom?aba=produtos&cupom=c1',
+      primario: true,
+      depoisDasAcoes: false,
+    });
     expect(linkDoAtalho('certificado', 'c1', 'producao')).toEqual({
       rotulo: 'Ir para o certificado',
       href: '/configuracoes#certificado-digital',
       primario: false,
+      depoisDasAcoes: false,
     });
     // rodada de correção 1 da T15 (M2): os de Configurações levam ao CAMPO (âncora do ambiente do cupom), não ao topo da aba
     expect(linkDoAtalho('csc', 'c1', 'producao')).toEqual({
       rotulo: 'Ir para Configurações',
       href: '/configuracoes?aba=cupom#cupom-csc-producao',
       primario: false,
+      depoisDasAcoes: false,
     });
     expect(linkDoAtalho('empresa', 'c1', 'homologacao')).toEqual({
       rotulo: 'Ir para Configurações',
       href: '/configuracoes?aba=cupom#cupom-ie',
       primario: false,
+      depoisDasAcoes: false,
     });
     expect(linkDoAtalho('serie', 'c1', 'homologacao')).toEqual({
       rotulo: 'Trocar a série',
       href: '/configuracoes?aba=cupom#cupom-serie-homologacao',
       primario: false,
+      depoisDasAcoes: true,
     });
     expect(linkDoAtalho(null, 'c1', 'producao')).toBeNull();
+  });
+
+  it('linkDoAtalho: a ordem da UX 6.1 — só no 539 o atalho vem depois dos botões ("Descartar · [Trocar a série]")', () => {
+    // "Corrigir os produtos · Enviar de novo · Descartar", "[Ir para Configurações] · Enviar de novo", "[Ir para o certificado]": antes
+    for (const a of ['produtos', 'empresa', 'csc', 'certificado'] as const) expect(linkDoAtalho(a, 'c1', 'producao')?.depoisDasAcoes).toBe(false);
+    expect(linkDoAtalho('serie', 'c1', 'producao')?.depoisDasAcoes).toBe(true);
   });
 });
 
