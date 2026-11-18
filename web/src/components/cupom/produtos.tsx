@@ -189,7 +189,8 @@ export function Produtos({ itemInicial, cupomId }: { itemInicial: string | null;
               </li>
             ))}
           </ul>
-          <div className="hidden overflow-x-auto md:block">
+          {/* `relative`: o `sr-only` (absolute) do cabeçalho fica dentro da rolagem da tabela, sem rolar a página (visto em 768 px) */}
+          <div className="relative hidden overflow-x-auto md:block">
             <table className="w-full text-sm">
               <thead className="text-left text-sm text-muted-foreground">
                 <tr>
