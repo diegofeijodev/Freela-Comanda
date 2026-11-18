@@ -137,7 +137,7 @@ export class CupomFiscalController {
   @Post('cupons/:id/descartar')
   @HttpCode(200)
   descartar(@CurrentUser() eu: AuthUser, @Param('id', ParseUuidPipe) id: string, @Body() dto: DescartarCupomDto) {
-    return this.emissao.descartar(id, dto.motivo, autor(eu));
+    return this.emissao.descartar(id, dto.motivo ?? '', autor(eu));
   }
 
   /** Refaz a venda no estoque (lançar ou tirar). Não fala com a SEFAZ: funciona com o servidor desligado. */

@@ -152,8 +152,8 @@ export class PagamentoDoCupomDto {
 /** POST cupons (desenho §8.2): dinheiro em centavos inteiros; os preços são do servidor (a tela manda só o total que mostrou). */
 export class EmitirCupomDto {
   @IsUUID('all', { message: FRASES_EMISSAO.chaveDaVenda }) chave_idempotencia!: string;
+  /** Lista vazia passa daqui: o serviço responde 400 `NFCE_SEM_ITENS` (o código do desenho, não o VALIDATION_ERROR do DTO). */
   @IsArray({ message: FRASE_ERRO.NFCE_SEM_ITENS })
-  @ArrayMinSize(1, { message: FRASE_ERRO.NFCE_SEM_ITENS })
   @ArrayMaxSize(990)
   @ValidateNested({ each: true })
   @Type(() => ItemDoCupomDto)
@@ -175,11 +175,12 @@ export class EmitirCupomDto {
   total_esperado_centavos!: number;
 }
 
-/** POST cupons/:id/descartar. O tamanho (3 a 255 depois de aparar) é do serviço: 400 `NFCE_MOTIVO` com a frase da UX. */
+/** POST cupons/:id/descartar. Ausente ou fora de 3 a 255 depois de aparar: o serviço responde 400 `NFCE_MOTIVO` com a frase da UX. */
 export class DescartarCupomDto {
+  @IsOptional()
   @IsString({ message: FRASE_ERRO.NFCE_MOTIVO('descartar') })
   @MaxLength(1000, { message: FRASE_ERRO.NFCE_MOTIVO('descartar') })
-  motivo!: string;
+  motivo?: string | null;
 }
 
 /** PUT ambientes/:ambiente/emissao: ligar ou desligar; valendo, ligar pede `confirmado` (as três marcações da UX 5.1). */

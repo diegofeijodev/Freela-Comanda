@@ -2,7 +2,10 @@ import 'reflect-metadata';
 import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
 import {
+  DescartarCupomDto,
+  EmitirCupomDto,
   ItemDoCupomDto,
+  LigarEmissaoDto,
   PagamentoDoCupomDto,
   PerfilEmLoteDto,
   PerfilFiscalDto,
@@ -10,6 +13,7 @@ import {
   SalvarEmitenteDto,
   SalvarProdutoDto,
 } from '../cupom-fiscal.dto';
+import { FRASES_EMISSAO } from '../frases';
 import { FRASES_CADASTRO } from '../frases-cadastro';
 
 // Como o ValidationPipe global (whitelist + forbidNonWhitelisted + transform).
@@ -105,5 +109,54 @@ describe('peças do corpo da emissão (preparadas para a Tarefa 11)', () => {
     for (const valor_centavos of [0, -1, 1.5, '100']) {
       expect(frases(erros(PagamentoDoCupomDto, { t_pag: '01', valor_centavos }))).toContain(FRASES_CADASTRO.valorPagamento);
     }
+  });
+});
+
+describe('EmitirCupomDto (POST cupons)', () => {
+  const corpo = (o: Record<string, unknown> = {}) => ({
+    chave_idempotencia: uuid(7),
+    itens: [{ item_cardapio_id: uuid(1), quantidade: '0.350' }],
+    desconto_centavos: 0,
+    pagamentos: [{ t_pag: '17', valor_centavos: 1000 }],
+    consumidor_doc: '529.982.247-25',
+    total_esperado_centavos: 1000,
+    ...o,
+  });
+  it('o corpo do desenho passa; desconto e documento são opcionais', () => {
+    expect(erros(EmitirCupomDto, corpo())).toHaveLength(0);
+    const { desconto_centavos: _d, consumidor_doc: _c, ...minimo } = corpo();
+    expect(erros(EmitirCupomDto, minimo)).toHaveLength(0);
+  });
+  it('itens e pagamentos são conferidos um a um (aninhados): "0,350" e valor 0 falham com a frase', () => {
+    const q = erros(EmitirCupomDto, corpo({ itens: [{ item_cardapio_id: uuid(1), quantidade: '0,350' }] }));
+    expect(q.map((x) => x.property)).toEqual(['itens']);
+    expect(frases(q)).toEqual([FRASES_CADASTRO.quantidade]);
+    const p = erros(EmitirCupomDto, corpo({ pagamentos: [{ t_pag: '01', valor_centavos: 0 }] }));
+    expect(frases(p)).toContain(FRASES_CADASTRO.valorPagamento);
+    expect(frases(erros(EmitirCupomDto, corpo({ pagamentos: [] })))).toContain(FRASES_CADASTRO.tPag);
+  });
+  it('lista de itens vazia passa (o serviço responde 400 NFCE_SEM_ITENS); itens que não é lista falha', () => {
+    expect(erros(EmitirCupomDto, corpo({ itens: [] }))).toHaveLength(0);
+    expect(erros(EmitirCupomDto, corpo({ itens: 'x' })).map((x) => x.property)).toEqual(['itens']);
+  });
+  it('centavos inteiros de 0 em diante; chave da venda uuid; campo a mais (preço, entrega) é recusado', () => {
+    expect(frases(erros(EmitirCupomDto, corpo({ total_esperado_centavos: 10.5 })))).toContain(FRASES_EMISSAO.valorEmCentavos);
+    expect(frases(erros(EmitirCupomDto, corpo({ desconto_centavos: -1 })))).toContain(FRASES_EMISSAO.valorEmCentavos);
+    expect(frases(erros(EmitirCupomDto, corpo({ chave_idempotencia: 'x' })))).toContain(FRASES_EMISSAO.chaveDaVenda);
+    expect(erros(EmitirCupomDto, corpo({ entrega: 'digital' })).map((x) => x.property)).toEqual(['entrega']);
+    const comPreco = corpo({ itens: [{ item_cardapio_id: uuid(1), quantidade: '1', preco_centavos: 1 }] });
+    expect(erros(EmitirCupomDto, comPreco).map((x) => x.property)).toEqual(['itens']);
+  });
+});
+
+describe('DescartarCupomDto e LigarEmissaoDto', () => {
+  it('motivo opcional no DTO (o serviço responde NFCE_MOTIVO); ligada obrigatória e booleana', () => {
+    expect(erros(DescartarCupomDto, {})).toHaveLength(0);
+    expect(erros(DescartarCupomDto, { motivo: 'Venda desfeita' })).toHaveLength(0);
+    expect(erros(DescartarCupomDto, { motivo: 3 }).map((x) => x.property)).toEqual(['motivo']);
+    expect(erros(LigarEmissaoDto, { ligada: true })).toHaveLength(0);
+    expect(erros(LigarEmissaoDto, { ligada: true, confirmado: true })).toHaveLength(0);
+    expect(erros(LigarEmissaoDto, {}).map((x) => x.property)).toEqual(['ligada']);
+    expect(erros(LigarEmissaoDto, { ligada: 'sim' }).map((x) => x.property)).toEqual(['ligada']);
   });
 });

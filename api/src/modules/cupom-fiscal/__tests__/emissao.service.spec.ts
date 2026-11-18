@@ -391,6 +391,34 @@ describe('validação antes da T1: a porta não é chamada e nenhum cupom é cri
     await nada(m);
   });
 
+  it('montagem recusada (razão social vazia) → 422 NFCE_CUPOM_INVALIDO dentro da T1, desfeita: nada reservado', async () => {
+    const m = montar();
+    const { espeto } = await pronto(m);
+    m.t.configuracoes.razao_social = '   ';
+    const e = await falha(m.svc.emitir(venda(espeto.id), EU, AGORA));
+    expect(e).toEqual({ status: 422, code: 'NFCE_CUPOM_INVALIDO', message: 'Falta a razão social da empresa.' });
+    expect(m.est.travas).toContainEqual(['homologacao']); // chegou à T1 (trava pedida) e foi desfeita
+    expect(m.t.nfce_envios).toHaveLength(0);
+    expect(m.t.nfce_cupom_itens).toHaveLength(0);
+    await nada(m);
+  });
+
+  it('sem itens → 400 NFCE_SEM_ITENS; descarte sem motivo → 400 NFCE_MOTIVO (o serviço responde com o código do desenho)', async () => {
+    const m = montar();
+    const { espeto } = await pronto(m);
+    expect(await falha(m.svc.emitir(venda(espeto.id, { itens: [] }), EU, AGORA))).toEqual({
+      status: 400,
+      code: 'NFCE_SEM_ITENS',
+      message: FRASE_ERRO.NFCE_SEM_ITENS,
+    });
+    await nada(m);
+    expect(await falha(m.svc.descartar(randomUUID(), undefined as unknown as string, EU, AGORA))).toEqual({
+      status: 400,
+      code: 'NFCE_MOTIVO',
+      message: FRASE_ERRO.NFCE_MOTIVO('descartar'),
+    });
+  });
+
   it('pagamento menor que o total, CPF que não confere e emissão desligada também param antes', async () => {
     const m = montar();
     const { espeto } = await pronto(m);
@@ -582,6 +610,41 @@ describe('sem resposta, consulta e descarte', () => {
     const r2 = await m.svc.consultar(r1.cupom.id, EU, mais(AGORA, 2 * MIN));
     expect(r2.situacao).toBe('autorizado');
     expect(m.t.nfce_envios.map((e) => e.servico)).toEqual(['autorizacao', 'consulta']);
+  });
+
+  it('cancelando: a consulta com o evento 135 → cancelado (protocolo do cancelamento) e a T3 desfaz a venda; sem evento → volta a autorizado', async () => {
+    const m = montar({ ambiente: 'producao' });
+    const { espeto } = await pronto(m, 'producao');
+    responder(
+      m,
+      aut('ret-autorizacao-100.xml', AGORA, 'producao'),
+      aut('ret-autorizacao-100.xml', AGORA, 'producao'),
+      cons('ret-consulta-cancelada.xml', AGORA, 'producao'),
+      cons('ret-consulta-100.xml', AGORA, 'producao'),
+    );
+    const a = await m.svc.emitir(venda(espeto.id), EU, AGORA);
+    const b = await m.svc.emitir(venda(espeto.id), EU, AGORA);
+    expect(m.est.vendas.lancar).toEqual([a.cupom.id, b.cupom.id]);
+    // o pedido de cancelamento (Tarefa 12) saiu sem resposta: `cancelando`, consulta a partir de 2 min do pedido
+    for (const id of [a.cupom.id, b.cupom.id]) {
+      Object.assign(cupomDe(m.t, id), {
+        situacao: 'cancelando',
+        cancelamento_pedido_em: mais(AGORA, 5 * MIN),
+        cancelamento_motivo: 'Cliente desistiu da compra',
+      });
+    }
+    expect(await falha(m.svc.consultar(a.cupom.id, EU, mais(AGORA, 6 * MIN)))).toMatchObject({ status: 409, code: 'NFCE_CONSULTA_CEDO' });
+
+    const ra = await m.svc.consultar(a.cupom.id, EU, mais(AGORA, 7 * MIN));
+    expect(ra).toMatchObject({ situacao: 'cancelado', cancelamento_n_prot: '13526000000067890', venda_estoque: 'desfeita' });
+    expect(cupomDe(m.t, a.cupom.id)).toMatchObject({ n_prot: '13526000000012345', cancelamento_motivo: 'Cliente desistiu da compra' });
+    expect(cupomDe(m.t, a.cupom.id).cancelado_em).toEqual(mais(AGORA, 7 * MIN));
+    expect(m.est.vendas.desfazer).toEqual([a.cupom.id]);
+
+    const rb = await m.svc.consultar(b.cupom.id, EU, mais(AGORA, 7 * MIN));
+    expect(rb).toMatchObject({ situacao: 'autorizado', venda_estoque: 'lancada' });
+    expect(m.est.vendas.desfazer).toEqual([a.cupom.id]);
+    expect(m.est.vendas.lancar).toEqual([a.cupom.id, b.cupom.id]);
   });
 });
 
