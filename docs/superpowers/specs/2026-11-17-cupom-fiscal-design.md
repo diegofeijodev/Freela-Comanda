@@ -225,7 +225,8 @@ Pode cancelar até 14:34                         [Imprimir] [Ver XML] [Cancelar]
 | Regra | Valores |
 |---|---|
 | CRT 1, 2 ou 4 exige CSOSN | 102, 103, 300, 400, 500 ou 900 |
-| CRT 3 exige CST | 00, 20, 40, 41, 60 ou 90 |
+| CRT 3 exige CST | 00, 40, 41, 60 ou 90. O **20 fica barrado por ora** (decisão T6-2): o grupo `ICMS20` exige a redução da base (`pRedBC`), que o perfil não tem; a validação recusa com "O CST 20 ainda não pode ser usado no Comanda. Fale com o contador." (pergunta ao contador). O CST 00 exige a alíquota ("Informe a alíquota do ICMS.", decisão T5-3) |
+| CST de PIS e de COFINS (decisão T6-3) | 04 a 09 vão só com o CST (`PISNT`/`COFINSNT`); 49 e 99 vão em `PISOutr`/`COFINSOutr` com `vBC` 0.00, alíquota 0.0000 e valor 0.00 (prática do Simples); os que pedem alíquota (01, 02, 03, 05…) ficam barrados até o perfil ter os campos (pergunta ao contador) |
 | CFOP aceito agora | 5101, 5102, 5103, 5104, 5115, 5405, 5656 e 5667. Ficam fora: 5933 (só com ISSQN) e 5949 (gorjeta, fase 2) |
 | CSOSN 102, 103, 300, 400 ou 900 | Só com 5101, 5102, 5103, 5104 ou 5115 |
 | CSOSN 500 | Só com 5405 (ou 5656/5667) |
@@ -479,7 +480,7 @@ Valores do XML (detalhe em B.3):
 
 | Grupo | O que vai |
 |---|---|
-| `ide` | `cUF` 35 · `cNF` · `natOp` configurável (padrão "VENDA") · `mod` 65 · `serie` · `nNF` · `dhEmi` com o fuso de Brasília (calculado, não fixo) · sem `dhSaiEnt` · `tpNF` 1 · `idDest` 1 · `cMunFG` do emitente (Valinhos 3556206) · `tpImp` 4 · `tpEmis` 1 · `cDV` · `tpAmb` · `finNFe` 1 · `indFinal` 1 · `indPres` 1 · sem `indIntermed` (só exigido com `indPres` 2, 3, 4 ou 9) · `procEmi` 0 · `verProc` "FreelaComanda <versão>" (até 20) |
+| `ide` | `cUF` 35 · `cNF` · `natOp` configurável (padrão "VENDA") · `mod` 65 · `serie` · `nNF` · `dhEmi` com o fuso de Brasília: `-03:00` fixo (sem horário de verão desde 2019) e refeito a cada montagem, também no "Enviar de novo" (decisão T6-6) · sem `dhSaiEnt` · `tpNF` 1 · `idDest` 1 · `cMunFG` do emitente (Valinhos 3556206) · `tpImp` 4 · `tpEmis` 1 · `cDV` · `tpAmb` · `finNFe` 1 · `indFinal` 1 · `indPres` 1 · sem `indIntermed` (só exigido com `indPres` 2, 3, 4 ou 9) · `procEmi` 0 · `verProc` "FreelaComanda <versão>" (até 20) |
 | `emit` | `CNPJ`, razão social e nome fantasia de `configuracoes`; `enderEmit`, `IE` e `CRT` de `nfce_emitente` (§7); sem `IEST` |
 | `dest` | Só com documento: `CPF` ou `CNPJ` + `indIEDest` 9. Sem nome e sem endereço (`xNome` é opcional, conferido) |
 | `det/prod` | §3.1 · `vProd` = q × `vUnCom` arredondado a 2 casas · `indTot` 1 · `vDesc` do rateio · em homologação, `xProd` do item 1 = "NOTA FISCAL EMITIDA EM AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL" (373) |
@@ -647,7 +648,7 @@ Valores do XML (detalhe em B.3):
 
 - **Dados:** `GET /v1/cupom-fiscal/cupons/:id/danfe` devolve JSON montado **só do `nfeProc` guardado**: divisões I a IX, mais `nProt`, `cMsg` e `xMsg` do retorno. Nada vem das tabelas, porque "nada pode ser impresso que não esteja no XML".
 - **Página de impressão** `/cupom/[id]/imprimir`:
-  - sem o menu (`no-print` já existe), com `@page { size: 80mm auto; margin: 2mm }` e botão "Imprimir" (`window.print()`);
+  - sem o menu (`no-print` já existe), com `@page { margin: 0 }`, o DANFE com 72 mm de largura útil no CSS de impressão e botão "Imprimir" (`window.print()`); o papel de 80 mm se escolhe no diálogo de impressão (o `size: 80mm auto` do esboço não é CSS válido: decisão T16-2, §12);
   - serve em qualquer impressora térmica instalada no computador, e em A4.
 - **Desenho do QR no navegador:** por uma dependência pequena e sem dependências próprias (por exemplo `qrcode-generator`).
   - Versão exata conferida no registro do npm no dia; importada num arquivo só (`web/src/lib/qrcode.ts`).
@@ -918,7 +919,8 @@ Entra já na fase 1, porque o 1º cupom real de produção tem de chegar ao cont
 
 - `GET /v1/cupom-fiscal/situacao` → `{ ambiente, agora, emissao_ligada, situacao, mensagem, bloqueado_ate, serie, proximo_numero, falta, certificado: { ok, mensagem }, pendentes }`.
   - `falta`: `{ codigo, texto }[]`, com `codigo` em `ie`, `crt`, `endereco`, `serie`, `csc`, `certificado`, `cnpj`, `produto_pronto`, `teste_homologacao`, `lanca_venda`, `series_outro_sistema` (UX 10.5).
-  - `pendentes`: `{ total, primeiro: { id, serie, numero, tipo } | null }`, com `tipo` em `sem_resposta` (inclui `enviando` vencido e `cancelando`), `nao_saiu` (`nao_enviado`, `nao_consta`), `recusado` e `venda_pendente` (UX 10.7).
+  - `pendentes`: `{ total, primeiro: { id, serie, numero, tipo } | null }`, com `tipo` em `sem_resposta` (inclui `enviando` vencido), `cancelando`, `nao_saiu` (`nao_enviado`, `nao_consta`), `recusado`, `venda_pendente` (autorizado com a venda fora do estoque) e `venda_a_desfazer` (cancelado com a venda ainda no estoque) (UX 10.7; `cancelando` e `venda_a_desfazer` separados pelo Ruling T15, §12).
+  - `recusas_ate`: o teto de 10 recusas na hora atingido, com a hora em que o envio volta (UX 2.1, linha 7; §12); null = há folga.
 - `GET | PUT /v1/cupom-fiscal/emitente`.
 - `GET | PUT /v1/cupom-fiscal/ambientes/:ambiente`:
   - campos `serie`, `proximo_numero`, `id_csc` e `csc?` (só escrita; a resposta traz `csc_dica`);
@@ -1114,6 +1116,9 @@ Formato `{ error: { code, message } }`, com a frase pt-BR em `message`.
 8. **Dono e contador (nova, 17/11):** com o cliente de acordo, basta entregar o cupom só pelo QR ou pelo link, sem papel (`tpImp` 5)?
    - A dúvida vem da UX 9.1 e 10.9: o admin emite pelo celular, sem impressora.
    - Até a resposta, `tpImp` 4.
+9. **Contador (nova, leva pré-final, 18/11):** o PIX do balcão é o `tPag` 17 ("Pagamento Instantâneo (PIX) - Dinâmico", QR dinâmico)
+   ou o 20 ("… - Estático": QR estático, chave Pix ou agência e conta), pela "Tabela de Meios de pagamento" do Portal NF-e (06/03/2026)?
+   - Hoje o Comanda manda todo PIX como 17 (o CHECK do banco e a tela só têm o 17); o 20 só entra com a resposta.
 
 ### 9.3 Roteiro do 1º teste em homologação
 
@@ -1267,7 +1272,7 @@ Regra da conciliação: em conflito, vale o desenho técnico, salvo quando a UX 
 | 10.4 família da recusa | **Aceito**, por código, em `retornos.ts`. Lista fixa agora, só com os códigos da pesquisa; código fora dela = `outra`, e o 1º teste completa a lista:<br>• `produto`: 386, 725<br>• `valores`: 391, 436, 610, 629, 780, 857, 869, 899, 963<br>• `consumidor`: 786, 787, 788<br>• `hora`: 704<br>• `empresa`: nenhum código confirmado ainda | §5.3, §8.2 |
 | 10.5 `falta` com código | **Aceito**, com os 11 códigos da UX. | §8.2 |
 | 10.6 filtro de ambiente e "precisa de você" | **Aceito**; o padrão é o ambiente do servidor. | §8.2 |
-| 10.7 forma de `pendentes` | **Aceito.** `cancelando` conta como `sem_resposta`. | §8.2 |
+| 10.7 forma de `pendentes` | **Aceito.** `cancelando` contava como `sem_resposta`; o Ruling T15 o separou (e `venda_a_desfazer` de `venda_pendente`), para cada um ter a frase certa (§12). | §8.2, §12 |
 | 10.8 `venda_estoque` | **Aceito.** Para isso, o cupom passa a fotografar `lanca_venda` na T1. | §3.4, §8.1, §8.2 |
 | 10.9 `tpImp` vindo da tela | **Pergunta ao dono e ao contador** (UX 9.1). Até a resposta, `tpImp` 4, e o POST recusa o campo `entrega` (`forbidNonWhitelisted`). | §5.6 |
 | 10.10 perfil em lote | **Aceito:** `PUT /produtos/perfil`, até 500 itens, numa transação. | §8.2 |
@@ -1281,6 +1286,24 @@ Regra da conciliação: em conflito, vale o desenho técnico, salvo quando a UX 
 | 10.18 onde se editam os perfis | **Aceito:** na aba Produtos; as rotas não mudam. | §2.1 |
 | UX §6.1, §6.2 e §6.4 (textos) | **Aceito:** as tabelas 6.1 e 6.2 são o texto final que o servidor manda (`frases.ts`). As trocas da 6.4 são só de texto ou de tela e não mudam regra; em `NFCE_DOC_INVALIDO` e `NFCE_CSC_INVALIDO`, o código é um só e a frase é a do campo que falhou. | §8.4 |
 | Unidade do dinheiro (achado na conciliação) | Centavos inteiros no fio, com sufixo `_centavos`, nos dois sentidos. | §8.2 |
+
+## 12. Decisões da implementação que mudaram regra (Rulings do controlador, 17–18/11/2026)
+
+As seções acima seguem valendo; onde uma decisão abaixo muda a regra delas, vale a decisão. O registro completo, com o custo de cada uma,
+está no `progress.md` da entrega (`.superpowers/sdd/2026-11-17-cupom-fiscal/`).
+
+| Decisão | O que mudou | Onde |
+|---|---|---|
+| T6-2, T6-3, T6-6 | CST 20 barrado; PIS/COFINS só 04–09 (só o CST) e 49/99 (`Outr` zerado); `dhEmi` com `-03:00` fixo, refeito a cada montagem | §3.2, §5.2 |
+| T9-2 (e T9-2b) | A consulta pela chave e o cancelamento NÃO param nas paradas de configuração, na série em uso nem no teto de 10 recusas: só na janela do 656, na `parada_656`, na `parada_certificado` (T9-2b) e nos próprios limites. Emissão e "Testar a conexão" seguem todas as travas. Evita o beco "série parada × cupom sem resposta que não pode ser consultado" | §4.4 |
+| T9 I1 (e T9 fix) | O cancelamento tem limite próprio: 1 pedido a cada 2 min por cupom e no máximo 3 por cupom (`NFCE_CANCELAMENTO_CEDO`, `NFCE_LIMITE_CANCELAMENTOS`); só conta o pedido que saiu (a falha antes de enviar não gasta); as rejeições contam no teto da hora, mas o teto não barra o cancelamento. Os parâmetros do cupom nas travas são obrigatórios, e "Cancelar" some da tela depois do 3º pedido (a mesma contagem) | §4.4, §5.4 |
+| T10 (I1, Minor 7 e escolhas) | A série do caixa de hoje não pode ser a do Comanda em nenhum ambiente (422 `NFCE_EMITENTE_INVALIDO`; a T1 da emissão confere de novo); trocar só a série começa a série nova no número 1 (a 1ª série cadastrada fica com o número salvo antes); a conferência da lista só roda quando o pedido traz a lista; trocar a série desliga a emissão | §7.1, §7.2 |
+| T11 (I1, I2 e T11-1) | A autorização vale para a tentativa do `digVal` (sem `digVal`, só se UMA tentativa desta chave saiu); sem ela = resposta inválida (`sem_resposta`, número preso), nunca outra NFe no `nfeProc`. A resposta de uma consulta só decide se o cupom ainda está na mesma tentativa e chave. O `dh_emi` gravado é o da tentativa autorizada. O CPF completo só no detalhe do cupom (rota de admin) e no DANFE | §5.1, §5.3 |
+| T12 fix-1 (e T12 I2) | A consulta só grava `cancelado` (e desfaz a venda) com o evento 135/155 conferido (chave, `tpAmb`, `nProt`). Sem o evento: o `autorizado` vai a `cancelando` (sinal para o admin), com "A SEFAZ informa que este cupom foi cancelado, mas não mandou o comprovante. Consulte de novo mais tarde." (a mesma frase no clique); o cupom sem resposta com o `protNFe` autorizado conferido grava o `nfeProc` e também vai a `cancelando` | §5.3, §5.4 |
+| T15 | `pendentes.tipo` separa `cancelando` e `venda_a_desfazer` | §8.2 |
+| T16-2 | `@page { size: 80mm auto }` não é CSS válido: a impressão usa margem 0 e o DANFE com 72 mm de largura útil; o papel de 80 mm se escolhe no diálogo de impressão (driver da impressora) | §5.6 |
+| Leva pré-final, item 7 | O 539 de uma tentativa nova, quando outra tentativa do mesmo cupom já tem a nota no diário (a virada do mês trocou a chave), é a nossa própria nota: a emissão não para; o cupom fica `sem_resposta` com o número preso e o suporte acha a nota no diário | §5.3 |
+| Leva pré-final, item 12 | Os nomes do `tPag` no DANFE seguem a "Tabela de Meios de pagamento" do Portal NF-e (06/03/2026): o 17 é "Pagamento Instantâneo (PIX) - Dinâmico"; o PIX por QR estático ou chave é o 20, que o Comanda ainda não usa (pergunta ao contador: qual vale para o PIX do balcão) | §5.6, §9.2 |
 
 ## Fora do escopo
 

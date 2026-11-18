@@ -211,7 +211,7 @@ O botão chama `POST …/lancar-venda` (não fala com a SEFAZ). Sucesso: toast "
 - **Abrir:** o botão "Imprimir" do cupom abre a página com `?imprimir=1`. A página chama `window.print()` **uma vez**, depois que o QR desenha.
 - **Barra no alto** (`no-print`): "← Voltar ao cupom" e **Imprimir** (para imprimir de novo, ou se o navegador barrou a impressão automática).
 - **Ajuda** (`no-print`): "Escolha a impressora de cupom (80 mm). Na janela de impressão, deixe as margens em “Nenhuma” e a escala em 100%. Também imprime em folha A4."
-- **Impressão:** `@page { size: 80mm auto; margin: 2mm }`, como no desenho. Só o DANFE sai no papel; o menu e os botões já são `no-print`.
+- **Impressão:** `@page { margin: 0 }` e o DANFE com 72 mm de largura útil (a impressora de 80 mm não imprime nas bordas); o papel de 80 mm se escolhe no diálogo de impressão, como a Ajuda diz (o `size: 80mm auto` do esboço não é CSS válido: decisão T16-2, desenho §12). Só o DANFE sai no papel; o menu e os botões já são `no-print`.
 - **Cupom que não está autorizado:** "Este cupom não está autorizado, então não há cupom para imprimir." + [Voltar ao cupom]. Em `cancelado`: "Cupom cancelado às 14h20: não se imprime de novo."
 - Título da aba do navegador: "Cupom nº 12 — imprimir".
 
@@ -596,6 +596,108 @@ Tratamento "você"; verbos no imperativo nos botões; ação destrutiva sempre c
 | Etiquetas "falta NCM", "falta perfil", "sem preço de venda" | "Falta NCM", "Falta perfil fiscal", "Sem preço de venda" | Começo em maiúscula; "perfil" sozinho é vago |
 | Na busca "só aparecem produtos com NCM, perfil e preço" (§2.1) | Os prontos podem ser adicionados; os outros aparecem em cinza, no fim, sob "Não entram no cupom:", com "Completar" | Produto escondido parece produto sumido; a regra do servidor não muda (só os prontos entram) |
 | Ligar (§7.1), sem dizer como | Em teste: sem diálogo, toast com Desfazer. Valendo: diálogo com 3 confirmações | O teste não vale como documento e não mexe no estoque; o diálogo fica para o que tem risco |
+
+### 6.5 Frases que as tarefas criaram (a UX não fixava)
+Registradas na leva pré-final (18/11/2026), item 17. Todas seguem a §6.3; as do servidor saem de `api/src/modules/cupom-fiscal/frases.ts`
+(fonte única: também as do cadastro, que vinham de `frases-cadastro.ts`), geradas pelas próprias funções com valores de exemplo.
+As tabelas 6.1 e 6.2 continuam o texto final do que já estava nelas.
+
+**Servidor**
+
+| Onde aparece | Fonte | Texto |
+|---|---|---|
+| Validação do perfil | `FRASES_VALIDACAO.osDois` | "Escolha o CSOSN (Simples) ou o CST (regime normal), não os dois." |
+| Validação do perfil | `FRASES_VALIDACAO.csosnSemSt` | "O CSOSN 102 só vale com o tipo de venda (CFOP) 5.101, 5.102, 5.103, 5.104 ou 5.115." |
+| Validação do perfil | `FRASES_VALIDACAO.cfopFora` | "O tipo de venda (CFOP) 5.933 não entra no cupom." |
+| Validação do perfil (decisão T6-2) | `FRASES_VALIDACAO.cst20` | "O CST 20 ainda não pode ser usado no Comanda. Fale com o contador." |
+| Validação do perfil (decisão T5-3) | `FRASES_VALIDACAO.semAliqIcms` | "Informe a alíquota do ICMS." |
+| Validação do perfil (decisão T6-3) | `FRASES_VALIDACAO.pisCofinsBarrado` | "Este CST de PIS/COFINS ainda não pode ser usado no Comanda. Fale com o contador." |
+| Validação do produto | `FRASES_VALIDACAO.nomeCaractere` | "O nome no cupom não confere: a SEFAZ não aceita emoji nem símbolos." |
+| Validação do produto | `FRASES_VALIDACAO.unidadeCaractere` | "A unidade no cupom não confere: a SEFAZ não aceita emoji nem símbolos." |
+| Validação do perfil | `FRASES_VALIDACAO.semCfop` | "Escolha o tipo de venda (CFOP)." |
+| Validação do perfil | `FRASES_VALIDACAO.semCodigo` | "Escolha o CSOSN (Simples) ou o CST (regime normal)." |
+| Validação do perfil | `FRASES_VALIDACAO.csosnFora` | "O CSOSN 101 não entra no cupom." |
+| Validação do perfil | `FRASES_VALIDACAO.cstFora` | "O CST 10 não entra no cupom." |
+| Validação do perfil | `FRASES_VALIDACAO.cst60` | "O CST 60 só vale com o tipo de venda (CFOP) 5.405." |
+| Validação do perfil | `FRASES_VALIDACAO.aliqIcms` | "A alíquota do ICMS vai de 0 a 100, com até 2 casas." |
+| Validação do perfil | `FRASES_VALIDACAO.pisCst` | "O CST do PIS tem 2 números." |
+| Validação do perfil | `FRASES_VALIDACAO.cofinsCst` | "O CST da COFINS tem 2 números." |
+| Validação do perfil | `FRASES_VALIDACAO.cAtivSn` | "A atividade no Simples (cAtivSN) tem 2 números." |
+| Validação do perfil | `FRASES_VALIDACAO.ibsSnAliq` | "A alíquota efetiva do IBS vai de 0 a 100, com até 4 casas." |
+| Validação do perfil | `FRASES_VALIDACAO.cbsSnAliq` | "A alíquota efetiva da CBS vai de 0 a 100, com até 4 casas." |
+| Validação do perfil | `FRASES_VALIDACAO.ibscbsCst` | "O CST do IBS/CBS tem 3 números." |
+| Validação do perfil | `FRASES_VALIDACAO.ibscbsCclassTrib` | "A classificação do IBS/CBS (cClassTrib) tem 6 números." |
+| Validação do produto | `FRASES_VALIDACAO.origem` | "A origem vai de 0 a 8." |
+| Validação do produto | `FRASES_VALIDACAO.descricao` | "O nome no cupom tem até 120 letras." |
+| Validação do produto | `FRASES_VALIDACAO.unidade` | "A unidade no cupom tem até 6 letras." |
+| "Testar a conexão" | `FRASE_RETORNO.statusOutroCodigo` | "A SEFAZ não confirmou que o serviço está funcionando (código 252). Fale com o suporte do Freela Comanda e informe este código." |
+| Cupom `cancelando` sem pedido nosso e clique "Consultar" sem o evento (Ruling T12 fix-1) | `FRASE_RETORNO.cancelandoSemComprovante` | "A SEFAZ informa que este cupom foi cancelado, mas não mandou o comprovante. Consulte de novo mais tarde." |
+| Produto fora do cupom (motivos sem tag na UX) | `FRASE_ERRO.NFCE_ITEM_INDISPONIVEL (inativo)` | "Chopp 1 litro não pode entrar no cupom: inativo." |
+| Produto fora do cupom | `FRASE_ERRO.NFCE_ITEM_INDISPONIVEL (perfil_inativo)` | "Chopp 1 litro não pode entrar no cupom: perfil desativado." |
+| Produto fora do cupom | `FRASE_ERRO.NFCE_ITEM_INDISPONIVEL (perfil_fora_do_regime)` | "Chopp 1 litro não pode entrar no cupom: o perfil fiscal não vale no regime da empresa." |
+| Produto fora do cupom | `FRASE_ERRO.NFCE_ITEM_INDISPONIVEL (nome_fora_do_padrao)` | "Chopp 1 litro não pode entrar no cupom: o nome no cupom tem emoji ou símbolo." |
+| Ação recusada pela situação (rótulos da §6.3) | `FRASE_ERRO.NFCE_SITUACAO (exemplo)` | "Este cupom está sem resposta da SEFAZ; não dá para consultar na SEFAZ." |
+| Arquivo pedido que o cupom não tem | `FRASE_ERRO.NFCE_SITUACAO (arquivo)` | "Este cupom está autorizado; não dá para baixar o arquivo do cancelamento (XML)." |
+| Item que arredonda para 0 centavo (leva pré-final, item 2) | `FRASE_ERRO.NFCE_ITEM_SEM_VALOR` | "Cada produto do cupom tem de valer pelo menos R$ 0,01. Confira a quantidade." |
+| Cancelamento pedido há menos de 2 min (Ruling T9 I1) | `FRASE_ERRO.NFCE_CANCELAMENTO_CEDO` | "Espere até as 14h06 para pedir o cancelamento de novo: a SEFAZ bloqueia pedidos repetidos." |
+| Cancelamento pedido 3 vezes (Ruling T9 I1) | `FRASE_ERRO.NFCE_LIMITE_CANCELAMENTOS` | "O cancelamento deste cupom já foi pedido 3 vezes. Para não bloquear o CNPJ, não sai outro pedido: fale com o contador." |
+| Preço mudou entre a tela e o envio (desenho §8.4, adaptada: Ruling T11-2/3) | `FRASE_ERRO.NFCE_TOTAL_MUDOU` | "O preço de algum produto mudou. O total agora é R$ 53,70: confira antes de emitir." |
+| Venda sem identificação | `FRASES_EMISSAO.chaveDaVenda` | "Esta venda chegou sem identificação. Recarregue a página e monte a venda de novo." |
+| Valores fora do formato | `FRASES_EMISSAO.valorEmCentavos` | "Os valores da venda chegaram fora do formato. Recarregue a página e monte a venda de novo." |
+| Total de R$ 200.000,00 em diante | `FRASES_EMISSAO.valorMaximo` | "O total do cupom tem de ser menor que R$ 200.000,00." |
+| Preço negativo chegando aos totais (leva pré-final, item 2) | `FRASES_EMISSAO.precoInvalido` | "O preço de algum produto não confere. Confira o preço de venda no cardápio." |
+| A venda não baixou o estoque: <frase> | `FRASES_EMISSAO.vendaErro` | "o servidor não conseguiu gravar a venda agora" |
+| Arquivo do cancelamento sumido | `FRASES_LEITURA.semArquivoDoCancelamento` | "O arquivo do cancelamento deste cupom não ficou guardado. Fale com o suporte do Freela Comanda." |
+| Zip do mês: linha do csv / AVISOS.txt (Ruling T13 I1) | `FRASES_LEITURA.aviso.cancelamentoIndisponivel` | "cancelado — comprovante do cancelamento indisponível, peça ao suporte" |
+| Zip do mês: linha do csv / AVISOS.txt | `FRASES_LEITURA.aviso.cupomIndisponivel` | "autorizado — arquivo do cupom indisponível, peça ao suporte" |
+| Zip do mês: título do AVISOS.txt | `FRASES_LEITURA.aviso.titulo` | "Cupons de 11/2026 (valendo) com arquivo faltando neste zip. Fale com o suporte do Freela Comanda antes de mandar ao contador:" |
+| Zip do mês: linha do AVISOS.txt | `FRASES_LEITURA.aviso.linha` | "Série 2, nº 12: cancelado — comprovante do cancelamento indisponível, peça ao suporte." |
+| Números não usados (csv) | `FRASES_LEITURA.naoUsado.semResposta` | "Enviado à SEFAZ sem resposta: só a consulta diz se o número foi usado." |
+| Números não usados (csv) | `FRASES_LEITURA.naoUsado.outraNota` | "A SEFAZ diz que outra nota já usa este número (código 539)." |
+| Números não usados (csv) | `FRASES_LEITURA.naoUsado.notaSemArquivo` | "A SEFAZ tem uma nota com este número, mas o arquivo dela não está no Comanda." |
+| Números não usados (csv) | `FRASES_LEITURA.naoUsado.descartado` | "Descartado: a SEFAZ não registrou este número." |
+| Números não usados (csv) | `FRASES_LEITURA.naoUsado.naoSaiu` | "Não saiu: a SEFAZ não recebeu este cupom (ainda pendente no Comanda)." |
+| Números não usados (csv) | `FRASES_LEITURA.naoUsado.naoConsta` | "A SEFAZ confirmou que não tem este cupom (ainda pendente no Comanda)." |
+| Números não usados (csv) | `FRASES_LEITURA.naoUsado.recusado` | "Recusado pela SEFAZ (código 225): a SEFAZ não registrou este número (ainda pendente no Comanda)." |
+| Empresa no cupom | `FRASES_CADASTRO.municipioDeSp` | "O município tem de ser de SP (código começando com 35)." |
+| Empresa no cupom | `FRASES_CADASTRO.semMunicipio` | "Preencha o nome do município." |
+| Empresa no cupom | `FRASES_CADASTRO.semNatOp` | "Preencha a natureza da operação (por exemplo, VENDA)." |
+| Empresa no cupom (tamanho, por campo) | `FRASES_CADASTRO.campoLongo` | "A rua tem até 60 letras." |
+| Empresa no cupom (emoji, por campo) | `FRASES_CADASTRO.caractere` | "O bairro não confere: a SEFAZ não aceita emoji nem símbolos." |
+| Empresa no cupom | `FRASES_CADASTRO.email` | "Este e-mail não confere." |
+| Caixa de hoje | `FRASES_CADASTRO.semOutroComSeries` | "Marque “nenhum outro sistema” ou informe as séries do caixa de hoje, não os dois." |
+| Caixa de hoje (Ruling T10 I1) | `FRASES_CADASTRO.serieDoComanda` | "A série 2 é a do Comanda. O caixa de hoje precisa usar outra série." |
+| Reforma tributária | `FRASES_CADASTRO.tpRegimeIbscbs` | "O regime do IBS/CBS não confere." |
+| Numeração | `FRASES_CADASTRO.numeroForaDaFaixa` | "O número do próximo cupom vai de 1 a 999999999." |
+| Código de segurança sem o segredo do servidor | `FRASES_CADASTRO.semSegredo` | "O servidor ainda não está pronto para guardar o código de segurança. Fale com o suporte do Freela Comanda." |
+| Certificado | `FRASES_CADASTRO.certificadoSemCnpj` | "Preencha o CNPJ da empresa na aba Geral para conferir o certificado digital." |
+| Certificado | `FRASES_CADASTRO.certificadoOutraEmpresa` | "O certificado digital é de outra empresa (outro CNPJ). Envie o certificado da empresa em Configurações." |
+| Perfis | `FRASES_CADASTRO.perfilNomeLongo` | "O nome do perfil tem até 60 letras." |
+| Perfis | `FRASES_CADASTRO.perfilDesativado` | "Este perfil fiscal está desativado. Escolha outro." |
+| Perfil em lote | `FRASES_CADASTRO.loteTamanho` | "Escolha de 1 a 500 produtos." |
+| Produto que sumiu | `FRASES_CADASTRO.produtoSumiu` | "Algum produto escolhido não existe mais. Recarregue a lista." |
+| Pagamento | `FRASES_CADASTRO.tPag` | "Escolha a forma de pagamento." |
+| Pagamento | `FRASES_CADASTRO.valorPagamento` | "O valor de cada pagamento tem de ser maior que zero." |
+
+**Telas** (só no web)
+
+| Onde aparece | Arquivo | Texto |
+|---|---|---|
+| Emitir: o pagamento em reais (T14) | `cupom.ts` | "Use um valor como 60,00." · "Use um valor como 3,70." |
+| Emitir: a quantidade (T14) | `cupom.ts` | "Use até 4 casas depois da vírgula." · "A quantidade tem de ser maior que zero." |
+| Emitir: rótulo do botão quando o pagamento tem erro (T14) | `cupom.ts` | "Confira o pagamento" |
+| Emitir: os erros dos totais antes de enviar (T14 e leva pré-final, item 2) | `emitir.tsx` | "O desconto tem de ser menor que o valor dos produtos." · "A soma dos pagamentos é menor que o total." · "O total do cupom tem de ser menor que R$ 200.000,00." · "Quantidade com até 4 casas, ponto como separador e maior que zero." · "O preço de algum produto não confere. Confira o preço de venda no cardápio." · "O valor de cada pagamento tem de ser maior que zero." · "Cada produto do cupom tem de valer pelo menos R$ 0,01. Confira a quantidade." |
+| Emitir: a aba não montou (T14) | `cupom/page.tsx` | "Não consegui mostrar a aba Emitir agora. Recarregue a página." |
+| Cupom: copiar a chave falhou (T14) | `cupom/[id]/page.tsx` | "Não consegui copiar agora. A chave está no cupom, em "Consulte pela Chave de Acesso"." |
+| Tags dos motivos que a UX 5.7 não lista (T14) | `cupom.ts` | "Produto inativo" · "Perfil não vale no regime" |
+| A loja na rota do cupom (T14) | `cupom/page.tsx` | "Acesso negado." |
+| Faixa de pendentes: o cancelamento sem confirmação (leva pré-final, item 13) | `cupom.ts` | "O cancelamento do cupom nº 12 ainda não foi confirmado pela SEFAZ. Consulte o cupom." |
+| Faixa de pendentes: o cancelado com a venda no estoque (leva pré-final, item 13) | `cupom.ts` | "O cupom nº 9 foi cancelado, mas a venda continua no estoque." |
+| Produtos (filtro) e Emitidos (período) (T15) | `produtos.tsx`, `emitidos.tsx` | "Nenhum produto com este filtro." · "Escolha as duas datas." · "A primeira data tem de ser antes da segunda." |
+| Emitidos: próxima ação de casos que a UX não lista (T15) | `cupom.ts` | "Descarte este cupom" · "A venda ainda está no estoque" |
+| Perfis (T15) | `perfis.tsx` | "Perfil desativado." · "Perfil ativado." · tag "Não vale no regime da empresa" |
+| Configurações › Cupom fiscal (T15) | `cupom-fiscal-panel.tsx` | botões "Salvar responsável técnico" · "Salvar reforma tributária" |
+| DANFE: nome da forma de pagamento (leva pré-final, item 12) | `cupom.ts` | o da "Tabela de Meios de pagamento" do Portal NF-e: "Dinheiro" · "Cartão de Crédito" · "Cartão de Débito" · "Vale Alimentação" · "Vale Refeição" · "Pagamento Instantâneo (PIX) - Dinâmico" |
 
 ## 7. Esboços (celular 360 px; computador onde indicado)
 **E1. Emitir montando (celular).** A meta de 7 toques é com 1 unidade de cada: busca (1), Espetinho (2), Chopp (3), Dinheiro (4), "R$ 60" (5), Conferir e emitir (6), Emitir cupom (7, em E3). O esboço mostra 2 espetinhos e 3 chopps: cada unidade a mais é 1 toque no "+" (aqui, +3, total 10).
