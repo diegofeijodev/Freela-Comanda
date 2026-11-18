@@ -32,7 +32,8 @@ export interface RespostaConsulta {
   cStat: number;
   xMotivo: string;
   protocolo: ProtocoloNfce | null;
-  cancelamento: { cStat: number; nProt: string | null; xml: string } | null;
+  /** O `procEventoNFe` do cancelamento: `cStat`, `nProt`, `chave` (`chNFe`) e `tpAmb` do `retEvento` dele (para conferir contra o cupom). */
+  cancelamento: { cStat: number; nProt: string | null; chave: string | null; tpAmb: string | null; xml: string } | null;
   xmlRetorno: string;
 }
 export interface RespostaEvento {

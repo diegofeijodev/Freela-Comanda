@@ -89,7 +89,15 @@ import {
   type VendaEstoque,
 } from './situacao-cupom';
 import { calcularTotais, decimal2, precoCentavos, quantidadeValida, valorItemCentavos, type Totais, type TPag } from './totais';
-import { MAX_ENVIOS, podeChamar, STATUS_CADA_MS, type EstadoTravas, type ResultadoTrava, type SituacaoAmbiente } from './travas';
+import {
+  ESPERA_CONSULTA_MS,
+  MAX_ENVIOS,
+  podeChamar,
+  STATUS_CADA_MS,
+  type EstadoTravas,
+  type ResultadoTrava,
+  type SituacaoAmbiente,
+} from './travas';
 import { motivosDoProduto, type Crt, type MotivoProduto, type PerfilFiscal } from './validacao-fiscal';
 
 /** O corpo do POST cupons (desenho §8.2): dinheiro em centavos inteiros; `quantidade` em texto ("0.350"). */
@@ -249,6 +257,15 @@ const tpAmbDoProtocolo = (p: ProtocoloNfce): string | null => /<(?:[\w.-]+:)?tpA
 /** Nota 7 do controlador: a chave do protocolo tem de ser a do cupom e o `tpAmb` o do ambiente da chamada. */
 const protocoloDoCupom = (p: ProtocoloNfce, chave: string, a: AmbienteSefaz): boolean =>
   p.chave === chave && tpAmbDoProtocolo(p) === (a === 'producao' ? '1' : '2');
+/**
+ * Nota 4 da Tarefa 12 (e Ruling T12 I2): o evento de cancelamento registrado é DESTE cupom: a chave e o `tpAmb` do `retEvento` são os do
+ * cupom e do ambiente, e o `nProt` tem 15 ou 17 dígitos. Vale para o retorno do pedido (`cancelamento.service.ts`) e para a consulta.
+ */
+export const eventoDoCupom = (
+  e: { chave: string | null; tpAmb: string | null; nProt: string | null },
+  chave: string,
+  a: AmbienteSefaz,
+): boolean => e.chave === chave && e.tpAmb === (a === 'producao' ? '1' : '2') && e.nProt !== null && /^[0-9]{15}([0-9]{2})?$/.test(e.nProt);
 /** Primeira letra minúscula quando a palavra não é sigla ("Inscrição estadual" → "inscrição estadual"; "CNPJ da empresa" fica). */
 const minuscula = (s: string) => (/^\p{Lu}\p{Ll}/u.test(s) ? s.charAt(0).toLowerCase() + s.slice(1) : s);
 
@@ -641,6 +658,32 @@ export class CupomEmissaoService {
         ultimo656: amb.ultimo_656_em,
       };
       let acao = acaoConsulta(r, atual, ctx);
+      // Ruling T12 I2: `cancelado` (e a T3 que desfaz a venda) só com o evento 135/155 conferido contra o cupom (`eventoDoCupom`); o
+      // 101/151 sem evento legível, ou o evento de outra chave, de outro ambiente ou sem protocolo, não prova o cancelamento DESTE cupom:
+      // resposta inválida, o cupom documento fica (ou passa a) `cancelando` e o outro fica `sem_resposta`, com o número preso
+      let semProva = false;
+      if (
+        mesma &&
+        acao.cupom === 'cancelado' &&
+        atual !== 'cancelado' &&
+        !(r instanceof SefazErro) &&
+        !cancelamentoProvado(r, r1.chave, a)
+      ) {
+        semProva = true;
+        this.logger.error(
+          JSON.stringify({
+            evento: 'nfce.envio',
+            alerta: 'cancelamento_sem_prova',
+            ambiente: c.ambiente,
+            servico: 'consulta',
+            serie: c.serie,
+            numero: Number(c.numero),
+          }),
+        );
+        r = sefazErro('SEFAZ_RESPOSTA_INVALIDA', true);
+        erroCode = 'SEFAZ_RESPOSTA_INVALIDA';
+        acao = acaoConsulta(r, atual, ctx);
+      }
       // Ruling T11 I1: a autorização vale para a tentativa do `digVal`; sem ela no banco = resposta inválida (número preso)
       let nfe: string | null = null;
       let semTentativa = false;
@@ -678,16 +721,24 @@ export class CupomEmissaoService {
         dados = prende ? { numero_reaproveitavel: false, atualizado_em: agora } : null;
       } else if (semTentativa) {
         dados = documento ? null : { situacao: 'sem_resposta', numero_reaproveitavel: false, atualizado_em: agora };
+      } else if (semProva) {
+        dados = !documento
+          ? { situacao: 'sem_resposta', numero_reaproveitavel: false, atualizado_em: agora }
+          : c.situacao === 'autorizado'
+            ? { situacao: 'cancelando', atualizado_em: agora }
+            : null;
       } else {
         dados = cupomDepoisDaConsulta(c, acao, r, agora, nfe);
       }
       if (dados) await tx.nfce_cupons.update({ where: { id }, data: dados });
       await this.aplicarNoAmbiente(tx, amb, efeitoDe(acao, r instanceof SefazErro ? null : r.cStat), agora);
+      const depoisSemProva: SituacaoCupom = !documento ? 'sem_resposta' : c.situacao === 'autorizado' ? 'cancelando' : atual;
       return {
         antes: c.situacao as SituacaoCupom,
-        depois: !mesma ? (c.situacao as SituacaoCupom) : semTentativa ? 'sem_resposta' : acao.cupom,
+        depois: !mesma ? (c.situacao as SituacaoCupom) : semTentativa ? 'sem_resposta' : semProva ? depoisSemProva : acao.cupom,
         lanca: c.lanca_venda && c.ambiente === 'producao',
         lancada: c.venda_lancada_em !== null,
+        semProva,
       };
     }, TX);
     this.logEnvio({ a, servico: 'consulta', serie: c0.serie, numero: c0.numero, resp, duracao, tentativa: null });
@@ -695,7 +746,10 @@ export class CupomEmissaoService {
     if (t2.depois === 'autorizado' && t2.antes !== 'autorizado' && t2.antes !== 'cancelando' && t2.lanca)
       await this.t3(id, 'lancar', agora);
     if (t2.depois === 'cancelado' && t2.antes !== 'cancelado' && t2.lancada) await this.t3(id, 'desfazer', agora);
-    return this.detalhe(id, agora);
+    const d = await this.detalhe(id, agora);
+    // a frase do "consultar mais tarde" é a resposta deste clique (como a recusa do cancelamento): o GET depois não a repete
+    if (!t2.semProva) return d;
+    return { ...d, mensagem: FRASE_RETORNO.cancelamentoSemRegistro(d.consultar_a_partir_de ?? mais(agora, ESPERA_CONSULTA_MS)) };
   }
 
   // =========================================================================================================== descartar
@@ -1796,6 +1850,11 @@ function cupomDepoisDaConsulta(
 ): Prisma.nfce_cuponsUpdateInput | null {
   const dados: Prisma.nfce_cuponsUpdateInput = {};
   if (acao.cupom !== c.situacao) dados.situacao = acao.cupom;
+  // Ruling T12-2: o pedido de cancelamento que não entrou sai do cupom (o motivo e a hora ficam no diário, no evento assinado)
+  if (c.situacao === 'cancelando' && acao.cupom === 'autorizado') {
+    dados.cancelamento_motivo = null;
+    dados.cancelamento_pedido_em = null;
+  }
   const documento = DOCUMENTO.includes(c.situacao as SituacaoCupom);
   if (!(r instanceof SefazErro) && !documento) {
     const p = r.protocolo;
@@ -1824,6 +1883,11 @@ function cupomDepoisDaConsulta(
   if (Object.keys(dados).length === 0) return null;
   dados.atualizado_em = agora;
   return dados;
+}
+
+/** O cancelamento que a consulta mostra é deste cupom: o `procEventoNFe` registrado (135/155) e conferido (`eventoDoCupom`). */
+function cancelamentoProvado(r: RespostaConsulta, chave: string, a: AmbienteSefaz): boolean {
+  return r.cancelamento !== null && EVENTO_REGISTRADO.has(r.cancelamento.cStat) && eventoDoCupom(r.cancelamento, chave, a);
 }
 
 /** A resposta mostra a nota na SEFAZ (autorizada, denegada ou cancelada): o número é dela para sempre (nota 9). */

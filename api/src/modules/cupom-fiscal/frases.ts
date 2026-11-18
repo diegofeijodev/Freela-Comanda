@@ -124,6 +124,9 @@ export const FRASE_RETORNO = {
     `A SEFAZ não respondeu. O cupom pode ter sido autorizado. Consulte a partir das ${horaSp(consultarAPartirDe)} e não emita outro cupom para esta venda até lá.`,
   cancelamentoRecusado: (codigo: number, motivo: string) =>
     `A SEFAZ não aceitou o cancelamento (código ${codigo})${comMotivo(motivo)}. O cupom continua valendo.`,
+  /** Nova (a UX não fixa; Ruling T12 I2), no estilo da UX §6.3: a consulta diz "cancelada" sem o registro do cancelamento deste cupom. */
+  cancelamentoSemRegistro: (consultarAPartirDe: Date) =>
+    `A SEFAZ diz que este cupom foi cancelado, mas não mandou o registro do cancelamento. Consulte de novo a partir das ${horaSp(consultarAPartirDe)}.`,
   // "Testar a conexão" (UX 5.1, a linha sob o botão; o certificado, o 656 e as paradas usam as frases acima)
   statusOk: (respondeuEm: Date) => `A SEFAZ respondeu às ${horaSp(respondeuEm)}: o serviço está funcionando.`,
   statusSemContato: 'Não consegui falar com a SEFAZ. Nada foi enviado.',

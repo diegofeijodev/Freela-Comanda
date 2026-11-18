@@ -213,7 +213,10 @@ function protocoloDe(doc: Doc, corpo: string, ret: NoXml): ProtocoloNfce | null 
   return prots.length ? lerProtocolo(prots[0]) : null;
 }
 
-/** O `procEventoNFe` do cancelamento (110111, pelo `evento` ou pelo `retEvento`), com o `retEvento` dele; nenhum = null. */
+/**
+ * O `procEventoNFe` do cancelamento (110111, pelo `evento` ou pelo `retEvento`), com o `retEvento` dele; nenhum = null. A chave e o
+ * `tpAmb` vêm do `infEvento` do `retEvento` (o que a SEFAZ registrou), como texto: quem decide `cancelado` os confere contra o cupom.
+ */
 function cancelamentoDe(doc: Doc, corpo: string, ret: NoXml): RespostaConsulta['cancelamento'] {
   for (const p of filhosComTrecho(doc, corpo, ret, 'procEventoNFe')) {
     const evento = filhoDe(p.no, 'evento');
@@ -223,7 +226,7 @@ function cancelamentoDe(doc: Doc, corpo: string, ret: NoXml): RespostaConsulta['
     const tipo = (infEvento ? textoDe(infEvento, 'tpEvento') : null) ?? (infRet ? textoDe(infRet, 'tpEvento') : null);
     if (tipo !== TP_EVENTO_CANCELAMENTO) continue;
     if (!infRet) throw new XmlInvalido();
-    return { cStat: cStatDe(infRet), nProt: nProtDe(infRet), xml: p.xml };
+    return { cStat: cStatDe(infRet), nProt: nProtDe(infRet), chave: textoDe(infRet, 'chNFe'), tpAmb: textoDe(infRet, 'tpAmb'), xml: p.xml };
   }
   return null;
 }

@@ -471,7 +471,13 @@ describe('leitura dos retornos (fixtures fictícias, nProt de 17 dígitos)', () 
     const r = lerRetornoConsulta(corpo);
     expect(r.cStat).toBe(101);
     expect(r.protocolo).toMatchObject({ cStat: 100, nProt: '13526000000012345' });
-    expect(r.cancelamento).toEqual({ cStat: 135, nProt: '13526000000067890', xml: trecho(corpo, 'procEventoNFe') });
+    expect(r.cancelamento).toEqual({
+      cStat: 135,
+      nProt: '13526000000067890',
+      chave: '35261112345678000195650010000000121402133776',
+      tpAmb: '2',
+      xml: trecho(corpo, 'procEventoNFe'),
+    });
     expect(r.cancelamento!.xml.startsWith('<procEventoNFe versao="1.00">')).toBe(true);
   });
 
@@ -480,7 +486,7 @@ describe('leitura dos retornos (fixtures fictícias, nProt de 17 dígitos)', () 
     const proc = trecho(corpo, 'procEventoNFe');
     const outro = proc.replaceAll('110111', '110130').replace('<nProt>13526000000067890</nProt>', '<nProt>13526000000099999</nProt>');
     const r = lerRetornoConsulta(corpo.replace(proc, outro + proc));
-    expect(r.cancelamento).toEqual({ cStat: 135, nProt: '13526000000067890', xml: proc });
+    expect(r.cancelamento).toMatchObject({ cStat: 135, nProt: '13526000000067890', xml: proc });
     expect(lerRetornoConsulta(corpo.replace(proc, outro)).cancelamento).toBeNull();
   });
 

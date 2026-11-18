@@ -10,7 +10,7 @@
 //   Rede (fora de transação): a porta `SEFAZ_NFCE`.
 //   T2 (sob a mesma trava): confere o retorno contra a chave e o ambiente do cupom (outro, ou o registro sem `nProt` = resposta inválida
 //      = `cancelando`, a consulta decide), fecha o envio e aplica o retorno (`acaoCancelamento`) ao cupom, num UPDATE só (gatilho de
-//      imutável), e ao ambiente (656, paradas e relógio).
+//      imutável), e ao ambiente (656, paradas e o relógio, este só com a hora do registro novo: 135/155).
 //   T3 (transação própria, só se a T2 gravou `cancelado` e a venda tinha entrado no estoque): `nfce_desfazer_venda`. Falhou = o cupom fica
 //      cancelado com `venda_erro` (`desfazer_pendente`), e o "Tirar a venda do estoque" (`lancarVenda`) refaz.
 // Recusado (outro código, 656, falha antes de enviar): o cupom volta a `autorizado` sem o motivo (ele fica só no diário, no evento
@@ -36,6 +36,7 @@ import {
   dataSefaz,
   efeitoDe,
   erroDaTrava,
+  eventoDoCupom,
   fechamento,
   nfce503,
   paraAcoes,
@@ -58,7 +59,6 @@ type Pedido = { envioId: string; tentativa: number; chave: string; motivo: strin
 /** Evento registrado e vinculado à nota (o 155 é o mesmo, fora do prazo de vinculação). */
 const EVENTO_REGISTRADO = new Set([135, 155]);
 const LOTE_PROCESSADO = 128;
-const FORMATO_NPROT = /^[0-9]{15}([0-9]{2})?$/;
 /** Teto do texto antes da normalização (o DTO já corta em 1000): acima de 255 depois de normalizar, a recusa é a mesma. */
 const MOTIVO_MAX_ENTRADA = 1000;
 
@@ -182,12 +182,10 @@ export class CupomCancelamentoService {
       });
       const dados = cupomDepoisDoEvento(c, acao, r, p, ultimo?.id === p.envioId, agora);
       if (dados) await tx.nfce_cupons.update({ where: { id }, data: dados });
-      await this.emissao.aplicarNoAmbiente(
-        tx,
-        amb,
-        { ...efeitoDe(acao, codigo), dhRecbto: r instanceof SefazErro ? null : r.dhRegEvento },
-        agora,
-      );
+      // Ruling T12 I1: o relógio só confere a hora da resposta NOVA (o registro, 135/155); o 573 traz a hora do evento já registrado, que
+      // pode ser de minutos antes (o 2º pedido sai pelo menos 2 min depois do 1º) e pararia a emissão por engano
+      const dhNova = acao.cupom === 'cancelado' && !(r instanceof SefazErro) ? r.dhRegEvento : null;
+      await this.emissao.aplicarNoAmbiente(tx, amb, { ...efeitoDe(acao, codigo), dhRecbto: dhNova }, agora);
       return { acao, cancelou: dados?.situacao === 'cancelado', lancada: c.venda_lancada_em !== null };
     }, TX);
     this.emissao.logEnvio({
@@ -289,9 +287,7 @@ function retornoDoCupom(r: RespostaEvento, chave: string, a: AmbienteSefaz): boo
   const ret = /<(?:[\w.-]+:)?retEvento[\s>][\s\S]*?<\/(?:[\w.-]+:)?retEvento>/.exec(r.xmlRetorno)?.[0] ?? '';
   const ch = /<(?:[\w.-]+:)?chNFe>\s*([0-9A-Z]{44})\s*</.exec(ret)?.[1] ?? null;
   const tp = /<(?:[\w.-]+:)?tpAmb>\s*([12])\s*</.exec(ret)?.[1] ?? null;
-  if (doEvento(r) && EVENTO_REGISTRADO.has(r.cStat)) {
-    return ch === chave && tp === tpAmbDe(a) && r.nProt !== null && FORMATO_NPROT.test(r.nProt);
-  }
+  if (doEvento(r) && EVENTO_REGISTRADO.has(r.cStat)) return eventoDoCupom({ chave: ch, tpAmb: tp, nProt: r.nProt }, chave, a);
   return (ch === null || ch === chave) && (tp === null || tp === tpAmbDe(a));
 }
 

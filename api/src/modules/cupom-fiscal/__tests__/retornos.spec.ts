@@ -348,7 +348,7 @@ describe('acaoConsulta (desenho §5.3, tabela "Consulta"; §5.1 "Consultar")', (
   });
   const autorizada = (extra: Partial<RespostaConsulta> = {}) =>
     cons(100, { xMotivo: 'Autorizado o uso da NF-e', protocolo: prot(100), ...extra });
-  const evento = (cStat = 135) => ({ cStat, nProt: '135260000000099', xml: '<procEventoNFe/>' });
+  const evento = (cStat = 135) => ({ cStat, nProt: '135260000000099', chave: null, tpAmb: null, xml: '<procEventoNFe/>' });
 
   it.each<[string, RespostaConsulta | SefazErro, SituacaoCupom, Partial<AcaoRetorno>]>([
     ['217 em sem_resposta → nao_consta', cons(217), 'sem_resposta', { cupom: 'nao_consta', rejeicao: true, recusa: null }],

@@ -386,12 +386,15 @@ function respostaDe(fixture: string, chave: string, base: string): string {
     .replaceAll('<tpAmb>2</tpAmb>', '<tpAmb>1</tpAmb>');
 }
 
-/** O retorno fictício de um evento (fixtures/nfce) com a chave do pedido, a hora de agora (o relógio confere) e `tpAmb` 1 (valendo). */
+/**
+ * O retorno fictício de um evento (fixtures/nfce) com a chave do pedido e `tpAmb` 1 (valendo). O 135 traz a hora de agora (o relógio
+ * confere o registro novo); o 573 e as recusas feitas dele ficam com a hora da fixture, horas atrás (Ruling T12 I1: o relógio não as olha).
+ */
 function eventoDe(fixture: string, chave: string, cStat?: number): string {
-  const x = fixtureNfce(fixture)
-    .replaceAll(CH_FIXTURE, chave)
-    .replace(/<dhRegEvento>[^<]*<\/dhRegEvento>/g, `<dhRegEvento>${dhSefaz(new Date())}</dhRegEvento>`)
-    .replaceAll('<tpAmb>2</tpAmb>', '<tpAmb>1</tpAmb>');
+  let x = fixtureNfce(fixture).replaceAll(CH_FIXTURE, chave).replaceAll('<tpAmb>2</tpAmb>', '<tpAmb>1</tpAmb>');
+  if (fixture === 'ret-evento-135.xml') {
+    x = x.replace(/<dhRegEvento>[^<]*<\/dhRegEvento>/g, `<dhRegEvento>${dhSefaz(new Date())}</dhRegEvento>`);
+  }
   return cStat === undefined ? x : x.replace(/<cStat>573<\/cStat>/, `<cStat>${cStat}</cStat>`);
 }
 
@@ -583,6 +586,8 @@ async function emissaoNoBanco(db: PrismaClient, a: Item): Promise<void> {
       (await vendaDo(r2.cupom.id)) === 1,
     `573: cancelando gravado pela T1 sob o gatilho, com o motivo e a hora do pedido; a venda fica (veio ${k1.situacao})`,
   );
+  const amb573 = await db.nfce_ambientes.findUniqueOrThrow({ where: { ambiente: 'producao' } });
+  conferir(amb573.situacao === 'ok' && amb573.mensagem === null, '573 com a hora de horas atrás: o relógio não para a emissão');
   const e573 = await db.nfce_envios.findFirstOrThrow({ where: { cupom_id: r2.cupom.id, servico: 'cancelamento' } });
   conferir(
     e573.resultado === 'respondida' &&
@@ -603,8 +608,11 @@ async function emissaoNoBanco(db: PrismaClient, a: Item): Promise<void> {
   const k2 = await svc.consultar(r2.cupom.id, QUEM, new Date(Date.now() + 3 * 60_000));
   consultaCancelada = false;
   conferir(
-    k2.situacao === 'cancelado' && k2.venda_estoque === 'desfeita' && (await vendaDo(r2.cupom.id)) === 0,
-    `a consulta achou o cancelamento: cancelado e a venda desfeita (veio ${k2.situacao}/${k2.venda_estoque})`,
+    k2.situacao === 'cancelado' &&
+      k2.venda_estoque === 'desfeita' &&
+      k2.cancelamento_n_prot === '13526000000067890' &&
+      (await vendaDo(r2.cupom.id)) === 0,
+    `a consulta achou o cancelamento conferido: cancelado e a venda desfeita (veio ${k2.situacao}/${k2.venda_estoque})`,
   );
 
   // 5b. 135 direto: cancelado num UPDATE só (com o protocolo e o motivo), a T3 apaga a venda e as baixas uma vez só

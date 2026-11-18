@@ -138,11 +138,11 @@ const ev =
     lerRetornoEvento(mexer(trocar(fixtureNfce(nome), corpo, dh, a)));
 /** A consulta pela chave: a nota (100) do 1º pedido de autorização desta chave, e o cancelamento quando a fixture o traz. */
 const cons =
-  (m: M, nome: string, dh: Date, a: Amb = 'producao'): Resposta =>
+  (m: M, nome: string, dh: Date, a: Amb = 'producao', mexer: (x: string) => string = (x) => x): Resposta =>
   (corpo) => {
     const chave = chaveDo(corpo);
     const base = m.porta.chamadas.find((c) => c.servico === 'autorizacao' && c.corpo.includes(`Id="NFe${chave}"`))!.corpo;
-    return lerRetornoConsulta(trocar(fixtureNfce(nome), base, dh, a));
+    return lerRetornoConsulta(mexer(trocar(fixtureNfce(nome), base, dh, a)));
   };
 /** Recusa do evento com outro código (o 573 da fixture com o cStat trocado). */
 const recusaEvento = (cStat: number, xMotivo: string, dh: Date, a: Amb = 'producao') =>
@@ -364,6 +364,10 @@ describe('573 ou sem resposta → cancelando, e a consulta (Tarefa 11) resolve',
     const c = await m.emissao.consultar(id, EU, mais(t1, 2 * MIN));
     expect(c).toMatchObject({ situacao: 'autorizado', venda_estoque: 'lancada' });
     expect(c.acoes).toContain('cancelar');
+    // Ruling T12-2: o pedido que não entrou sai do cupom (fica no diário)
+    expect(c).toMatchObject({ cancelamento_motivo: null, cancelamento_pedido_em: null });
+    expect(cupomDe(m.t, id)).toMatchObject({ cancelamento_motivo: null, cancelamento_pedido_em: null });
+    expect(enviosDe(m.t, id)[0].xml_enviado).toContain(`<xJust>${MOTIVO}</xJust>`);
 
     const t2 = mais(t1, 3 * MIN);
     responder(m, ev('ret-evento-135.xml', t2));
@@ -415,6 +419,92 @@ describe('573 ou sem resposta → cancelando, e a consulta (Tarefa 11) resolve',
     const r = await p;
     expect(r).toMatchObject({ situacao: 'cancelado', cancelamento_n_prot: '13526000000067890', venda_estoque: 'desfeita' });
     expect(m.est.vendas.desfazer).toEqual([id]);
+  });
+});
+
+describe('relógio só na resposta nova (Ruling T12 I1)', () => {
+  it('573 com o dhRegEvento de 5 min atrás: cancelando, e o ambiente continua ok', async () => {
+    const m = montar();
+    const id = await autorizado(m);
+    const agora = mais(T0, 10 * MIN);
+    responder(m, ev('ret-evento-573.xml', mais(agora, -5 * MIN)));
+    expect((await m.svc.cancelar(id, MOTIVO, EU, agora)).situacao).toBe('cancelando');
+    expect(ambienteDe(m.t, 'producao')).toMatchObject({ situacao: 'ok', mensagem: null, emissao_ligada: true });
+  });
+
+  it('o 2º pedido volta 573 com a hora do 1º evento (3 min antes): cancelando, ambiente ok, sem histórico de parada', async () => {
+    const m = montar();
+    const id = await autorizado(m);
+    const t1 = mais(T0, 5 * MIN);
+    responder(m, erro(true), cons(m, 'ret-consulta-100.xml', mais(t1, 2 * MIN)), ev('ret-evento-573.xml', t1));
+    await m.svc.cancelar(id, MOTIVO, EU, t1);
+    expect((await m.emissao.consultar(id, EU, mais(t1, 2 * MIN))).situacao).toBe('autorizado');
+    const r = await m.svc.cancelar(id, MOTIVO, EU, mais(t1, 3 * MIN));
+    expect(r).toMatchObject({ situacao: 'cancelando', recusa: null });
+    expect(ambienteDe(m.t, 'producao')).toMatchObject({ situacao: 'ok', mensagem: null });
+    expect(m.t.nfce_ambientes_historico.filter((h) => h.evento === 'parada_automatica')).toHaveLength(0);
+  });
+
+  it('135 com o dhRegEvento 3 min fora: o cupom fica cancelado e o ambiente para pelo relógio', async () => {
+    const m = montar();
+    const id = await autorizado(m);
+    const agora = mais(T0, 10 * MIN);
+    responder(m, ev('ret-evento-135.xml', mais(agora, -3 * MIN)));
+    expect((await m.svc.cancelar(id, MOTIVO, EU, agora)).situacao).toBe('cancelado');
+    expect(ambienteDe(m.t, 'producao')).toMatchObject({ situacao: 'parada_configuracao', mensagem: FRASE_RETORNO.relogio });
+  });
+});
+
+describe('a consulta só grava cancelado com o evento conferido (Ruling T12 I2)', () => {
+  /** Só no `retEvento` do `procEventoNFe` (o `evento` assinado e o `protNFe` ficam como estão). */
+  const noRetEvento = (troca: (ret: string) => string) => (x: string) => x.replace(/<retEvento[\s\S]*?<\/retEvento>/, (ret) => troca(ret));
+  const casos: [string, (x: string) => string][] = [
+    ['evento de outra chave', noRetEvento((ret) => ret.replace(/<chNFe>[0-9]{44}<\/chNFe>/, `<chNFe>${CH_FIXTURE}</chNFe>`))],
+    ['evento de outro ambiente', noRetEvento((ret) => ret.replace('<tpAmb>1</tpAmb>', '<tpAmb>2</tpAmb>'))],
+    ['evento sem nProt', noRetEvento((ret) => ret.replace(/<nProt>[^<]*<\/nProt>/, ''))],
+    ['101 sem o procEventoNFe', (x) => x.replace(/<procEventoNFe[\s\S]*?<\/procEventoNFe>/, '')],
+  ];
+  it.each(casos)('%s: o cancelando continua cancelando, sem desfazer a venda, com a frase de consultar mais tarde', async (_n, mexer) => {
+    const m = montar();
+    const id = await autorizado(m);
+    const t1 = mais(T0, 5 * MIN);
+    const tc = mais(t1, 2 * MIN);
+    responder(m, ev('ret-evento-573.xml', t1), cons(m, 'ret-consulta-cancelada.xml', tc, 'producao', mexer));
+    await m.svc.cancelar(id, MOTIVO, EU, t1);
+    const c = await m.emissao.consultar(id, EU, tc);
+    expect(c).toMatchObject({
+      situacao: 'cancelando',
+      cancelamento_n_prot: null,
+      cancelado_em: null,
+      venda_estoque: 'lancada',
+      acoes: ['consultar'],
+      mensagem: FRASE_RETORNO.cancelamentoSemRegistro(mais(tc, 2 * MIN)),
+    });
+    expect(cupomDe(m.t, id)).toMatchObject({ situacao: 'cancelando', cancelamento_motivo: MOTIVO, numero_reaproveitavel: false });
+    expect(m.est.vendas.desfazer).toEqual([]);
+    expect(enviosDe(m.t, id, 'consulta')[0]).toMatchObject({ resultado: 'sem_resposta', erro_code: 'SEFAZ_RESPOSTA_INVALIDA' });
+    expect(logs.some((l) => l.includes('cancelamento_sem_prova'))).toBe(true);
+  });
+
+  it('101 sem evento num cupom autorizado: passa a cancelando (nunca cancelado às cegas)', async () => {
+    const m = montar();
+    const id = await autorizado(m);
+    const tc = mais(T0, 3 * MIN);
+    responder(m, cons(m, 'ret-consulta-cancelada.xml', tc, 'producao', casos[3][1]));
+    const c = await m.emissao.consultar(id, EU, tc);
+    expect(c).toMatchObject({ situacao: 'cancelando', cancelado_em: null, venda_estoque: 'lancada' });
+    expect(m.est.vendas.desfazer).toEqual([]);
+  });
+
+  it('101 sem evento num cupom sem resposta: sem_resposta com o número preso, sem nfeProc', async () => {
+    const m = montar();
+    const espeto = await pronto(m);
+    responder(m, erro(true), cons(m, 'ret-consulta-cancelada.xml', mais(T0, 2 * MIN), 'producao', casos[3][1]));
+    const e = await m.emissao.emitir(venda(espeto.id), EU, T0);
+    expect(e.cupom.situacao).toBe('sem_resposta');
+    const c = await m.emissao.consultar(e.cupom.id, EU, mais(T0, 2 * MIN));
+    expect(c.situacao).toBe('sem_resposta');
+    expect(cupomDe(m.t, e.cupom.id)).toMatchObject({ numero_reaproveitavel: false, xml_autorizado: null, cancelado_em: null });
   });
 });
 
