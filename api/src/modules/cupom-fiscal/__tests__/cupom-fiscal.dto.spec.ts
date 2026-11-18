@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
 import {
+  CancelarCupomDto,
   DescartarCupomDto,
   EmitirCupomDto,
   ItemDoCupomDto,
@@ -13,7 +14,7 @@ import {
   SalvarEmitenteDto,
   SalvarProdutoDto,
 } from '../cupom-fiscal.dto';
-import { FRASES_EMISSAO } from '../frases';
+import { FRASE_ERRO, FRASES_EMISSAO } from '../frases';
 import { FRASES_CADASTRO } from '../frases-cadastro';
 
 // Como o ValidationPipe global (whitelist + forbidNonWhitelisted + transform).
@@ -158,5 +159,15 @@ describe('DescartarCupomDto e LigarEmissaoDto', () => {
     expect(erros(LigarEmissaoDto, { ligada: true, confirmado: true })).toHaveLength(0);
     expect(erros(LigarEmissaoDto, {}).map((x) => x.property)).toEqual(['ligada']);
     expect(erros(LigarEmissaoDto, { ligada: 'sim' }).map((x) => x.property)).toEqual(['ligada']);
+  });
+});
+
+describe('CancelarCupomDto (POST cupons/:id/cancelar)', () => {
+  it('motivo opcional no DTO (o serviço responde NFCE_MOTIVO); não texto ou acima de 1000 = a frase do cancelar; campo a mais falha', () => {
+    expect(erros(CancelarCupomDto, {})).toHaveLength(0);
+    expect(erros(CancelarCupomDto, { motivo: 'Cliente desistiu da compra' })).toHaveLength(0);
+    expect(frases(erros(CancelarCupomDto, { motivo: 3 }))).toContain(FRASE_ERRO.NFCE_MOTIVO('cancelar'));
+    expect(frases(erros(CancelarCupomDto, { motivo: 'x'.repeat(1001) }))).toEqual([FRASE_ERRO.NFCE_MOTIVO('cancelar')]);
+    expect(erros(CancelarCupomDto, { motivo: 'Cliente desistiu da compra', n_prot: '1' }).map((x) => x.property)).toEqual(['n_prot']);
   });
 });

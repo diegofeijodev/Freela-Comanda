@@ -132,6 +132,7 @@ describe('proteção das rotas (substitui as políticas RLS do Supabase)', () =>
       { rota: 'POST /v1/cupom-fiscal/cupons', marca: 'admin' },
       { rota: 'POST /v1/cupom-fiscal/cupons/:id/reenviar', marca: 'admin' },
       { rota: 'POST /v1/cupom-fiscal/cupons/:id/consultar', marca: 'admin' },
+      { rota: 'POST /v1/cupom-fiscal/cupons/:id/cancelar', marca: 'admin' },
       { rota: 'POST /v1/cupom-fiscal/cupons/:id/descartar', marca: 'admin' },
       { rota: 'POST /v1/cupom-fiscal/cupons/:id/lancar-venda', marca: 'admin' },
       { rota: 'GET /v1/cupom-fiscal/perfis', marca: 'admin' },

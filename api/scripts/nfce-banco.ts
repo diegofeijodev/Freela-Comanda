@@ -2,8 +2,9 @@
 // CHECKs da série e do número, o índice único parcial dos cupons vivos), os gatilhos de imutável (`nfce_cupons_imutavel` e
 // `nfce_filhos_imutaveis`, inclusive o ON DELETE SET NULL do cardápio que passa) e as funções da venda (`nfce_lancar_venda` soma as linhas
 // do mesmo item, a baixa vem do gatilho `vendas_baixa`, idempotente, recusa homologação; `nfce_desfazer_venda` apaga a venda e as baixas).
-// Depois, a emissão (Task 11) com o serviço de verdade, a porta da NFC-e FALSA e o certificado fictício dos testes: T1 → porta → T2 → T3
-// (ver `emissao`). Nenhuma rede (o smoke ainda roda sob a barreira). Cada checagem conta um "ok"; a 1ª que falha sai com erro.
+// Depois, a emissão (Task 11) e o cancelamento (Task 12) com os serviços de verdade, a porta da NFC-e FALSA e o certificado fictício dos
+// testes: T1 → porta → T2 → T3 (ver `emissao`). Nenhuma rede (o smoke ainda roda sob a barreira). Cada checagem conta um "ok"; a 1ª que
+// falha sai com erro.
 // Uso (o smoke-capped.sh já chama):
 //   DATABASE_URL=... npx ts-node --transpile-only scripts/nfce-banco.ts
 // Só roda no banco descartável do smoke: em qualquer outro, sai com erro ANTES de conectar (nada é apagado). Os cupons nunca são
@@ -17,13 +18,14 @@ import type { PrismaService } from '../src/common/database/prisma.service';
 import { montarChaveNfce } from '../src/common/fiscal/chave-acesso';
 import { todaySp } from '../src/common/time/dates';
 import { CupomCadastroService } from '../src/modules/cupom-fiscal/cadastro.service';
+import { CupomCancelamentoService } from '../src/modules/cupom-fiscal/cancelamento.service';
 import { cifrarCsc } from '../src/modules/cupom-fiscal/csc';
 import { CupomEmissaoService, type VendaParaCupom } from '../src/modules/cupom-fiscal/emissao.service';
 import { FRASES_EMISSAO } from '../src/modules/cupom-fiscal/frases';
 import { CLIENTE } from '../src/modules/sefaz/__tests__/certificado-teste';
 import { fixtureNfce, SefazNfceFalso } from '../src/modules/sefaz/__tests__/sefaz-nfce.falso';
 import { dhSefaz } from '../src/modules/sefaz/eventos-xml';
-import { lerRetornoAutorizacao, lerRetornoConsulta } from '../src/modules/sefaz/nfce.adapter';
+import { lerRetornoAutorizacao, lerRetornoConsulta, lerRetornoEvento } from '../src/modules/sefaz/nfce.adapter';
 import { sefazErro } from '../src/modules/sefaz/sefaz-erro';
 
 /** O nome que o `smoke-capped.sh` dá ao banco que ele recria a cada rodada. */
@@ -384,12 +386,23 @@ function respostaDe(fixture: string, chave: string, base: string): string {
     .replaceAll('<tpAmb>2</tpAmb>', '<tpAmb>1</tpAmb>');
 }
 
+/** O retorno fictício de um evento (fixtures/nfce) com a chave do pedido, a hora de agora (o relógio confere) e `tpAmb` 1 (valendo). */
+function eventoDe(fixture: string, chave: string, cStat?: number): string {
+  const x = fixtureNfce(fixture)
+    .replaceAll(CH_FIXTURE, chave)
+    .replace(/<dhRegEvento>[^<]*<\/dhRegEvento>/g, `<dhRegEvento>${dhSefaz(new Date())}</dhRegEvento>`)
+    .replaceAll('<tpAmb>2</tpAmb>', '<tpAmb>1</tpAmb>');
+  return cStat === undefined ? x : x.replace(/<cStat>573<\/cStat>/, `<cStat>${cStat}</cStat>`);
+}
+
 /**
  * Emissão valendo contra o Postgres de verdade: ligar pela rota, dois `emitir` em paralelo (o `FOR UPDATE` da T1 = N e N+1), a T2 que
  * grava `autorizado` num UPDATE só (o gatilho de imutável aceita) e a T3 com `nfce_lancar_venda` (uma venda e uma baixa por cupom; de
  * novo = 409), a consulta num cupom autorizado (só a lista branca), a T3 que falha (venda repetida no banco: `venda_erro` gravado no
- * autorizado) e o "Lançar de novo", o número descartado que volta (índice parcial: descartado + vivo) e a série do caixa de hoje igual à
- * daqui (a T1 recusa sem reservar nem enviar). Devolve o emitente, os ambientes e a empresa como estavam.
+ * autorizado) e o "Lançar de novo", o número descartado que volta (índice parcial: descartado + vivo), o cancelamento (Task 12: T1
+ * `autorizado → cancelando`, 573 que fica `cancelando` até a consulta achar o evento, 135 direto a `cancelado`, recusa que volta a
+ * `autorizado` sem o motivo, a venda desfeita uma vez só e o gatilho recusando o resto) e a série do caixa de hoje igual à daqui (a T1
+ * recusa sem reservar nem enviar). Devolve o emitente, os ambientes e a empresa como estavam.
  */
 async function emissao(db: PrismaClient, a: Item): Promise<void> {
   const conf = await db.configuracoes.findUniqueOrThrow({ where: { id: 1 } });
@@ -413,9 +426,13 @@ async function emissaoNoBanco(db: PrismaClient, a: Item): Promise<void> {
   const prisma = db as unknown as PrismaService;
   const cadastro = new CupomCadastroService(prisma, config, certificados);
   const svc = new CupomEmissaoService(prisma, config, certificados, porta, cadastro);
+  const cancelamento = new CupomCancelamentoService(prisma, porta, svc);
 
-  // a porta falsa responde a cada pedido com a chave e o DigestValue dele: autorizado (100), ou "não consegui falar" quando pedido
+  // a porta falsa responde a cada pedido com a chave e o DigestValue dele: autorizado (100), ou "não consegui falar" quando pedido;
+  // o evento, com o código escolhido em `evento`; a consulta, com a nota (100) ou, com `consultaCancelada`, a nota e o cancelamento
   let proxima: 'autorizar' | 'nao_enviado' = 'autorizar';
+  let evento: 135 | 573 | 501 = 135;
+  let consultaCancelada = false;
   porta.aoChamar = () => {
     const ult = porta.chamadas[porta.chamadas.length - 1]!;
     if (ult.servico === 'autorizacao') {
@@ -428,7 +445,12 @@ async function emissaoNoBanco(db: PrismaClient, a: Item): Promise<void> {
     } else if (ult.servico === 'consulta') {
       const chave = /<chNFe>([0-9A-Z]{44})<\/chNFe>/.exec(ult.corpo)![1]!;
       const base = porta.chamadas.find((c) => c.servico === 'autorizacao' && c.corpo.includes(`Id="NFe${chave}"`))!.corpo;
-      porta.respostas.push(lerRetornoConsulta(respostaDe('ret-consulta-100.xml', chave, base)));
+      const fixture = consultaCancelada ? 'ret-consulta-cancelada.xml' : 'ret-consulta-100.xml';
+      porta.respostas.push(lerRetornoConsulta(respostaDe(fixture, chave, base)));
+    } else if (ult.servico === 'evento') {
+      const chave = /<chNFe>([0-9A-Z]{44})<\/chNFe>/.exec(ult.corpo)![1]!;
+      const x = evento === 135 ? eventoDe('ret-evento-135.xml', chave) : eventoDe('ret-evento-573.xml', chave, evento);
+      porta.respostas.push(lerRetornoEvento(x));
     }
   };
 
@@ -545,7 +567,100 @@ async function emissaoNoBanco(db: PrismaClient, a: Item): Promise<void> {
   conferir(r5.cupom.numero === n3 + 1 && r5.cupom.situacao === 'autorizado' && r5.cupom.id !== r4.cupom.id, 'o número descartado volta');
   conferir((await proximoNumero()) === BigInt(n3 + 2), 'o reaproveitado não avança o próximo número');
 
-  // 5. a série daqui virou uma das do caixa de hoje (fora da rota, que recusaria): a T1 recusa sem reservar número nem chamar a porta
+  // 5. cancelamento (Task 12) sob o gatilho de imutável e com a venda de verdade
+  const vendaDo = (id: string) => db.vendas.count({ where: { nfce_cupom_id: id } });
+  const cupom = (id: string) => db.nfce_cupons.findUniqueOrThrow({ where: { id } });
+  const MOTIVO = 'Cliente desistiu da compra';
+  // 5a. 573: a T1 grava `cancelando` (autorizado → cancelando passa no gatilho) e a T2 deixa assim; a venda fica até a resposta
+  evento = 573;
+  const k1 = await cancelamento.cancelar(r2.cupom.id, MOTIVO, QUEM);
+  const c573 = await cupom(r2.cupom.id);
+  conferir(
+    k1.situacao === 'cancelando' &&
+      c573.situacao === 'cancelando' &&
+      c573.cancelamento_motivo === MOTIVO &&
+      c573.cancelamento_pedido_em !== null &&
+      (await vendaDo(r2.cupom.id)) === 1,
+    `573: cancelando gravado pela T1 sob o gatilho, com o motivo e a hora do pedido; a venda fica (veio ${k1.situacao})`,
+  );
+  const e573 = await db.nfce_envios.findFirstOrThrow({ where: { cupom_id: r2.cupom.id, servico: 'cancelamento' } });
+  conferir(
+    e573.resultado === 'respondida' &&
+      e573.c_stat === 573 &&
+      e573.tentativa === 1 &&
+      !!e573.xml_enviado?.includes(`<xJust>${MOTIVO}</xJust>`),
+    'o pedido de cancelamento no diário: o evento assinado com o motivo e o 573',
+  );
+  await recusa(
+    db,
+    Prisma.sql`UPDATE nfce_cupons SET n_prot = '135260000000998' WHERE id = ${r2.cupom.id}::uuid`,
+    DOC_FISCAL,
+    'protocolo da autorização do cancelando',
+  );
+  await recusaHttp(cancelamento.cancelar(r2.cupom.id, MOTIVO, QUEM), 409, 'NFCE_SITUACAO', 'cancelar de novo o cancelando = 409');
+  // a consulta (2 min depois do pedido) acha o evento: cancelando → cancelado e a T3 desfaz a venda
+  consultaCancelada = true;
+  const k2 = await svc.consultar(r2.cupom.id, QUEM, new Date(Date.now() + 3 * 60_000));
+  consultaCancelada = false;
+  conferir(
+    k2.situacao === 'cancelado' && k2.venda_estoque === 'desfeita' && (await vendaDo(r2.cupom.id)) === 0,
+    `a consulta achou o cancelamento: cancelado e a venda desfeita (veio ${k2.situacao}/${k2.venda_estoque})`,
+  );
+
+  // 5b. 135 direto: cancelado num UPDATE só (com o protocolo e o motivo), a T3 apaga a venda e as baixas uma vez só
+  evento = 135;
+  const vendaR5 = await db.vendas.findFirstOrThrow({ where: { nfce_cupom_id: r5.cupom.id } });
+  const k3 = await cancelamento.cancelar(r5.cupom.id, MOTIVO, QUEM);
+  const c135 = await cupom(r5.cupom.id);
+  conferir(
+    k3.situacao === 'cancelado' &&
+      c135.cancelamento_n_prot === '13526000000067890' &&
+      c135.cancelamento_motivo === MOTIVO &&
+      c135.cancelado_em !== null &&
+      c135.n_prot === '13526000000012345',
+    `135: cancelado com o protocolo do cancelamento sob o gatilho (veio ${k3.situacao})`,
+  );
+  conferir(
+    (await vendaDo(r5.cupom.id)) === 0 &&
+      (await db.movimentacoes.count({ where: { venda_id: vendaR5.id } })) === 0 &&
+      c135.venda_desfeita_em !== null &&
+      k3.venda_estoque === 'desfeita',
+    'T3 do cancelamento: a venda e a baixa saíram do estoque',
+  );
+  const [d2] = await db.$queryRaw<{ n: number }[]>`SELECT nfce_desfazer_venda(${r5.cupom.id}::uuid) AS n`;
+  conferir(d2?.n === 0, 'desfazer de novo devolve 0 (a venda saiu uma vez só)');
+  await recusaHttp(svc.lancarVenda(r5.cupom.id), 409, 'NFCE_SITUACAO', 'lançar ou tirar de novo a venda já desfeita = 409');
+  await recusa(
+    db,
+    Prisma.sql`UPDATE nfce_cupons SET situacao = 'cancelando' WHERE id = ${r5.cupom.id}::uuid`,
+    'não passa para cancelando',
+    'cancelado → cancelando',
+  );
+  await recusa(
+    db,
+    Prisma.sql`UPDATE nfce_cupons SET cancelamento_n_prot = '135269999999998' WHERE id = ${r5.cupom.id}::uuid`,
+    DOC_FISCAL,
+    'protocolo do cancelamento do cancelado',
+  );
+
+  // 5c. recusa (501): de volta a autorizado sem o motivo (cancelando → autorizado passa no gatilho), a venda fica, conta no teto
+  evento = 501;
+  const k4 = await cancelamento.cancelar(r3.cupom.id, MOTIVO, QUEM);
+  const c501 = await cupom(r3.cupom.id);
+  const e501 = await db.nfce_envios.findFirstOrThrow({ where: { cupom_id: r3.cupom.id, servico: 'cancelamento' } });
+  conferir(
+    k4.situacao === 'autorizado' &&
+      k4.recusa?.codigo === 501 &&
+      c501.situacao === 'autorizado' &&
+      c501.cancelamento_motivo === null &&
+      c501.cancelamento_pedido_em === null &&
+      e501.rejeicao &&
+      (await vendaDo(r3.cupom.id)) === 1,
+    `recusa: volta a autorizado sem o motivo, o pedido no diário conta no teto e a venda fica (veio ${k4.situacao})`,
+  );
+  evento = 135;
+
+  // 6. a série daqui virou uma das do caixa de hoje (fora da rota, que recusaria): a T1 recusa sem reservar número nem chamar a porta
   const chamadas = porta.chamadas.length;
   const cupons = await db.nfce_cupons.count({ where: { emitido_por_nome: MARCA } });
   await db.nfce_emitente.update({ where: { id: 1 }, data: { sem_outro_sistema: false, series_outro_sistema: [SERIE] } });

@@ -21,8 +21,10 @@ import { AdminOnly } from '../../common/decorators/permissao.decorator';
 import { ParseUuidPipe } from '../../common/ids/parse-uuid.pipe';
 import type { AmbienteSefaz } from '../sefaz/distribuicao.port';
 import { CupomCadastroService, type Autor } from './cadastro.service';
+import { CupomCancelamentoService } from './cancelamento.service';
 import {
   AtualizarPerfilDto,
+  CancelarCupomDto,
   DescartarCupomDto,
   EmitirCupomDto,
   LigarEmissaoDto,
@@ -47,10 +49,10 @@ const autor = (eu: AuthUser): Autor => ({ id: eu.id, nome: eu.nome });
 
 /**
  * Cupom fiscal (NFC-e): cadastro (situação, empresa no cupom, numeração e CSC de cada ambiente, perfis fiscais e dados do cupom dos
- * produtos) e emissão (emitir, enviar de novo, consultar, descartar, lançar a venda, testar a conexão e ligar/desligar). Só admin: o
- * cupom mostra preço de venda, que a loja nunca vê. O cadastro não fala com a SEFAZ e funciona com o servidor desligado (`NFCE_AMBIENTE`
- * vazia); a emissão responde 503 `NFCE_DESLIGADA` com ele desligado (menos `lancar-venda`, que não fala com a SEFAZ). Dinheiro no fio em
- * centavos inteiros (`*_centavos`); o CSC só entra (a resposta traz `csc_dica`). Rotas estáticas antes das com parâmetro.
+ * produtos) e emissão (emitir, enviar de novo, consultar, cancelar, descartar, lançar a venda, testar a conexão e ligar/desligar).
+ * Só admin: o cupom mostra preço de venda, que a loja nunca vê. O cadastro não fala com a SEFAZ e funciona com o servidor desligado
+ * (`NFCE_AMBIENTE` vazia); a emissão responde 503 `NFCE_DESLIGADA` com ele desligado (menos `lancar-venda`, que não fala com a SEFAZ).
+ * Dinheiro no fio em centavos inteiros (`*_centavos`); o CSC só entra (a resposta traz `csc_dica`). Rotas estáticas antes das com parâmetro.
  */
 @ApiTags('Cupom fiscal')
 @ApiBearerAuth()
@@ -60,6 +62,7 @@ export class CupomFiscalController {
   constructor(
     private readonly cadastro: CupomCadastroService,
     private readonly emissao: CupomEmissaoService,
+    private readonly cancelamento: CupomCancelamentoService,
   ) {}
 
   /** "Para ligar a emissão, falta:", certificado, numeração e a faixa de pendentes do ambiente do servidor. */
@@ -132,6 +135,13 @@ export class CupomFiscalController {
   @HttpCode(200)
   consultar(@CurrentUser() eu: AuthUser, @Param('id', ParseUuidPipe) id: string) {
     return this.emissao.consultar(id, autor(eu));
+  }
+
+  /** "Cancelar o cupom" na SEFAZ (evento 110111) até a autorização + 29 min: 200 com o cupom (cancelado, cancelando ou a recusa). */
+  @Post('cupons/:id/cancelar')
+  @HttpCode(200)
+  cancelar(@CurrentUser() eu: AuthUser, @Param('id', ParseUuidPipe) id: string, @Body() dto: CancelarCupomDto) {
+    return this.cancelamento.cancelar(id, dto.motivo ?? '', autor(eu));
   }
 
   @Post('cupons/:id/descartar')

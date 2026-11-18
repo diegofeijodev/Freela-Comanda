@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { CertificadoDigitalModule } from '../certificado-digital/certificado-digital.module';
 import { SefazModule } from '../sefaz/sefaz.module';
 import { CupomCadastroService } from './cadastro.service';
+import { CupomCancelamentoService } from './cancelamento.service';
 import { CupomFiscalController } from './cupom-fiscal.controller';
 import { CupomEmissaoService } from './emissao.service';
 
@@ -13,6 +14,6 @@ import { CupomEmissaoService } from './emissao.service';
 @Module({
   imports: [CertificadoDigitalModule, SefazModule],
   controllers: [CupomFiscalController],
-  providers: [CupomCadastroService, CupomEmissaoService],
+  providers: [CupomCadastroService, CupomEmissaoService, CupomCancelamentoService],
 })
 export class CupomFiscalModule {}

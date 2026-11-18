@@ -173,7 +173,7 @@ export interface TesteConexao {
   testar_de_novo_em: Date;
 }
 
-const TX = { maxWait: 10_000, timeout: 30_000 };
+export const TX = { maxWait: 10_000, timeout: 30_000 };
 const HORA_MS = 60 * 60_000;
 /** Acima de R$ 10.000,00, o documento do consumidor é obrigatório (desenho §7.2). */
 const DOC_OBRIGATORIO_ACIMA = 1_000_000n;
@@ -224,9 +224,9 @@ const vazioParaNull = (s: string | null | undefined): string | null => (s == nul
 const tamanho = (s: string) => Array.from(s).length;
 const mais = (d: Date, ms: number) => new Date(d.getTime() + ms);
 /** `cStat` que cabe no CHECK do cupom (100–9999); o adaptador já garante, aqui é o cinto. */
-const cStatGravavel = (c: number | null | undefined): number | null => (c != null && c >= 100 && c <= 9999 ? c : null);
+export const cStatGravavel = (c: number | null | undefined): number | null => (c != null && c >= 100 && c <= 9999 ? c : null);
 /** Data e hora da SEFAZ com fuso explícito; sem fuso ou ilegível = null. */
-function dataSefaz(s: string | null | undefined): Date | null {
+export function dataSefaz(s: string | null | undefined): Date | null {
   if (!s || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?(Z|[+-]\d{2}:\d{2})$/.test(s)) return null;
   const t = Date.parse(s);
   return Number.isNaN(t) ? null : new Date(t);
@@ -272,15 +272,15 @@ const crtDe = (e: Pick<nfce_emitente, 'crt'>): Crt | null => (e.crt === 1 || e.c
 
 // ------------------------------------------------------------------------------------------------------------- erros
 
-const nfce503 = () => new ServiceUnavailableException({ code: 'NFCE_DESLIGADA', message: FRASE_ERRO.NFCE_DESLIGADA });
+export const nfce503 = () => new ServiceUnavailableException({ code: 'NFCE_DESLIGADA', message: FRASE_ERRO.NFCE_DESLIGADA });
 const invalido = (message: string) => new BadRequestException({ code: 'VALIDATION_ERROR', message });
-const r422 = (code: string, message: string) => new UnprocessableEntityException({ code, message });
-const r409 = (code: string, message: string) => new ConflictException({ code, message });
+export const r422 = (code: string, message: string) => new UnprocessableEntityException({ code, message });
+export const r409 = (code: string, message: string) => new ConflictException({ code, message });
 const naoAchei = () => new NotFoundException({ code: 'NOT_FOUND', message: FRASES_CADASTRO.naoEncontrado });
-const situacaoErro = (s: SituacaoCupom, acao: AcaoCupom) => r409('NFCE_SITUACAO', FRASE_ERRO.NFCE_SITUACAO(s, acao));
+export const situacaoErro = (s: SituacaoCupom, acao: AcaoCupom) => r409('NFCE_SITUACAO', FRASE_ERRO.NFCE_SITUACAO(s, acao));
 
 /** A trava que barrou → 409 com a frase (a da parada é a mensagem gravada no ambiente). */
-function erroDaTrava(r: Exclude<ResultadoTrava, { ok: true }>, amb: Pick<nfce_ambientes, 'mensagem'>): Erro {
+export function erroDaTrava(r: Exclude<ResultadoTrava, { ok: true }>, amb: Pick<nfce_ambientes, 'mensagem'>): Erro {
   const ate = r.ate ?? new Date();
   switch (r.code) {
     case 'NFCE_PARADA':
@@ -963,9 +963,11 @@ export class CupomEmissaoService {
   }
 
   // =========================================================================================================== peças
+  // As peças sem `private` (e as funções exportadas do fim do arquivo) servem também ao cancelamento (`cancelamento.service.ts`), que
+  // segue o mesmo T1 → rede → T2 → T3 sob a mesma trava do ambiente. Fora do módulo cupom-fiscal, ninguém as usa.
 
   /** `NFCE_AMBIENTE` do servidor; desligado = 503 (tudo que fala com a SEFAZ ou muda a emissão). */
-  private ambienteLigado(): AmbienteSefaz {
+  ambienteLigado(): AmbienteSefaz {
     const s = this.cadastro.ambienteDoServidor();
     if (s === 'desligado') throw nfce503();
     return s;
@@ -982,7 +984,7 @@ export class CupomEmissaoService {
     return cnpjValido(n) ? n : null;
   }
 
-  private async cupomOu404(db: Pick<Tx, 'nfce_cupons'>, id: string): Promise<nfce_cupons> {
+  async cupomOu404(db: Pick<Tx, 'nfce_cupons'>, id: string): Promise<nfce_cupons> {
     const c = await db.nfce_cupons.findUnique({ where: { id } });
     if (!c) throw naoAchei();
     return c;
@@ -997,7 +999,7 @@ export class CupomEmissaoService {
   }
 
   /** `SELECT … FOR UPDATE` na linha do ambiente: põe na fila a numeração e as travas do 656 (desenho §4.2). */
-  private async travarAmbiente(tx: Tx, a: AmbienteSefaz): Promise<nfce_ambientes> {
+  async travarAmbiente(tx: Tx, a: AmbienteSefaz): Promise<nfce_ambientes> {
     await tx.$queryRaw`SELECT ambiente FROM nfce_ambientes WHERE ambiente = ${a} FOR UPDATE`;
     const l = await tx.nfce_ambientes.findUnique({ where: { ambiente: a } });
     if (!l) throw new Error(`nfce_ambientes sem a linha ${a} (migração nfce)`);
@@ -1005,7 +1007,7 @@ export class CupomEmissaoService {
   }
 
   /** As horas do diário que as travas e as ações usam: o último envio de autorização e a última consulta deste cupom. */
-  private async horasDoCupom(tx: Pick<Tx, 'nfce_envios'>, id: string): Promise<HorasDoCupom> {
+  async horasDoCupom(tx: Pick<Tx, 'nfce_envios'>, id: string): Promise<HorasDoCupom> {
     const envios = await tx.nfce_envios.findMany({
       where: { cupom_id: id, servico: { in: ['autorizacao', 'consulta'] } },
       select: { servico: true, iniciada_em: true },
@@ -1015,7 +1017,7 @@ export class CupomEmissaoService {
   }
 
   /** O estado das travas do ambiente: recusas e consultas da última hora (e as "no futuro"), mais o que for do cupom. */
-  private async estadoTravas(
+  async estadoTravas(
     tx: Pick<Tx, 'nfce_envios'>,
     a: AmbienteSefaz,
     amb: nfce_ambientes,
@@ -1373,7 +1375,7 @@ export class CupomEmissaoService {
    * `ultimo_656_em`) e o relógio (`dhRecbto` a mais de 2 min = `parada_configuracao`). A `parada_656` desliga a emissão e não é trocada
    * por outra parada. Devolve se o relógio parou o ambiente.
    */
-  private async aplicarNoAmbiente(tx: Tx, amb: nfce_ambientes, e: Efeito, agora: Date): Promise<boolean> {
+  async aplicarNoAmbiente(tx: Tx, amb: nfce_ambientes, e: Efeito, agora: Date): Promise<boolean> {
     let parada = e.ambiente;
     let mensagem = e.mensagem;
     let relogio = false;
@@ -1417,7 +1419,7 @@ export class CupomEmissaoService {
    * T3 (§3.3): a venda numa transação própria, depois da que gravou a autorização (ou o cancelamento). A falha nunca desfaz a
    * autorização: grava `venda_erro` (a frase da função do banco, ou uma frase fixa; nunca a mensagem crua do driver).
    */
-  private async t3(id: string, tipo: 'lancar' | 'desfazer', agora: Date): Promise<boolean> {
+  async t3(id: string, tipo: 'lancar' | 'desfazer', agora: Date): Promise<boolean> {
     try {
       await this.prisma.$transaction(async (tx) => {
         if (tipo === 'lancar') await tx.$queryRaw`SELECT nfce_lancar_venda(${id}::uuid) AS n`;
@@ -1434,7 +1436,7 @@ export class CupomEmissaoService {
   }
 
   /** O certificado em uso, do mesmo CNPJ-base: o erro da porta com a frase dela (503/422), ou 422 se for de outra empresa. */
-  private async certificado(cnpj: string, agora: Date): Promise<CertificadoEmUso> {
+  async certificado(cnpj: string, agora: Date): Promise<CertificadoEmUso> {
     if (!cnpjValido(cnpj)) throw r422('NFCE_CONFIG_INCOMPLETA', FRASE_ERRO.NFCE_CONFIG_INCOMPLETA([minuscula(TEXTO_FALTA.cnpj)]));
     let cert: CertificadoEmUso;
     try {
@@ -1504,7 +1506,7 @@ export class CupomEmissaoService {
     return new Map(perfis.map((p) => [p.id, p]));
   }
 
-  private logEnvio(x: {
+  logEnvio(x: {
     a: AmbienteSefaz;
     servico: string;
     serie: number | null;
@@ -1756,7 +1758,7 @@ function dadosDaAutorizacao(
 }
 
 /** O fechamento da linha do diário (resultado, código do erro, duração e se conta no teto de recusas). */
-function fechamento(r: unknown, erroCode: string | null, duracao: number, agora: Date, rejeicao: boolean) {
+export function fechamento(r: unknown, erroCode: string | null, duracao: number, agora: Date, rejeicao: boolean) {
   const resultado = r instanceof SefazErro ? (r.enviado ? 'sem_resposta' : 'falha_antes_de_enviar') : 'respondida';
   return {
     terminada_em: agora,
@@ -1768,7 +1770,7 @@ function fechamento(r: unknown, erroCode: string | null, duracao: number, agora:
 }
 
 /** O erro da porta como `SefazErro`; outro erro (entrada recusada antes de qualquer conexão) = não enviado, com `ERRO_LOCAL`. */
-function comoSefazErro(e: unknown): { resp: SefazErro; erroCode: string | null } {
+export function comoSefazErro(e: unknown): { resp: SefazErro; erroCode: string | null } {
   if (e instanceof SefazErro) return { resp: e, erroCode: null };
   return { resp: sefazErro('SEFAZ_REDE', false), erroCode: 'ERRO_LOCAL' };
 }
@@ -1834,7 +1836,7 @@ function mostraANota(r: RespostaConsulta): boolean {
   );
 }
 
-function efeitoDe(acao: AcaoRetorno, codigo: number | null): Efeito {
+export function efeitoDe(acao: AcaoRetorno, codigo: number | null): Efeito {
   return {
     ambiente: acao.ambiente,
     mensagem: acao.ambiente ? mensagemDoAmbiente(acao) : null,
@@ -1850,7 +1852,7 @@ function horasDe(envios: { servico: string; iniciada_em: Date }[]): HorasDoCupom
   return { enviadoEm: ultima('autorizacao'), ultimaConsulta: ultima('consulta') };
 }
 
-function paraAcoes(c: nfce_cupons, h: HorasDoCupom): CupomParaAcoes {
+export function paraAcoes(c: nfce_cupons, h: HorasDoCupom): CupomParaAcoes {
   return {
     situacao: c.situacao as SituacaoCupom,
     ambiente: c.ambiente as AmbienteSefaz,

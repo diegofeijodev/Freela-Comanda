@@ -183,6 +183,17 @@ export class DescartarCupomDto {
   motivo?: string | null;
 }
 
+/**
+ * POST cupons/:id/cancelar. Ausente, com menos de 15 ou mais de 255 caracteres depois de normalizar, ou com emoji: o serviço responde 400
+ * `NFCE_MOTIVO` com a frase da UX (o mesmo texto vai no `xJust`).
+ */
+export class CancelarCupomDto {
+  @IsOptional()
+  @IsString({ message: FRASE_ERRO.NFCE_MOTIVO('cancelar') })
+  @MaxLength(1000, { message: FRASE_ERRO.NFCE_MOTIVO('cancelar') })
+  motivo?: string | null;
+}
+
 /** PUT ambientes/:ambiente/emissao: ligar ou desligar; valendo, ligar pede `confirmado` (as três marcações da UX 5.1). */
 export class LigarEmissaoDto {
   @IsBoolean() ligada!: boolean;
