@@ -766,11 +766,14 @@ baixar() { # baixar CAMINHO → $CODE, $CT (content-type), $CD (content-disposit
   CT=$(grep -i '^content-type:' "$OUT.h" | tr -d '\r' | cut -d' ' -f2-); CD=$(grep -i '^content-disposition:' "$OUT.h" | tr -d '\r' | cut -d' ' -f2-)
   BODY=$(head -c 2000 "$OUT" | tr -d '\0')
 }
+# o nfeProc que foi gravado, em arquivo: a comparação é byte a byte (`cmp`), sem o `$(…)` que comeria as quebras de linha do fim
+printf '%s' "$NFEPROC" > "$OUT.nfeproc"
 baixar "$CF/cupons/$CUP/xml"; check "XML do cupom: 200" 200 "$CODE"; check "XML do cupom: content-type" "text/xml; charset=utf-8" "$CT"
 check "XML do cupom: nome do arquivo" 'attachment; filename="cupom-1-12.xml"' "$CD"
-check "XML do cupom: o nfeProc guardado, sem mudança" true "$([ "$(cat "$OUT")" == "$NFEPROC" ] && echo true || echo false)"
+check "XML do cupom: o nfeProc guardado, byte a byte (cmp)" 0 "$(cmp -s "$OUT" "$OUT.nfeproc"; echo $?)"
 baixar "$CF/cupons/$CUP/xml?tipo=abc"; check "XML com tipo inválido: 400" 400 "$CODE"; check "XML com tipo inválido: JSON" application/json "${CT%%;*}"
-baixar "$CF/cupons/$CUP/xml?tipo=cancelamento"; check "XML do cancelamento de um autorizado: recusa em JSON" "4 application/json" "${CODE:0:1} ${CT%%;*}"
+baixar "$CF/cupons/$CUP/xml?tipo=cancelamento"
+check "XML do cancelamento de um autorizado: 409 NFCE_SITUACAO em JSON" "409 application/json NFCE_SITUACAO" "$CODE ${CT%%;*} $(j .error.code)"
 baixar "$CF/cupons/$ZERO/xml"; check "XML de cupom inexistente: 404 em JSON" "404 application/json" "$CODE ${CT%%;*}"
 baixar "$CF/xml-do-mes?mes=2026-11&ambiente=producao"; check "zip do mês: 200" 200 "$CODE"; check "zip do mês: content-type" application/zip "$CT"
 check "zip do mês: nome do arquivo" true "$(echo "$CD" | grep -q '^attachment; filename=".*\.zip"$' && echo true || echo false)"
@@ -778,9 +781,10 @@ check "zip do mês: começa com PK\\x03\\x04" 504b0304 "$(head -c 4 "$OUT" | xxd
 cp "$OUT" "$OUT.zip"
 check "zip do mês: unzip -t" 0 "$(unzip -tq "$OUT.zip" >/dev/null 2>&1; echo $?)"
 check "zip do mês: o cupom e a lista dos números" "NFCe-$CH.xml numeros-nao-usados.csv" "$(unzip -Z1 "$OUT.zip" | sort | tr '\n' ' ' | sed 's/ $//')"
-check "zip do mês: o XML do cupom como foi guardado" true "$([ "$(unzip -p "$OUT.zip" "NFCe-$CH.xml")" == "$NFEPROC" ] && echo true || echo false)"
+unzip -p "$OUT.zip" "NFCe-$CH.xml" > "$OUT.nfce"
+check "zip do mês: o XML do cupom como foi guardado, byte a byte (cmp)" 0 "$(cmp -s "$OUT.nfce" "$OUT.nfeproc"; echo $?)"
 check "zip do mês: o CPF não está no csv" 0 "$(unzip -p "$OUT.zip" numeros-nao-usados.csv | grep -c 52998224725)"
-rm -f "$OUT.zip" "$OUT.h"
+rm -f "$OUT.zip" "$OUT.h" "$OUT.nfce" "$OUT.nfeproc"
 baixar "$CF/xml-do-mes?mes=2026-13"; check "zip com mês inválido: 400 em JSON" "400 application/json" "$CODE ${CT%%;*}"
 baixar "$CF/xml-do-mes?mes=2026-11&ambiente=teste"; check "zip com ambiente inválido: 400 em JSON" "400 application/json" "$CODE ${CT%%;*}"
 rm -f "$OUT.h"

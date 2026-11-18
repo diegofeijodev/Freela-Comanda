@@ -48,7 +48,9 @@ async function sessao(email, viewport = { width: 1366, height: 900 }) {
     if (m.type() !== 'error') return;
     const t = m.text();
     if (/favicon|DevTools|Download the React|\[HMR\]|Fast Refresh/i.test(t)) return;
-    erros.push(`console: ${t.slice(0, 200)}`);
+    // o "Failed to load resource" leva o endereço (location): os blocos do cupom conferem cada um contra o que provocaram de propósito
+    const onde = /Failed to load resource/.test(t) ? ` @ ${m.location()?.url ?? '?'}` : '';
+    erros.push(`console: ${t.slice(0, 200)}${onde}`);
   });
   page.on('dialog', (d) => d.accept(d.type() === 'prompt' ? d.defaultValue() || '1' : undefined));
   // Espera a hidratação: antes dela o formulário é HTML puro e o clique vira um GET nativo (`/auth?`).
@@ -1131,8 +1133,8 @@ const MSG_PARADA = 'A SEFAZ bloqueou este sistema duas vezes em 24 horas. Por se
 const FRASE_539 = 'A SEFAZ diz que o número 14 da série 1 já foi usado por outra nota: o caixa de hoje pode estar usando esta série. A emissão parou. Descarte este cupom e troque a série em Configurações → Cupom fiscal.';
 const FRASE_EMPRESA = 'A SEFAZ recusou um dado da empresa (inscrição estadual, endereço ou regime). Confira em Configurações → Cupom fiscal e toque em Enviar de novo.';
 const situacaoCupom = (p = {}) => ({
-  ambiente: 'producao', agora: new Date().toISOString(), emissao_ligada: true, situacao: 'ok', mensagem: null, bloqueado_ate: null, serie: 1,
-  proximo_numero: 17, falta: [], certificado: { ok: true, mensagem: null }, pendentes: { total: 0, primeiro: null }, ...p,
+  ambiente: 'producao', agora: new Date().toISOString(), emissao_ligada: true, situacao: 'ok', mensagem: null, bloqueado_ate: null, recusas_ate: null,
+  serie: 1, proximo_numero: 17, falta: [], certificado: { ok: true, mensagem: null }, pendentes: { total: 0, primeiro: null }, ...p,
 });
 const produto = (id, nome, categoria, preco, p = {}) => ({
   item_cardapio_id: id, nome, categoria, unidade_venda: 'UN', preco_venda_centavos: preco, ativo: true, ncm: '22030000', cest: null, gtin: null,
@@ -1154,7 +1156,7 @@ const detalheCupom = (p = {}) => ({
   valor_troco_centavos: 0, itens: [item(1, P1, 'Chopp 300 ml', 1, 1200), item(2, P2, 'Espeto de Picanha', 1, 2490)], pagamentos: [{ t_pag: '17', valor_centavos: 3690 }],
   autorizada_em: emMin(-1), n_prot: '135260000000131', c_stat: 100, x_motivo: 'Autorizado o uso da NF-e', alerta: null, cancelado_em: null,
   cancelamento_motivo: null, cancelamento_n_prot: null, cancelamento_pedido_em: null, venda_estoque: 'lancada', venda_erro: null, descartado_em: null,
-  descarte_motivo: null, emitido_por_nome: 'Admin Demo', criado_em: emMin(-1), agora: new Date().toISOString(), consultar_a_partir_de: null,
+  descarte_motivo: null, descartado_por_nome: null, emitido_por_nome: 'Admin Demo', criado_em: emMin(-1), agora: new Date().toISOString(), consultar_a_partir_de: null,
   cancelar_ate: emMin(28), acoes: ['cancelar', 'imprimir'], recusa: null, atalho: null, mensagem: null, ...p,
 });
 const recusado = (id, numero, codigo, familia, frase, xMotivo, atalho, acoes) => detalheCupom({
@@ -1247,7 +1249,13 @@ async function simularCupom(page, est) {
 const simQ = (loc, timeout = 30_000) => loc.waitFor({ timeout }).then(() => true, () => false);
 const focoEm = (page, fn, arg, timeout = 15_000) => page.waitForFunction(fn, arg, { timeout }).then(() => true, () => false);
 const antesNaTela = async (a, b) => a.evaluate((x, y) => !!(x.compareDocumentPosition(y) & Node.DOCUMENT_POSITION_FOLLOWING), await b.elementHandle());
-const reaisErros = (erros) => erros.filter((e) => !/Failed to load resource/.test(e));
+/**
+ * Os erros de console de um bloco do cupom (leva pré-final, item 21): o "Failed to load resource" NÃO é descartado em bloco; só passa o
+ * que o próprio bloco provoca na rede simulada (`esperados`: o caminho do endereço e o texto do status, ex. 422 ou net::ERR_FAILED).
+ * Qualquer outro 4xx/5xx ou pedido que caiu, também da API real, é erro.
+ */
+const reaisErros = (erros, esperados = []) =>
+  erros.filter((e) => !(/Failed to load resource/.test(e) && esperados.some(([url, status]) => url.test(e.split(' @ ')[1] ?? '') && status.test(e))));
 // Alvos de toque na aba aberta (e nas abas): botões, links, campos, resumos e opções com menos de 44 px de altura (o rótulo em volta conta).
 const alvosPequenos = (page) => page.evaluate(() => [...document.querySelectorAll(
   '[role=tab], [role=tabpanel][data-state=active] :is(button, a[href], select, input:not([type=hidden]), summary, [role=radio], [role=checkbox])',
@@ -1327,10 +1335,15 @@ await blocoCupom('cupom 2 (emitir 360)', { width: 360, height: 800 }, async ({ p
   await busca.fill('fritas');
   check('emitir 360: o produto sem NCM aparece em "Não entram no cupom"', await simQ(page.getByText('Porção de fritas · Falta NCM')));
   await busca.fill('');
-  // sair do campo de busca ANTES de tocar no pagamento: a linha "Acabou de entrar" some no blur e o 1º toque logo abaixo dela se perde
-  // (achado da Tarefa 16, ver o relato)
-  await page.locator('#cupom-doc').focus();
+  // o toque no pagamento vem DIRETO, com o foco ainda na busca: a linha "Acabou de entrar" some sem deslocar o layout (leva pré-final,
+  // itens 15 e 18; antes, o roteiro tirava o foco da busca para o 1º toque não se perder)
+  // a posição na PÁGINA (não na janela: o clique rola a tela até o botão antes de tocar)
+  const noDocumento = () => page.getByRole('radio', { name: 'PIX' }).evaluate((el) => el.getBoundingClientRect().top + window.scrollY);
+  const antesDoToque = await noDocumento();
   await page.getByRole('radio', { name: 'PIX' }).click();
+  check('emitir 360: o 1º toque no pagamento, direto da busca, escolhe o PIX', (await page.getByRole('radio', { name: 'PIX' }).getAttribute('aria-checked')) === 'true');
+  const depoisDoToque = await noDocumento();
+  check('emitir 360: sair da busca não desloca o pagamento', Math.abs(antesDoToque - depoisDoToque) < 0.5, JSON.stringify([antesDoToque, depoisDoToque]));
   await page.locator('#cupom-doc').fill('52998224725');
   check('emitir 360: CPF com máscara', (await page.locator('#cupom-doc').inputValue()) === '529.982.247-25');
   await barraPronta(page, 'emitir 360');
@@ -1367,7 +1380,6 @@ await blocoCupom('cupom 2 (emitir 360)', { width: 360, height: 800 }, async ({ p
   check('não sei se saiu: volta para Emitir', await simQ(page.getByText('No cupom (0 itens)'), 60_000));
   await busca.fill('chopp');
   await resultado('Chopp 300 ml').click();
-  await page.locator('#cupom-doc').focus();
   await page.getByRole('radio', { name: 'Dinheiro' }).click();
   await barraPronta(page, 'não sei se saiu');
   await botaoBarra.click();
@@ -1392,7 +1404,11 @@ await blocoCupom('cupom 2 (emitir 360)', { width: 360, height: 800 }, async ({ p
   check('não sei se saiu: a venda continua no carrinho', (await page.getByText('No cupom (1 item)').count()) === 1);
   const guardado = await page.evaluate(() => ({ local: Object.keys(localStorage), sessao: sessionStorage.length }));
   check('emitir 360: a venda não vai para o storage (só authUser)', guardado.local.length === 1 && guardado.local[0] === 'authUser' && guardado.sessao === 0, JSON.stringify(guardado));
-  const reais = reaisErros(erros);
+  // só os três que o bloco provoca: o POST e a busca pela chave que caem (route.abort) e o 422 do "Tentar de novo"
+  const reais = reaisErros(erros, [
+    [/\/v1\/cupom-fiscal\/cupons(\?[^ ]*)?$/, /net::ERR_FAILED/],
+    [/\/v1\/cupom-fiscal\/cupons$/, /status of 422/],
+  ]);
   check('emitir 360: sem erro de console', reais.length === 0, reais.join(' | '));
 });
 
@@ -1461,16 +1477,25 @@ await blocoCupom('cupom 3 (desktop)', undefined, async ({ page, erros }) => {
     }
     return null;
   });
-  check('imprimir: a página tem a regra @page (margem de 2 mm)', /margin: 2mm/.test(regraPagina ?? ''), String(regraPagina));
-  if (!/size/.test(regraPagina ?? '')) console.log(`AVISO (impressão): o navegador descartou o "size" do @page ("80mm auto" não é um tamanho válido); regra em vigor: ${regraPagina}`);
+  // leva pré-final, itens 14 e 19: o @page só com margem 0 (sem o "size", que não é CSS válido; o papel de 80 mm vem do diálogo de
+  // impressão) e o DANFE com 72 mm de largura útil pelo CSS de impressão (medido num viewport de 1366 px: não é o max-w do componente)
+  check('imprimir: o @page tem margem 0 e nenhum "size"', /margin: 0(px)?;/.test(regraPagina ?? '') && !/size/.test(regraPagina ?? ''), String(regraPagina));
+  const telaAntes = await page.evaluate(() => (document.querySelector('section.danfe').getBoundingClientRect().width * 25.4) / 96);
   await page.emulateMedia({ media: 'print' });
   const papel = await page.evaluate(() => {
     const mm = (px) => (px * 25.4) / 96;
     const s = document.querySelector('section.danfe');
     const qr = s?.querySelector('img');
-    return { largura: mm(s.getBoundingClientRect().width), qr: qr ? mm(qr.getBoundingClientRect().width) : 0, soDanfe: document.body.innerText.trim() === s.innerText.trim() };
+    const cs = getComputedStyle(s);
+    const r = s.getBoundingClientRect();
+    return {
+      largura: mm(r.width), margens: [cs.marginLeft, cs.marginRight], padding: [cs.paddingLeft, cs.paddingRight],
+      qr: qr ? mm(qr.getBoundingClientRect().width) : 0, soDanfe: document.body.innerText.trim() === s.innerText.trim(),
+    };
   });
-  check('imprimir: o papel tem até 80 mm', papel.largura <= 80.01, JSON.stringify(papel));
+  check('imprimir: na tela o DANFE segue o max-w de 80 mm (o 72 mm é só do CSS de impressão)', Math.abs(telaAntes - 80) < 0.1, String(telaAntes));
+  check('imprimir: no papel, o DANFE tem 72 mm de largura útil', Math.abs(papel.largura - 72) < 0.1, JSON.stringify(papel));
+  check('imprimir: no papel, sem padding e no meio (margens iguais)', papel.padding.every((x) => x === '0px') && papel.margens[0] === papel.margens[1], JSON.stringify(papel));
   check('imprimir: o QR tem 25 mm ou mais', papel.qr >= 25, JSON.stringify(papel));
   check('imprimir: só o DANFE vai para o papel', papel.soDanfe, JSON.stringify(papel));
   await page.locator('section.danfe').screenshot({ path: join(SHOTS, 'admin-cupom-danfe-80mm.png') });
@@ -1523,7 +1548,8 @@ await blocoCupom('cupom 4 (configurações)', { width: 360, height: 800 }, async
   await ad.getByRole('button', { name: 'Manter ativo' }).click();
   check('perfil: "Manter ativo" fecha o diálogo', await ad.waitFor({ state: 'hidden', timeout: 10_000 }).then(() => true, () => false));
   check('configurações: só o PUT de ligar (simulado) mudou algo; nada desativado', mudancas.length === 1 && /\/ambientes\/producao\/emissao$/.test(mudancas[0]), JSON.stringify(mudancas));
-  const reais = reaisErros(erros);
+  // só o 409 do PUT de ligar, que o bloco simula de propósito
+  const reais = reaisErros(erros, [[/\/v1\/cupom-fiscal\/ambientes\/producao\/emissao$/, /status of 409/]]);
   check('cupom configurações: sem erro de console', reais.length === 0, reais.join(' | '));
 });
 
