@@ -255,6 +255,7 @@ export const FRASES_LEITURA = {
   naoUsado: {
     semResposta: 'Enviado à SEFAZ sem resposta: só a consulta diz se o número foi usado.',
     outraNota: 'A SEFAZ diz que outra nota já usa este número (código 539).',
+    notaSemArquivo: 'A SEFAZ tem uma nota com este número, mas o arquivo dela não está no Comanda.',
     descartado: 'Descartado: a SEFAZ não registrou este número.',
     naoSaiu: 'Não saiu: a SEFAZ não recebeu este cupom (ainda pendente no Comanda).',
     naoConsta: 'A SEFAZ confirmou que não tem este cupom (ainda pendente no Comanda).',

@@ -18,7 +18,7 @@ import { CupomCancelamentoService } from '../cancelamento.service';
 import { cifrarCsc } from '../csc';
 import { danfeDoNfeProc } from '../danfe';
 import { CupomEmissaoService, type VendaParaCupom } from '../emissao.service';
-import { FRASE_ERRO } from '../frases';
+import { FRASE_ERRO, FRASES_LEITURA } from '../frases';
 import { CupomLeituraService, filtroDaLista } from '../leitura.service';
 import { XPROD_HOMOLOGACAO } from '../montagem-xml';
 import { URL_CHAVE, URL_QR } from '../qrcode-nfce';
@@ -668,9 +668,16 @@ describe('XML do mês para o contador (GET xml-do-mes)', () => {
     const denegado = semear(m.t, { numero: 40, situacao: 'denegado', dh_emi: T0, xml_autorizado: '<nfeProc>denegado</nfeProc>' });
     semear(m.t, { numero: 50, situacao: 'descartado', dh_emi: T0, descarte_motivo: 'Vou corrigir' });
     const reaproveitou = semear(m.t, { numero: 50, situacao: 'autorizado', dh_emi: T0, xml_autorizado: '<nfeProc>50</nfeProc>' });
-    semear(m.t, { numero: 51, situacao: 'descartado', numero_reaproveitavel: false, dh_emi: T0 });
-    semear(m.t, { numero: 52, situacao: 'sem_resposta', numero_reaproveitavel: false, dh_emi: T0 });
+    semear(m.t, { numero: 51, situacao: 'descartado', numero_reaproveitavel: false, c_stat: 539, dh_emi: T0 });
+    semear(m.t, { numero: 52, situacao: 'sem_resposta', dh_emi: T0 });
     semear(m.t, { numero: 53, situacao: 'descartado', dh_emi: T0 });
+    // bloqueado pelo 539 que só ficou no diário (uma consulta depois gravou o 217 no cupom)
+    const consultado = semear(m.t, { numero: 54, situacao: 'descartado', numero_reaproveitavel: false, c_stat: 217, dh_emi: T0 });
+    m.t.nfce_envios.push(
+      linhaCom('nfce_envios', { ambiente: 'producao', cupom_id: consultado.id, servico: 'autorizacao', iniciada_em: T0, c_stat: 539 }),
+    );
+    // bloqueado porque a consulta mostrou uma nota desta chave sem a tentativa conferida (não é 539)
+    semear(m.t, { numero: 55, situacao: 'descartado', numero_reaproveitavel: false, dh_emi: T0 });
     // fora do mês (31/10 às 23h30 em Brasília) e de homologação: não entram
     semear(m.t, {
       numero: 60,
@@ -708,10 +715,16 @@ describe('XML do mês para o contador (GET xml-do-mes)', () => {
     }
     // o csv: série, número e motivo dos números que não viraram cupom (o 50 foi reaproveitado; outubro não entra)
     const csv = de('numeros-nao-usados.csv');
-    expect(csv.startsWith('﻿serie;numero;motivo\n')).toBe(true);
-    const linhas = csv.replace('﻿', '').trim().split('\n').slice(1);
-    expect(linhas.map((l) => l.split(';').slice(0, 2).join(';'))).toEqual(['2;51', '2;52', '2;53']);
-    expect(linhas.every((l) => l.split(';')[2].length > 10)).toBe(true);
+    expect(csv.startsWith('\ufeffserie;numero;motivo\n')).toBe(true);
+    const linhas = csv.replace('\ufeff', '').trim().split('\n').slice(1);
+    const M = FRASES_LEITURA.naoUsado;
+    expect(linhas).toEqual([
+      `2;51;${M.outraNota}`,
+      `2;52;${M.semResposta}`,
+      `2;53;${M.descartado}`,
+      `2;54;${M.outraNota}`,
+      `2;55;${M.notaSemArquivo}`,
+    ]);
     expect(csv).not.toContain(CPF);
   });
 
@@ -720,7 +733,9 @@ describe('XML do mês para o contador (GET xml-do-mes)', () => {
     semear(m.t, { ambiente: 'homologacao', numero: 1, situacao: 'autorizado', dh_emi: T0, xml_autorizado: '<nfeProc>teste</nfeProc>' });
     const r = await m.leitura.xmlDoMes('2026-11', undefined, T0);
     expect(r.nome).toBe('cupons-2026-11.zip');
-    expect(lerZip(r.zip).map((a) => [a.nome, a.dados.toString('utf8')])).toEqual([['numeros-nao-usados.csv', '﻿serie;numero;motivo\n']]);
+    expect(lerZip(r.zip).map((a) => [a.nome, a.dados.toString('utf8')])).toEqual([
+      ['numeros-nao-usados.csv', '\ufeffserie;numero;motivo\n'],
+    ]);
     const h = await m.leitura.xmlDoMes('2026-11', 'homologacao', T0);
     expect(h.nome).toBe('cupons-de-teste-2026-11.zip');
     expect(lerZip(h.zip).map((a) => a.nome)).toHaveLength(2);

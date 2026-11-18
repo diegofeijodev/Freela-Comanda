@@ -208,10 +208,15 @@ function eventoDoCupom(proc: string, c: Pick<nfce_cupons, 'chave' | 'ambiente'>,
   }
 }
 
-/** O motivo do número que não virou cupom, pelo cupom mais novo com ele (`numeros-nao-usados.csv`). */
-function motivoNaoUsado(c: { situacao: string; numero_reaproveitavel: boolean; c_stat: number | null }): string {
+/**
+ * O motivo do número que não virou cupom, pelo cupom mais novo com ele (`numeros-nao-usados.csv`). Número bloqueado
+ * (`numero_reaproveitavel` falso) tem duas origens: o 539 (outra nota usa o número; `teve539` = o código no cupom ou no diário da
+ * autorização) ou a consulta que mostrou uma nota desta chave sem a tentativa conferida (Ruling T11 I1/I2, T12 I2): a SEFAZ tem a nota,
+ * e o arquivo dela não está aqui.
+ */
+function motivoNaoUsado(c: { situacao: string; numero_reaproveitavel: boolean; c_stat: number | null }, teve539: boolean): string {
   const M = FRASES_LEITURA.naoUsado;
-  if (!c.numero_reaproveitavel && (c.situacao === 'descartado' || c.situacao === 'rejeitado')) return M.outraNota;
+  if (!c.numero_reaproveitavel) return teve539 || c.c_stat === 539 ? M.outraNota : M.notaSemArquivo;
   switch (c.situacao) {
     case 'nao_enviado':
       return M.naoSaiu;
@@ -459,7 +464,7 @@ export class CupomLeituraService {
    */
   private async naoUsados(
     a: AmbienteSefaz,
-    cupons: { serie: number; numero: bigint; situacao: string; numero_reaproveitavel: boolean; c_stat: number | null }[],
+    cupons: { id: string; serie: number; numero: bigint; situacao: string; numero_reaproveitavel: boolean; c_stat: number | null }[],
   ): Promise<string> {
     const chave = (c: { serie: number; numero: bigint }) => `${c.serie}-${c.numero}`;
     const usados = new Set(cupons.filter((c) => DOCUMENTO.includes(c.situacao)).map(chave));
@@ -474,8 +479,20 @@ export class CupomLeituraService {
     // os cupons vêm do mais velho para o mais novo de cada número: fica o mais novo
     const porNumero = new Map<string, (typeof candidatos)[number]>();
     for (const c of candidatos) if (!usados.has(chave(c))) porNumero.set(chave(c), c);
-    const linhas = [...porNumero.values()].map((c) => `${c.serie};${c.numero};${campoCsv(motivoNaoUsado(c))}`);
-    return `﻿${['serie;numero;motivo', ...linhas].join('\n')}\n`;
+    // o 539 do número bloqueado pode ter saído do cupom (uma consulta depois grava o código dela): o diário da autorização guarda
+    const bloqueados = [...porNumero.values()].filter((c) => !c.numero_reaproveitavel).map((c) => c.id);
+    const com539 = new Set(
+      bloqueados.length === 0
+        ? []
+        : (
+            await this.prisma.nfce_envios.findMany({
+              where: { cupom_id: { in: bloqueados }, servico: 'autorizacao', c_stat: 539 },
+              select: { cupom_id: true },
+            })
+          ).map((e) => e.cupom_id),
+    );
+    const linhas = [...porNumero.values()].map((c) => `${c.serie};${c.numero};${campoCsv(motivoNaoUsado(c, com539.has(c.id)))}`);
+    return `\ufeff${['serie;numero;motivo', ...linhas].join('\n')}\n`;
   }
 
   /** Os pedidos de cancelamento e as consultas respondidas destes cupons, do mais novo para o mais velho. */
