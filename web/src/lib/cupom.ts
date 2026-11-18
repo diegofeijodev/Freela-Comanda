@@ -799,9 +799,9 @@ export const toqueNoBotao = (travada: boolean, alvo: AlvoBotao): AlvoBotao | 're
 
 // ----------------------------------------------------------------------------------------------------------------- atalho da recusa
 /**
- * O link do atalho que o SERVIDOR manda no cupom (`atalho`, calculado em `retornos.ts` junto da frase; Ruling T14 I2): a tela não
- * classifica por código. `primario` = é a ação principal ("Corrigir os produtos", e então "Enviar de novo"). `perfil` ainda não tem
- * destino definido: sem link.
+ * O link do atalho que o SERVIDOR manda no cupom (`atalho`, calculado em `retornos.ts` junto da frase; Ruling T14 I2 e "T14 atalhos"): a
+ * tela não classifica por código. Os rótulos são os links da UX 6.1; os destinos são as rotas da UX 1 (a aba "Cupom fiscal" de
+ * Configurações e a aba Produtos chegam na Tarefa 15). `primario` = é a ação principal ("Corrigir os produtos", e então "Enviar de novo").
  */
 export function linkDoAtalho(a: AtalhoCupom | null, cupomId: string): { rotulo: string; href: string; primario: boolean } | null {
   switch (a) {
@@ -810,7 +810,10 @@ export function linkDoAtalho(a: AtalhoCupom | null, cupomId: string): { rotulo: 
     case 'certificado':
       return { rotulo: 'Ir para o certificado', href: '/configuracoes#certificado-digital', primario: false };
     case 'csc':
+    case 'empresa':
       return { rotulo: 'Ir para Configurações', href: '/configuracoes?aba=cupom', primario: false };
+    case 'serie':
+      return { rotulo: 'Trocar a série', href: '/configuracoes?aba=cupom', primario: false };
     default:
       return null;
   }

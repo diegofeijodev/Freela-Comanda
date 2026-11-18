@@ -8,6 +8,7 @@ import {
   acaoCancelamento,
   acaoConsulta,
   acaoStatus,
+  atalhoDaFamilia,
   atalhoDaRecusa,
   familiaDoCodigo,
   motivoSefaz,
@@ -798,7 +799,7 @@ describe('atalhoDaRecusa (Ruling T14 I2): o atalho sai do mesmo caminho que esco
     ['373 nome do 1º item em homologação: erro do sistema', aut(373), 'rejeitado', FRASE_RETORNO.erroDoSistema(373), null],
     ['386 família produto', aut(386), 'rejeitado', U.produto, 'produtos'],
     ['600 sem família ("se ela falar de um produto, confira os produtos")', aut(600), 'rejeitado', U.outra600, 'produtos'],
-    ['539 série em uso: só Descartar', aut(539), 'rejeitado', U.serie539, null],
+    ['539 série em uso: Descartar e [Trocar a série]', aut(539), 'rejeitado', U.serie539, 'serie'],
     ['704 hora: Enviar de novo', aut(704), 'rejeitado', U.hora704, null],
     ['786 consumidor: Descartar e refazer', aut(786), 'rejeitado', U.consumidor, null],
     ['780 valores: Descartar', aut(780), 'rejeitado', U.valores780, null],
@@ -812,6 +813,15 @@ describe('atalhoDaRecusa (Ruling T14 I2): o atalho sai do mesmo caminho que esco
     expect(a.cupom).toBe(cupom);
     expect(a.recusa?.frase).toBe(frase);
     expect(atalhoDaRecusa(a.recusa)).toBe(atalho);
+  });
+
+  it('pela família (UX 6.1): produto e "sem família" → produtos; empresa → empresa (ainda sem código: o 1º teste completa); as outras, nada', () => {
+    expect(atalhoDaFamilia('produto')).toBe('produtos');
+    expect(atalhoDaFamilia('outra')).toBe('produtos');
+    expect(atalhoDaFamilia('empresa')).toBe('empresa');
+    expect(atalhoDaFamilia('consumidor')).toBeNull();
+    expect(atalhoDaFamilia('valores')).toBeNull();
+    expect(atalhoDaFamilia('hora')).toBeNull();
   });
 
   it('certificado na consulta (o cupom fica sem resposta) também leva ao certificado; sem recusa, sem atalho', () => {

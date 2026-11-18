@@ -489,6 +489,8 @@ describe('rodada de correção 1: trava e chave da venda (I1) e o atalho do serv
       primario: false,
     });
     expect(linkDoAtalho('csc', 'c1')).toEqual({ rotulo: 'Ir para Configurações', href: '/configuracoes?aba=cupom', primario: false });
+    expect(linkDoAtalho('empresa', 'c1')).toEqual({ rotulo: 'Ir para Configurações', href: '/configuracoes?aba=cupom', primario: false });
+    expect(linkDoAtalho('serie', 'c1')).toEqual({ rotulo: 'Trocar a série', href: '/configuracoes?aba=cupom', primario: false });
     expect(linkDoAtalho(null, 'c1')).toBeNull();
   });
 });

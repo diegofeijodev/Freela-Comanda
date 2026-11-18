@@ -527,7 +527,7 @@ export type CodigoFalta =
   | 'series_outro_sistema';
 export type TPagCupom = '01' | '03' | '04' | '10' | '11' | '17';
 /** O atalho que conserta a recusa (calculado no servidor, em `retornos.ts`, junto da frase): a tela só mostra o que vier. */
-export type AtalhoCupom = 'certificado' | 'csc' | 'perfil' | 'produtos';
+export type AtalhoCupom = 'certificado' | 'csc' | 'empresa' | 'serie' | 'produtos';
 /** O que a SEFAZ disse (código, família, a frase da UX 6.1 e o `xMotivo` à parte). */
 export type RecusaCupom = { codigo: number; familia: FamiliaRecusa; frase: string; x_motivo: string };
 export type SituacaoCupomFiscal = {

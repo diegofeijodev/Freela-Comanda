@@ -16,6 +16,7 @@ import { CupomEmissaoService, pedidoHash, type VendaParaCupom } from '../emissao
 import { FRASE_ERRO, FRASE_RETORNO, FRASES_EMISSAO } from '../frases';
 import { FRASES_CADASTRO } from '../frases-cadastro';
 import { linhaCom, montarPrismaCupom, type TabelasCupom } from './prisma-cupom.falso';
+import type { Atalho } from '../retornos';
 import type { SituacaoCupom } from '../situacao-cupom';
 
 // Emissão do cupom fiscal (Tarefa 11) com o Prisma falso (CHECKs, índices parciais e gatilho de imutável da migração), a porta falsa da
@@ -856,14 +857,14 @@ describe('série em uso (539)', () => {
 });
 
 describe('o atalho da recusa no cupom (Ruling T14 I2: o servidor decide; a tela só mostra)', () => {
-  it.each<[number, SituacaoCupom, string, 'certificado' | 'csc' | 'perfil' | 'produtos' | null]>([
+  it.each<[number, SituacaoCupom, string, Atalho | null]>([
     [285, 'nao_enviado', FRASE_RETORNO.certificado(285), 'certificado'],
     [225, 'nao_enviado', FRASE_RETORNO.erroDoSistema(225), null],
     [394, 'rejeitado', FRASE_RETORNO.qrCode(394, 'homologacao'), 'csc'],
     [373, 'rejeitado', FRASE_RETORNO.erroDoSistema(373), null],
     [386, 'rejeitado', FRASE_RETORNO.recusaProduto, 'produtos'],
     [600, 'rejeitado', FRASE_RETORNO.recusaOutra(600), 'produtos'],
-    [539, 'rejeitado', FRASE_RETORNO.serieEmUso(2, 1), null],
+    [539, 'rejeitado', FRASE_RETORNO.serieEmUso(2, 1), 'serie'],
     [786, 'rejeitado', FRASE_RETORNO.recusaConsumidor, null],
   ])('%i → %s, com a frase e o atalho (no POST e no GET)', async (cStat, situacao, mensagem, atalho) => {
     const m = montar();

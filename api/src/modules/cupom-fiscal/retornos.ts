@@ -106,22 +106,32 @@ export function relogioDiverge(dhRecbto: string, agora: Date): boolean {
 const mais = (d: Date, ms: number) => new Date(d.getTime() + ms);
 
 /**
- * O atalho da tela que conserta a recusa (UX 6.1, coluna "Ação na tela"; Ruling T14 I2: o servidor decide, a tela não classifica por
- * código): `certificado` = o certificado digital em Configurações; `csc` = o código de segurança (CSC) e o IdCSC em Configurações →
- * Cupom fiscal; `produtos` = "Corrigir os produtos" (a aba Produtos com os produtos do cupom); `perfil` = reservado (o controlador define o
- * que ele abre; hoje nenhum código o produz).
+ * O atalho da tela que conserta a recusa: os LINKS que a UX 6.1 escreve em cada linha (Ruling "T14 atalhos"; a tela não classifica por
+ * código). `certificado` = "[Ir para o certificado]" (o certificado digital em Configurações); `csc` = "[Ir para Configurações]" do QR (o
+ * código de segurança e o IdCSC, Configurações › Cupom fiscal); `empresa` = "[Ir para Configurações]" da família empresa (quadro "Empresa
+ * no cupom"); `serie` = "[Trocar a série]" do 539 (o campo série, Configurações › Cupom fiscal); `produtos` = "Corrigir os produtos" (a
+ * aba Produtos com os produtos do cupom). A UX não tem frase nem link próprio para a tributação do item (CFOP, CST/CSOSN, alíquota): ela
+ * é da família produto ("Confira os produtos"), então não há atalho `perfil`.
  */
-export type Atalho = 'certificado' | 'csc' | 'perfil' | 'produtos';
+export type Atalho = 'certificado' | 'csc' | 'empresa' | 'serie' | 'produtos';
+
+/** O link da família (UX 6.1): produto e "sem família" (`recusaOutra`: "se ela falar de um produto, confira os produtos") → `produtos`;
+ * empresa → `empresa`; consumidor, valores e hora não têm link (Descartar / Enviar de novo). */
+export function atalhoDaFamilia(f: Familia): Atalho | null {
+  if (f === 'produto' || f === 'outra') return 'produtos';
+  if (f === 'empresa') return 'empresa';
+  return null;
+}
 
 /**
  * O atalho da recusa da AUTORIZAÇÃO ou da CONSULTA (as do diário que o cupom mostra; a do cancelamento fica no diálogo), pelo MESMO
  * caminho que escolhe a frase (`efeitoNoAmbiente` e `acaoPeloCodigo`), para frase e atalho não se desencontrarem:
  *   - certificado (213, 280–286, 290–298; chega como `nao_enviado`, ou fica na consulta) → `certificado`;
+ *   - 539 (série em uso: "troque a série em Configurações → Cupom fiscal") → `serie`;
  *   - QR (394, 395; a frase manda conferir o CSC e o IdCSC) → `csc`;
- *   - família produto e a "sem família" (`recusaOutra`: "se ela falar de um produto, confira os produtos") → `produtos`;
+ *   - as demais rejeições da nota → o link da família (`atalhoDaFamilia`);
  *   - sem atalho: 656 (bloqueio), 781 (credenciamento: o contador), esquema e lote (erro do sistema), autorizado, denegado (o contador),
- *     108/109 (fora do ar), os 1xx e o 999 (sem resposta), 204 (só a consulta), 539 (só Descartar), 373 (erro do sistema), 704 (Enviar
- *     de novo), consumidor e valores (Descartar) e a família empresa (o atalho `perfil` ainda não foi definido).
+ *     108/109 (fora do ar), os 1xx e o 999 (sem resposta), 204 (só a consulta) e 373 (erro do sistema).
  */
 export function atalhoDaRecusa(r: Pick<Recusa, 'codigo'> | null): Atalho | null {
   if (r === null) return null;
@@ -131,11 +141,11 @@ export function atalhoDaRecusa(r: Pick<Recusa, 'codigo'> | null): Atalho | null 
   if (certificado(c)) return 'certificado';
   if (ESQUEMA_E_LOTE.has(c)) return null;
   // acaoPeloCodigo, na mesma ordem
-  if (AUTORIZADO.has(c) || DENEGADO.has(c) || FORA_DO_AR.has(c) || c < 200 || c === NAO_CATALOGADO) return null;
-  if (c === 204 || c === 539 || c === NOME_HOMOLOGACAO) return null;
+  if (AUTORIZADO.has(c) || DENEGADO.has(c) || FORA_DO_AR.has(c) || c < 200 || c === NAO_CATALOGADO || c === 204) return null;
+  if (c === 539) return 'serie';
+  if (c === NOME_HOMOLOGACAO) return null;
   if (QR.has(c)) return 'csc';
-  const f = familiaDoCodigo(c);
-  return f === 'produto' || f === 'outra' ? 'produtos' : null;
+  return atalhoDaFamilia(familiaDoCodigo(c));
 }
 
 function recusaDe(codigo: number, xMotivo: string | null | undefined, frase: (motivo: string) => string): Recusa {
