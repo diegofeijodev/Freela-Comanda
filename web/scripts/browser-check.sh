@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Conferência no navegador: banco DESCARTÁVEL (erpfreela_browser) + API na 3097 + `next dev` na 3026 + Playwright headless.
-# Rode pelo teto:  ../scripts/run-capped.sh 2600 bash scripts/browser-check.sh     (em web/)
+# Rode pelo teto:  ../scripts/run-capped.sh 3300 bash scripts/browser-check.sh     (em web/)
 set -euo pipefail
 WEB=$(cd "$(dirname "$0")/.." && pwd)
 API="$WEB/../api"
@@ -42,7 +42,7 @@ for _ in $(seq 1 180); do curl -s -o /dev/null localhost:3026/auth && break; sle
 # parava em /auth com a sessão já gravada). Em produção tudo vem compilado e isso não acontece.
 Z=00000000-0000-4000-8000-000000000000
 for r in / /auth /trocar-senha /painel /vendas /fichas /fichas/$Z /inventario /inventario/$Z /estoque /objetivo /compras /compras/$Z \
-  /notas /contas /caixa /dre /importar /configuracoes /usuarios; do
+  /notas /contas /caixa /dre /importar /configuracoes /usuarios /cupom /cupom/$Z /cupom/$Z/imprimir; do
   curl -s -o /dev/null --max-time 180 "localhost:3026$r" || true
 done
 SHOTS="$SHOTS" BASE=http://localhost:3026 node "${CHECK_SCRIPT:-$WEB/scripts/browser-check.mjs}"

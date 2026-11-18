@@ -1,6 +1,6 @@
 // Conferência no navegador (Playwright do freela-web-v2, headless). Suba a pilha com scripts/browser-check.sh.
 // Entra pelos formulários como ADMIN e como LOJA, abre todas as telas, faz os fluxos principais (nota por XML, inventário
-// cego, caixa) e falha em erro de console/página. Capturas em $SHOTS.
+// cego, caixa, notas da SEFAZ, cupom fiscal) e falha em erro de console/página. Capturas em $SHOTS.
 import { createRequire } from 'node:module';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -1113,6 +1113,446 @@ const caixas = await Promise.all(['Substituir certificado', 'Remover'].map((n) =
   await ctx.close();
 }
 
+// ================================================================================================ CUPOM FISCAL (NFC-e), Tarefa 16
+// A API do navegador roda com NFCE_AMBIENTE VAZIA (desligada de fábrica): nenhum cupom sai de verdade aqui. O bloco 1 usa a API real
+// (UX 8.1: menu só do admin e o aviso "não ativada"); os outros simulam o servidor ligado com page.route (UX 8.2) — nada vai para a rede
+// externa, e o que não é simulado (cadastro: numeração, emitente…) segue para a API real, que funciona desligada. No fim, o banco confirma
+// que nenhum cupom, envio ou emissão ligada existe.
+const CF_RE = /\/v1\/cupom-fiscal\//;
+const corsCupom = { 'access-control-allow-origin': new URL(BASE).origin, 'access-control-allow-headers': 'authorization, content-type', 'access-control-allow-methods': 'GET, POST, PUT, PATCH, OPTIONS' };
+const jsonCupom = (route, corpo, status = 200) => route.fulfill({ status, contentType: 'application/json', headers: corsCupom, body: JSON.stringify(corpo) });
+const UIDC = (n) => `00000000-0000-4000-8000-00000000c${String(n).padStart(3, '0')}`;
+const P1 = UIDC(1), P2 = UIDC(2), P3 = UIDC(3), P4 = UIDC(4), PERF = UIDC(9);
+const CUP_A = UIDC(13), CUP_539 = UIDC(14), CUP_EMP = UIDC(15), CUP_CANC = UIDC(12), CUP_SR = UIDC(16);
+const chaveCupom = (n) => `3526111234567800019565001${String(n).padStart(9, '0')}1402133770`;
+const emMin = (m) => new Date(Date.now() + m * 60_000).toISOString();
+const MSG_ITEM = 'Chopp 300 ml não pode entrar no cupom: o perfil fiscal foi desativado.';
+const MSG_PARADA = 'A SEFAZ bloqueou este sistema duas vezes em 24 horas. Por segurança, a emissão foi desligada. Fale com o contador e com o suporte do Freela Comanda antes de ligar de novo.';
+const FRASE_539 = 'A SEFAZ diz que o número 14 da série 1 já foi usado por outra nota: o caixa de hoje pode estar usando esta série. A emissão parou. Descarte este cupom e troque a série em Configurações → Cupom fiscal.';
+const FRASE_EMPRESA = 'A SEFAZ recusou um dado da empresa (inscrição estadual, endereço ou regime). Confira em Configurações → Cupom fiscal e toque em Enviar de novo.';
+const situacaoCupom = (p = {}) => ({
+  ambiente: 'producao', agora: new Date().toISOString(), emissao_ligada: true, situacao: 'ok', mensagem: null, bloqueado_ate: null, serie: 1,
+  proximo_numero: 17, falta: [], certificado: { ok: true, mensagem: null }, pendentes: { total: 0, primeiro: null }, ...p,
+});
+const produto = (id, nome, categoria, preco, p = {}) => ({
+  item_cardapio_id: id, nome, categoria, unidade_venda: 'UN', preco_venda_centavos: preco, ativo: true, ncm: '22030000', cest: null, gtin: null,
+  origem: 0, descricao_cupom: null, unidade: null, perfil_fiscal_id: PERF, perfil_nome: 'Revenda', pronto: true, motivos: [], ...p,
+});
+const PRODUTOS_CUPOM = [
+  produto(P1, 'Chopp 300 ml', 'Bebidas', 1200),
+  produto(P2, 'Espeto de Picanha', 'Espetos', 2490, { ncm: '16025000' }),
+  produto(P3, 'Porção de fritas', 'Porções', 1890, { ncm: null, perfil_fiscal_id: null, perfil_nome: null, pronto: false, motivos: ['falta_ncm', 'falta_perfil'] }),
+  produto(P4, 'Combo família: dois espetos de picanha, porção de mandioca frita e refrigerante de 2 litros', 'Combos', 12990, { ncm: '21069090' }),
+];
+const item = (n, id, nome, q, unit) => ({
+  n_item: n, item_cardapio_id: id, nome_cardapio: nome, x_prod: nome.toUpperCase(), unidade: 'UN', quantidade: `${q}.0000`,
+  valor_unitario_centavos: unit, valor_bruto_centavos: unit * q, valor_desconto_centavos: 0, perfil_nome: 'Revenda',
+});
+const detalheCupom = (p = {}) => ({
+  id: CUP_A, ambiente: 'producao', serie: 1, numero: 13, chave: chaveCupom(13), situacao: 'autorizado', dh_emi: emMin(-1), envios: 1,
+  numero_reaproveitavel: false, consumidor_doc: '52998224725', valor_produtos_centavos: 3690, valor_desconto_centavos: 0, valor_total_centavos: 3690,
+  valor_troco_centavos: 0, itens: [item(1, P1, 'Chopp 300 ml', 1, 1200), item(2, P2, 'Espeto de Picanha', 1, 2490)], pagamentos: [{ t_pag: '17', valor_centavos: 3690 }],
+  autorizada_em: emMin(-1), n_prot: '135260000000131', c_stat: 100, x_motivo: 'Autorizado o uso da NF-e', alerta: null, cancelado_em: null,
+  cancelamento_motivo: null, cancelamento_n_prot: null, cancelamento_pedido_em: null, venda_estoque: 'lancada', venda_erro: null, descartado_em: null,
+  descarte_motivo: null, emitido_por_nome: 'Admin Demo', criado_em: emMin(-1), agora: new Date().toISOString(), consultar_a_partir_de: null,
+  cancelar_ate: emMin(28), acoes: ['cancelar', 'imprimir'], recusa: null, atalho: null, mensagem: null, ...p,
+});
+const recusado = (id, numero, codigo, familia, frase, xMotivo, atalho, acoes) => detalheCupom({
+  id, numero, chave: chaveCupom(numero), situacao: 'rejeitado', numero_reaproveitavel: true, autorizada_em: null, n_prot: null, c_stat: codigo,
+  x_motivo: `Rejeição: ${xMotivo}`, venda_estoque: null, cancelar_ate: null, acoes, recusa: { codigo, familia, frase, x_motivo: xMotivo }, atalho,
+});
+const CUPONS_SIMULADOS = new Map([
+  [CUP_A, () => detalheCupom()],
+  [CUP_539, () => recusado(CUP_539, 14, 539, 'outra', FRASE_539, 'Duplicidade de NF-e, com diferença na Chave de Acesso', 'serie', ['descartar'])],
+  [CUP_EMP, () => recusado(CUP_EMP, 15, 209, 'empresa', FRASE_EMPRESA, 'IE do emitente inválida', 'empresa', ['enviar_de_novo', 'descartar'])],
+]);
+const QR_CUPOM = `https://www.homologacao.nfce.fazenda.sp.gov.br/qrcode?p=${chaveCupom(13)}|2|1|1|0123456789ABCDEF0123456789ABCDEF01234567`;
+const DANFE_CUPOM = {
+  emit: { CNPJ: '12345678000195', xNome: 'Restaurante Teste Ltda', xFant: 'Comanda Teste', IE: '123456789012',
+    enderEmit: { xLgr: 'Rua das Flores', nro: '100', xCpl: null, xBairro: 'Centro', xMun: 'Valinhos', UF: 'SP', CEP: '13270000', fone: null } },
+  det: [
+    { nItem: 1, cProd: 'CHOPP-300', xProd: 'CHOPP 300 ML', qCom: '1.0000', uCom: 'UN', vUnCom: '12.00', vProd: '12.00', vDesc: null },
+    { nItem: 2, cProd: 'ESPETO-PIC', xProd: 'ESPETO DE PICANHA', qCom: '1.0000', uCom: 'UN', vUnCom: '24.90', vProd: '24.90', vDesc: null },
+  ],
+  total: { qItens: 2, vProd: '36.90', vDesc: '0.00', vFrete: '0.00', vSeg: '0.00', vOutro: '0.00', vNF: '36.90' },
+  pag: { detPag: [{ tPag: '17', xPag: null, vPag: '36.90' }], vTroco: null },
+  chave: chaveCupom(13), urlChave: 'https://www.nfce.fazenda.sp.gov.br/consulta', qrCode: QR_CUPOM,
+  dest: { CPF: '52998224725', CNPJ: null, idEstrangeiro: null, xNome: null },
+  ide: { nNF: '13', serie: '1', dhEmi: '2026-11-18T10:00:00-03:00', tpEmis: '1' },
+  nProt: '135260000000131', dhRecbto: '2026-11-18T10:00:02-03:00', homologacao: false, infCpl: 'Obrigado pela preferência! Volte sempre.', cMsg: null, xMsg: null,
+};
+const linhaCupom = (id, numero, situacao, p = {}) => ({
+  id, ambiente: 'producao', serie: 1, numero, chave: chaveCupom(numero), situacao, dh_emi: emMin(-30), criado_em: emMin(-30), autorizada_em: null,
+  cancelado_em: null, descartado_em: null, envios: 1, valor_total_centavos: 3690, pagamentos: [{ t_pag: '17', valor_centavos: 3690 }],
+  consumidor_doc: '***.982.247-**', venda_estoque: null, acoes: [], consultar_a_partir_de: null, cancelar_ate: null, ...p,
+});
+const LISTA_CUPONS = [
+  linhaCupom(CUP_SR, 16, 'sem_resposta', { consultar_a_partir_de: emMin(1), acoes: ['consultar'], consumidor_doc: null }),
+  linhaCupom(CUP_EMP, 15, 'rejeitado', { acoes: ['enviar_de_novo', 'descartar'], pagamentos: [{ t_pag: '01', valor_centavos: 2000 }, { t_pag: '03', valor_centavos: 1690 }] }),
+  linhaCupom(CUP_539, 14, 'rejeitado', { acoes: ['descartar'] }),
+  linhaCupom(CUP_A, 13, 'autorizado', { autorizada_em: emMin(-1), venda_estoque: 'lancada', acoes: ['cancelar', 'imprimir'], cancelar_ate: emMin(28) }),
+  linhaCupom(CUP_CANC, 12, 'cancelado', { cancelado_em: emMin(-20), venda_estoque: 'desfeita', consumidor_doc: '12.345.678/0001-95' }),
+];
+const PERFIS_CUPOM = [{
+  id: PERF, nome: 'Revenda', cfop: '5102', csosn: '102', cst_icms: null, aliq_icms: null, pis_cst: null, cofins_cst: null, c_ativ_sn: null, ibs_sn_aliq: null,
+  cbs_sn_aliq: null, ibscbs_cst: null, ibscbs_cclass_trib: null, ativo: true, produtos: 3, vale_no_regime: true, atualizado_por_nome: 'Admin Demo', atualizado_em: emMin(-600),
+}];
+const EMITENTE_CUPOM = {
+  cnpj: '12345678000195', razao_social: 'Restaurante Teste Ltda', nome_fantasia: 'Comanda Teste', ie: '123456789012', crt: 1, logradouro: 'Rua das Flores',
+  numero: '100', complemento: null, bairro: 'Centro', cep: '13270000', cod_municipio: '3556206', municipio: 'Valinhos', uf: 'SP', telefone: null, nat_op: 'VENDA',
+  inf_cpl: null, resp_tec_cnpj: null, resp_tec_contato: null, resp_tec_email: null, resp_tec_fone: null, series_outro_sistema: [], sem_outro_sistema: true,
+  cupom_lanca_venda: true, cupom_lanca_venda_por_nome: 'Admin Demo', cupom_lanca_venda_em: emMin(-600), tp_regime_ibscbs: null, atualizado_por_nome: null, atualizado_em: null,
+};
+
+/**
+ * O servidor do cupom simulado (`page.route`): `est` diz o que responder (situação, produtos, perfis, emitente, a lista, o POST cupons e a
+ * busca pela chave); o que não está em `est` segue para a API real. Guarda os corpos dos POST e as buscas pela chave.
+ */
+async function simularCupom(page, est) {
+  est.posts = [];
+  est.buscas = [];
+  await page.route(CF_RE, async (route) => {
+    const req = route.request();
+    if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: corsCupom });
+    const u = new URL(req.url());
+    const p = u.pathname.replace(/^.*\/v1\/cupom-fiscal\//, '');
+    const m = req.method();
+    if (m === 'GET' && p === 'situacao' && est.situacao) return jsonCupom(route, est.situacao());
+    if (m === 'GET' && p === 'produtos' && est.produtos) {
+      const prontos = u.searchParams.get('prontos');
+      return jsonCupom(route, prontos === null ? est.produtos : est.produtos.filter((x) => String(x.pronto) === prontos));
+    }
+    if (m === 'GET' && p === 'perfis' && est.perfis) return jsonCupom(route, est.perfis);
+    if (m === 'GET' && p === 'emitente' && est.emitente) return jsonCupom(route, est.emitente);
+    if (m === 'GET' && p === 'cupons') {
+      const k = u.searchParams.get('chave_idempotencia');
+      if (k !== null) {
+        est.buscas.push(k);
+        return est.busca === 'abortar' ? route.abort('failed') : jsonCupom(route, []);
+      }
+      if (est.lista) return jsonCupom(route, est.lista);
+    }
+    if (m === 'POST' && p === 'cupons') {
+      est.posts.push(JSON.parse(req.postData() ?? '{}'));
+      if (est.post === 'abortar') return route.abort('failed');
+      if (est.post === '422') return jsonCupom(route, { error: { code: 'NFCE_ITEM_INDISPONIVEL', message: MSG_ITEM } }, 422);
+      return jsonCupom(route, detalheCupom(), 201);
+    }
+    const id = p.match(/^cupons\/([^/]+)(\/danfe)?$/);
+    if (m === 'GET' && id && CUPONS_SIMULADOS.has(id[1])) return jsonCupom(route, id[2] ? DANFE_CUPOM : CUPONS_SIMULADOS.get(id[1])());
+    if (m === 'PUT' && /^ambientes\/(producao|homologacao)\/emissao$/.test(p) && est.ligar) return jsonCupom(route, { error: { code: 'NFCE_PARADA', message: MSG_PARADA } }, 409);
+    return route.continue();
+  });
+}
+const simQ = (loc, timeout = 30_000) => loc.waitFor({ timeout }).then(() => true, () => false);
+const focoEm = (page, fn, arg, timeout = 15_000) => page.waitForFunction(fn, arg, { timeout }).then(() => true, () => false);
+const antesNaTela = async (a, b) => a.evaluate((x, y) => !!(x.compareDocumentPosition(y) & Node.DOCUMENT_POSITION_FOLLOWING), await b.elementHandle());
+const reaisErros = (erros) => erros.filter((e) => !/Failed to load resource/.test(e));
+// Alvos de toque na aba aberta (e nas abas): botões, links, campos, resumos e opções com menos de 44 px de altura (o rótulo em volta conta).
+const alvosPequenos = (page) => page.evaluate(() => [...document.querySelectorAll(
+  '[role=tab], [role=tabpanel][data-state=active] :is(button, a[href], select, input:not([type=hidden]), summary, [role=radio], [role=checkbox])',
+)].filter((el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; })
+  .filter((el) => Math.max(el.getBoundingClientRect().height, (el.closest('label') ?? el).getBoundingClientRect().height) < 43.5)
+  .map((el) => `${el.tagName.toLowerCase()} "${(el.getAttribute('aria-label') || el.textContent || '').trim().slice(0, 30)}" ${Math.round(el.getBoundingClientRect().height)}px`));
+
+// Diagnóstico mais largo que o `quemPassaDaBorda`: todo elemento que passa da borda direita (também os dentro de contêiner com rolagem),
+// com a posição CSS (um `absolute` escapa do corte do contêiner que não é o bloco que o contém).
+const passamDaBorda = (page, lim) => page.evaluate((l) => [...document.querySelectorAll('body *')]
+  .filter((el) => el.getBoundingClientRect().right > l + 0.5)
+  .slice(0, 8)
+  .map((el) => `${el.tagName.toLowerCase()}.${String(el.className?.baseVal ?? el.className).slice(0, 50)}@${el.getBoundingClientRect().right.toFixed(1)}/${getComputedStyle(el).position}`), lim);
+// Cada bloco do cupom roda isolado: uma exceção vira uma falha com captura, e os outros blocos seguem.
+async function blocoCupom(nome, viewport, fn) {
+  const s = await sessao('admin@erpfreela.local', viewport);
+  try {
+    await fn(s);
+  } catch (e) {
+    check(`${nome}: terminou sem exceção`, false, String(e?.message ?? e).split('\n')[0]);
+    await s.page.screenshot({ path: join(SHOTS, `falha-${nome.replace(/[^a-z0-9]+/gi, '-')}.png`), fullPage: true }).catch(() => {});
+  } finally {
+    await s.ctx.close();
+  }
+}
+// A barra do celular pronta para conferir (o botão sem aria-disabled); se não, mostra o que ela diz.
+async function barraPronta(page, nome) {
+  const ok = await page.waitForFunction(() => [...document.querySelectorAll('div.fixed button')].some((b) => b.getBoundingClientRect().height > 0
+    && b.textContent.trim() === 'Conferir e emitir' && b.getAttribute('aria-disabled') !== 'true'), null, { timeout: 20_000 }).then(() => true, () => false);
+  check(`${nome}: a barra diz "Conferir e emitir"`, ok, ok ? '' : JSON.stringify(await page.locator('div.fixed').allInnerTexts()));
+  return ok;
+}
+
+// ---------------- CUPOM 1: servidor desligado (UX 8.1), API real, celular 360x800
+await blocoCupom('cupom 1 (desligado)', { width: 360, height: 800 }, async ({ page, erros }) => {
+  const pedidos = [];
+  page.on('request', (r) => { if (CF_RE.test(r.url()) && r.method() !== 'OPTIONS') pedidos.push(`${r.method()} ${new URL(r.url()).pathname}`); });
+  const menu = await page.locator('header nav a').allInnerTexts();
+  check('cupom desligado: o admin vê "Cupom Fiscal" no menu', menu.some((t) => t.includes('Cupom Fiscal')), JSON.stringify(menu));
+  await page.goto(`${BASE}/cupom`, { waitUntil: 'domcontentloaded', timeout: 180_000 });
+  check('cupom desligado: Emitir avisa "não está ativada"', await simQ(page.getByText('A emissão de cupom fiscal não está ativada neste servidor. Você já pode cadastrar os dados fiscais dos produtos e da empresa; para ativar, fale com o suporte do Freela Comanda.', { exact: true }), 120_000));
+  check('cupom desligado: "Preparar os produtos" e nada de emitir', (await page.getByRole('link', { name: 'Preparar os produtos' }).count()) === 1
+    && (await page.getByRole('button', { name: /Conferir e emitir|Adicione um produto/ }).count()) === 0);
+  const l1 = await quemPassaDaBorda(page, 360);
+  check('cupom desligado: sem rolagem lateral em 360', l1.scroll <= 360, JSON.stringify(l1));
+  await page.screenshot({ path: join(SHOTS, 'admin-cupom-desligado-360.png'), fullPage: true });
+  await page.goto(`${BASE}/configuracoes?aba=cupom`, { waitUntil: 'domcontentloaded', timeout: 180_000 });
+  const painel = page.locator('#cupom-fiscal');
+  check('cupom desligado: Configurações › Cupom fiscal avisa "não está ativada"', await simQ(painel.getByText('A emissão de cupom fiscal não está ativada neste servidor.', { exact: false }).first(), 120_000));
+  check('cupom desligado: nenhum botão de ligar', (await painel.getByRole('button', { name: /Ligar a emissão/ }).count()) === 0);
+  await page.screenshot({ path: join(SHOTS, 'admin-cupom-configuracoes-desligado-360.png'), fullPage: true });
+  // âncora de "Para ligar a emissão, falta: … Preencher" (regime): abre a aba e põe o foco no grupo do regime
+  await page.goto(`${BASE}/painel`, { waitUntil: 'domcontentloaded', timeout: 180_000 });
+  await page.goto(`${BASE}/configuracoes?aba=cupom#cupom-crt`, { waitUntil: 'domcontentloaded', timeout: 180_000 });
+  check('cupom: o link #cupom-crt põe o foco no regime', await focoEm(page, () => !!document.activeElement?.closest('#cupom-crt'), null, 60_000));
+  check('cupom desligado: nenhum POST/PUT ao cupom', !pedidos.some((x) => !x.startsWith('GET')), JSON.stringify(pedidos));
+  const reais = reaisErros(erros);
+  check('cupom desligado: sem erro de console', reais.length === 0, reais.join(' | '));
+});
+
+// ---------------- CUPOM 2: Emitir no celular (360x800, captura também em 390), servidor simulado ligado (UX 8.2)
+await blocoCupom('cupom 2 (emitir 360)', { width: 360, height: 800 }, async ({ page, erros }) => {
+  const est = { situacao: () => situacaoCupom(), produtos: PRODUTOS_CUPOM, lista: [], post: 'ok', busca: 'vazia' };
+  await simularCupom(page, est);
+  const busca = page.locator('#cupom-busca');
+  const resultado = (nome) => page.locator('li > button', { hasText: nome }).first();
+  const botaoBarra = page.locator('div.fixed button:visible', { hasText: /Conferir e emitir|Adicione|Escolha|Confira|Falta/ });
+  const dlg = page.getByRole('dialog');
+  await page.goto(`${BASE}/cupom`, { waitUntil: 'domcontentloaded', timeout: 180_000 });
+  check('emitir 360: a busca aparece', await simQ(busca, 120_000));
+  check('emitir 360: barra sem produto diz "Adicione um produto"', await simQ(page.locator('div.fixed button:visible', { hasText: 'Adicione um produto' })));
+  await busca.fill('chopp');
+  await resultado('Chopp 300 ml').click();
+  await busca.fill('espeto');
+  await busca.press('Enter');
+  check('emitir 360: 2 itens no cupom (toque e Enter)', await simQ(page.getByText('No cupom (2 itens)')));
+  await busca.fill('fritas');
+  check('emitir 360: o produto sem NCM aparece em "Não entram no cupom"', await simQ(page.getByText('Porção de fritas · Falta NCM')));
+  await busca.fill('');
+  // sair do campo de busca ANTES de tocar no pagamento: a linha "Acabou de entrar" some no blur e o 1º toque logo abaixo dela se perde
+  // (achado da Tarefa 16, ver o relato)
+  await page.locator('#cupom-doc').focus();
+  await page.getByRole('radio', { name: 'PIX' }).click();
+  await page.locator('#cupom-doc').fill('52998224725');
+  check('emitir 360: CPF com máscara', (await page.locator('#cupom-doc').inputValue()) === '529.982.247-25');
+  await barraPronta(page, 'emitir 360');
+  check('emitir 360: total R$ 36,90 na barra', await simQ(page.locator('div.fixed').getByText('R$ 36,90')));
+  const l360 = await quemPassaDaBorda(page, 360);
+  check('emitir 360: sem rolagem lateral', l360.scroll <= 360, JSON.stringify(l360));
+  await page.screenshot({ path: join(SHOTS, 'admin-cupom-emitir-360.png'), fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  const l390 = await quemPassaDaBorda(page, 390);
+  check('emitir 390: sem rolagem lateral', l390.scroll <= 390, JSON.stringify(l390));
+  await page.screenshot({ path: join(SHOTS, 'admin-cupom-emitir-390.png'), fullPage: true });
+  await page.setViewportSize({ width: 360, height: 800 });
+
+  // Conferir (folha de baixo) → Emitir → a página do cupom autorizado
+  await botaoBarra.click();
+  check('emitir 360: "Conferir o cupom" abre', await simQ(dlg.getByText('Conferir o cupom', { exact: true })));
+  check('emitir 360: conferir mostra o CPF e o valendo', (await dlg.getByText('CPF 529.982.247-25').count()) === 1
+    && (await dlg.getByText('Este cupom vale como documento fiscal e vai para a SEFAZ em nome da empresa.').count()) === 1);
+  await page.screenshot({ path: join(SHOTS, 'admin-cupom-conferir-360.png') });
+  await dlg.getByRole('button', { name: 'Emitir cupom' }).click();
+  check('emitir 360: abre o cupom autorizado', await page.waitForURL(`**/cupom/${CUP_A}`, { timeout: 60_000 }).then(() => true, () => false)
+    && await simQ(page.getByRole('heading', { name: 'Cupom nº 13' })));
+  const b1 = est.posts[0];
+  check('emitir 360: o POST leva itens, PIX, CPF e o total visto', b1 && b1.itens.length === 2 && b1.itens.every((i) => i.quantidade === '1')
+    && b1.pagamentos[0].t_pag === '17' && b1.pagamentos[0].valor_centavos === 3690 && b1.consumidor_doc === '52998224725' && b1.total_esperado_centavos === 3690, JSON.stringify(b1));
+  check('emitir 360: o DANFE aparece', await simQ(page.locator('section.danfe')));
+  check('emitir 360: Imprimir e Novo cupom na barra de baixo', await simQ(page.locator('div.fixed a:visible', { hasText: 'Imprimir' })) && (await page.locator('div.fixed a:visible', { hasText: 'Novo cupom' }).count()) === 1);
+  const lAut = await quemPassaDaBorda(page, 360);
+  check('cupom autorizado 360: sem rolagem lateral', lAut.scroll <= 360, JSON.stringify(lAut));
+  await page.screenshot({ path: join(SHOTS, 'admin-cupom-autorizado-360.png'), fullPage: true });
+
+  // "Não sei se saiu" (UX 2.7): o POST e a busca pela chave caem; a venda trava; "Tentar de novo" manda a MESMA chave; o 422 destrava (T14 I1)
+  await page.locator('div.fixed a:visible', { hasText: 'Novo cupom' }).click();
+  check('não sei se saiu: volta para Emitir', await simQ(page.getByText('No cupom (0 itens)'), 60_000));
+  await busca.fill('chopp');
+  await resultado('Chopp 300 ml').click();
+  await page.locator('#cupom-doc').focus();
+  await page.getByRole('radio', { name: 'Dinheiro' }).click();
+  await barraPronta(page, 'não sei se saiu');
+  await botaoBarra.click();
+  await simQ(dlg.getByRole('button', { name: 'Emitir cupom' }));
+  est.post = 'abortar';
+  est.busca = 'abortar';
+  await dlg.getByRole('button', { name: 'Emitir cupom' }).click();
+  check('não sei se saiu: a frase aparece', await simQ(dlg.getByText('Não consegui falar com o servidor do Freela Comanda. O cupom pode ter saído ou não.')));
+  const tentar = dlg.getByRole('button', { name: 'Tentar de novo' });
+  check('não sei se saiu: "Tentar de novo" liberado depois da única busca', await page.waitForFunction(() => [...document.querySelectorAll('[role=dialog] button')].some((b) => b.textContent.trim() === 'Tentar de novo' && !b.disabled), null, { timeout: 30_000 }).then(() => true, () => false));
+  check('não sei se saiu: procurou UMA vez, pela chave do POST', est.buscas.length === 1 && est.buscas[0] === est.posts[1]?.chave_idempotencia, JSON.stringify(est.buscas));
+  check('não sei se saiu: a venda fica travada', await busca.isDisabled() && (await page.getByText('Para mudar a venda, primeiro toque em Tentar de novo.').count()) === 1);
+  await page.screenshot({ path: join(SHOTS, 'admin-cupom-nao-sei-se-saiu-360.png') });
+  est.post = '422';
+  await tentar.click();
+  check('não sei se saiu: o erro definitivo aparece no "Tentar de novo"', await simQ(dlg.getByRole('alert').getByText(MSG_ITEM)));
+  check('não sei se saiu: "Tentar de novo" mandou a mesma chave', est.posts.length === 3 && est.posts[2].chave_idempotencia === est.posts[1].chave_idempotencia, JSON.stringify(est.posts.map((x) => x.chave_idempotencia)));
+  check('não sei se saiu: o foco vai para a caixa do erro', await focoEm(page, (m) => document.activeElement?.textContent?.includes(m), MSG_ITEM));
+  await dlg.getByRole('button', { name: 'Voltar e corrigir' }).click();
+  check('não sei se saiu: o erro definitivo destrava a venda', await page.waitForFunction(() => !document.querySelector('#cupom-busca')?.disabled, null, { timeout: 20_000 }).then(() => true, () => false)
+    && (await page.getByText('Para mudar a venda, primeiro toque em Tentar de novo.').count()) === 0);
+  check('não sei se saiu: a venda continua no carrinho', (await page.getByText('No cupom (1 item)').count()) === 1);
+  const guardado = await page.evaluate(() => ({ local: Object.keys(localStorage), sessao: sessionStorage.length }));
+  check('emitir 360: a venda não vai para o storage (só authUser)', guardado.local.length === 1 && guardado.local[0] === 'authUser' && guardado.sessao === 0, JSON.stringify(guardado));
+  const reais = reaisErros(erros);
+  check('emitir 360: sem erro de console', reais.length === 0, reais.join(' | '));
+});
+
+// ---------------- CUPOM 3: Emitir no computador (1366x900), a página do cupom (atalhos e a ordem da UX 6.1) e a impressão em 80 mm
+await blocoCupom('cupom 3 (desktop)', undefined, async ({ page, erros }) => {
+  const est = { situacao: () => situacaoCupom(), produtos: PRODUTOS_CUPOM, lista: LISTA_CUPONS, post: 'ok', busca: 'vazia' };
+  await simularCupom(page, est);
+  const dlg = page.getByRole('dialog');
+  await page.goto(`${BASE}/cupom`, { waitUntil: 'domcontentloaded', timeout: 180_000 });
+  const busca = page.locator('#cupom-busca');
+  check('emitir desktop: a busca aparece', await simQ(busca, 120_000));
+  await busca.fill('combo');
+  await page.locator('li > button', { hasText: 'Combo família' }).first().click();
+  await page.getByRole('radio', { name: 'Débito' }).click();
+  const lDesk = await quemPassaDaBorda(page, 1366);
+  check('emitir desktop: sem rolagem lateral', lDesk.scroll <= 1366, JSON.stringify(lDesk));
+  await page.screenshot({ path: join(SHOTS, 'admin-cupom-emitir-desktop.png'), fullPage: true });
+  await page.locator('button:visible', { hasText: 'Conferir e emitir' }).click();
+  check('emitir desktop: "Conferir o cupom" em diálogo, sem CPF', await simQ(dlg.getByText('Conferir o cupom', { exact: true })) && (await dlg.getByText('Sem CPF na nota').count()) === 1);
+  await page.screenshot({ path: join(SHOTS, 'admin-cupom-conferir-desktop.png') });
+  await dlg.getByRole('button', { name: 'Emitir cupom' }).click();
+  check('emitir desktop: abre o cupom autorizado', await page.waitForURL(`**/cupom/${CUP_A}`, { timeout: 60_000 }).then(() => true, () => false) && await simQ(page.locator('section.danfe')));
+  check('emitir desktop: o POST leva Débito e o total', est.posts[0]?.pagamentos[0]?.t_pag === '04' && est.posts[0]?.total_esperado_centavos === 12990 && est.posts[0]?.consumidor_doc === null, JSON.stringify(est.posts[0]));
+  // autorizado: Imprimir antes de "Mostrar QR"; o "Cancelar o cupom…" aparece no prazo
+  check('cupom autorizado: "Imprimir" vem antes de "Mostrar QR para o cliente"', await antesNaTela(page.locator('a:visible', { hasText: 'Imprimir' }).first(), page.getByRole('button', { name: 'Mostrar QR para o cliente' })));
+  check('cupom autorizado: "Cancelar o cupom…" no prazo', (await page.getByRole('button', { name: 'Cancelar o cupom…' }).count()) === 1);
+  await page.screenshot({ path: join(SHOTS, 'admin-cupom-autorizado-desktop.png'), fullPage: true });
+
+  // 539: "Descartar… · [Trocar a série]" (o atalho DEPOIS do botão) e o atalho leva ao campo da série do ambiente do cupom
+  await page.goto(`${BASE}/cupom/${CUP_539}`, { waitUntil: 'domcontentloaded', timeout: 180_000 });
+  const descartar = page.getByRole('button', { name: 'Descartar…' });
+  const trocar = page.getByRole('link', { name: 'Trocar a série' });
+  check('cupom 539: a frase do servidor', await simQ(page.getByText(FRASE_539), 60_000));
+  check('cupom 539: só "Descartar…" (sem "Enviar de novo")', (await descartar.count()) === 1 && (await page.getByRole('button', { name: 'Enviar de novo' }).count()) === 0);
+  check('cupom 539: "Descartar…" antes de "Trocar a série" (UX 6.1)', (await trocar.count()) === 1 && await antesNaTela(descartar, trocar));
+  await page.screenshot({ path: join(SHOTS, 'admin-cupom-539-desktop.png'), fullPage: true });
+  await trocar.click();
+  check('cupom 539: "Trocar a série" abre Configurações › Cupom fiscal', await page.waitForURL(/\/configuracoes\?aba=cupom#cupom-serie-producao$/, { timeout: 60_000 }).then(() => true, () => false));
+  check('cupom 539: o foco vai para a série do valendo', await focoEm(page, () => document.activeElement?.id === 'cupom-serie-producao', null, 60_000));
+  // família empresa: "[Ir para Configurações] · Enviar de novo" (o atalho ANTES)
+  await page.goto(`${BASE}/cupom/${CUP_EMP}`, { waitUntil: 'domcontentloaded', timeout: 180_000 });
+  const irConfig = page.getByRole('link', { name: 'Ir para Configurações' });
+  check('cupom empresa: a frase do servidor', await simQ(page.getByText(FRASE_EMPRESA), 60_000));
+  check('cupom empresa: "Ir para Configurações" antes de "Enviar de novo"', (await irConfig.count()) === 1 && await antesNaTela(irConfig, page.getByRole('button', { name: 'Enviar de novo' })));
+  check('cupom empresa: o atalho leva à inscrição estadual', (await irConfig.getAttribute('href')) === '/configuracoes?aba=cupom#cupom-ie');
+
+  // Impressão (UX 3.4): `window.print()` uma vez só, depois que o QR carregou; no papel, só o DANFE, até 80 mm, com o QR de 25 mm ou mais
+  await page.addInitScript(() => {
+    window.__impressoes = [];
+    window.print = () => {
+      const qr = document.querySelector('img[alt^="QR Code do cupom"]');
+      window.__impressoes.push(!!qr && qr.complete && qr.naturalWidth > 0);
+    };
+  });
+  await page.goto(`${BASE}/cupom/${CUP_A}/imprimir?imprimir=1`, { waitUntil: 'domcontentloaded', timeout: 180_000 });
+  check('imprimir: o DANFE aparece', await simQ(page.locator('section.danfe'), 60_000));
+  await page.waitForTimeout(2_000);
+  const impressoes = await page.evaluate(() => window.__impressoes);
+  check('imprimir: window.print() uma vez só', impressoes.length === 1, JSON.stringify(impressoes));
+  check('imprimir: depois que o QR carregou (onLoad)', impressoes[0] === true, JSON.stringify(impressoes));
+  const regraPagina = await page.evaluate(() => {
+    for (const s of document.styleSheets) {
+      let regras;
+      try { regras = s.cssRules; } catch { continue; }
+      for (const r of regras) if (r.type === 6) return r.style.cssText;
+    }
+    return null;
+  });
+  check('imprimir: a página tem a regra @page (margem de 2 mm)', /margin: 2mm/.test(regraPagina ?? ''), String(regraPagina));
+  if (!/size/.test(regraPagina ?? '')) console.log(`AVISO (impressão): o navegador descartou o "size" do @page ("80mm auto" não é um tamanho válido); regra em vigor: ${regraPagina}`);
+  await page.emulateMedia({ media: 'print' });
+  const papel = await page.evaluate(() => {
+    const mm = (px) => (px * 25.4) / 96;
+    const s = document.querySelector('section.danfe');
+    const qr = s?.querySelector('img');
+    return { largura: mm(s.getBoundingClientRect().width), qr: qr ? mm(qr.getBoundingClientRect().width) : 0, soDanfe: document.body.innerText.trim() === s.innerText.trim() };
+  });
+  check('imprimir: o papel tem até 80 mm', papel.largura <= 80.01, JSON.stringify(papel));
+  check('imprimir: o QR tem 25 mm ou mais', papel.qr >= 25, JSON.stringify(papel));
+  check('imprimir: só o DANFE vai para o papel', papel.soDanfe, JSON.stringify(papel));
+  await page.locator('section.danfe').screenshot({ path: join(SHOTS, 'admin-cupom-danfe-80mm.png') });
+  await page.pdf({ path: join(SHOTS, 'admin-cupom-danfe-80mm.pdf'), width: '80mm', printBackground: true });
+  await page.emulateMedia({ media: 'screen' });
+  check('imprimir: a prévia não chamou window.print() de novo', (await page.evaluate(() => window.__impressoes.length)) === 1);
+  const reais = reaisErros(erros);
+  check('cupom desktop: sem erro de console', reais.length === 0, reais.join(' | '));
+});
+
+// ---------------- CUPOM 4: Configurações › Cupom fiscal (celular 360x800): "Ligar valendo" recusado DENTRO do diálogo (T15 I1) e os focos
+await blocoCupom('cupom 4 (configurações)', { width: 360, height: 800 }, async ({ page, erros }) => {
+  const est = { situacao: () => situacaoCupom({ emissao_ligada: false }), produtos: PRODUTOS_CUPOM, perfis: PERFIS_CUPOM, emitente: EMITENTE_CUPOM, lista: [], ligar: true };
+  await simularCupom(page, est);
+  const mudancas = [];
+  page.on('request', (r) => { if (CF_RE.test(r.url()) && !['GET', 'OPTIONS'].includes(r.method())) mudancas.push(`${r.method()} ${new URL(r.url()).pathname}`); });
+  await page.goto(`${BASE}/configuracoes?aba=cupom`, { waitUntil: 'domcontentloaded', timeout: 180_000 });
+  const ligar = page.getByRole('button', { name: 'Ligar a emissão de cupons' });
+  check('ligar valendo: o botão aparece', await simQ(ligar, 120_000));
+  await ligar.click();
+  const ad = page.getByRole('alertdialog');
+  check('ligar valendo: o diálogo abre', await simQ(ad.getByText('Ligar a emissão valendo?', { exact: true })));
+  check('ligar valendo: foco inicial em "Agora não"', await focoEm(page, () => document.activeElement?.textContent?.trim() === 'Agora não'));
+  for (const c of await ad.getByRole('checkbox').all()) await c.click();
+  await ad.getByRole('button', { name: 'Ligar valendo' }).click();
+  check('ligar valendo: o erro do servidor aparece DENTRO do diálogo', await simQ(ad.getByRole('alert').getByText(MSG_PARADA)));
+  check('ligar valendo: o foco vai para o erro', await focoEm(page, (m) => !!document.activeElement?.closest('[role=alertdialog]') && document.activeElement.textContent.includes(m), MSG_PARADA));
+  check('ligar valendo: as marcas ficam', (await ad.getByRole('checkbox', { checked: true }).count()) === 3);
+  const lLig = await quemPassaDaBorda(page, 360);
+  check('ligar valendo: sem rolagem lateral em 360', lLig.scroll <= 360, JSON.stringify(lLig));
+  await page.screenshot({ path: join(SHOTS, 'admin-cupom-ligar-valendo-erro-360.png') });
+  await ad.getByRole('button', { name: 'Agora não' }).click();
+  check('ligar valendo: "Agora não" fecha', await ad.waitFor({ state: 'hidden', timeout: 10_000 }).then(() => true, () => false));
+  // "Mudar o regime da empresa?" com perfil do Simples ativo: foco inicial em "Manter o regime"
+  await page.getByRole('radio', { name: '3 Regime normal (Lucro Presumido ou Real)' }).click();
+  check('regime: o diálogo da troca abre', await simQ(ad.getByText('Mudar o regime da empresa?', { exact: true })));
+  check('regime: foco inicial em "Manter o regime"', await focoEm(page, () => document.activeElement?.textContent?.trim() === 'Manter o regime'));
+  await ad.getByRole('button', { name: 'Manter o regime' }).click();
+  check('regime: "Manter o regime" não muda o regime', await page.getByRole('radio', { name: '1 Simples Nacional', exact: true }).isChecked());
+  await page.screenshot({ path: join(SHOTS, 'admin-cupom-configuracoes-360.png'), fullPage: true });
+  // Desativar um perfil em uso: foco inicial em "Manter ativo"
+  await page.goto(`${BASE}/cupom?aba=produtos`, { waitUntil: 'domcontentloaded', timeout: 180_000 });
+  const resumoPerfis = page.locator('[role=tabpanel][data-state=active] details > summary').first();
+  check('perfis: o quadro aparece', await simQ(resumoPerfis, 120_000));
+  await resumoPerfis.click();
+  await page.getByRole('button', { name: 'Editar o perfil Revenda' }).click();
+  await page.getByRole('button', { name: 'Desativar', exact: true }).click();
+  check('perfil: o diálogo de desativar abre', await simQ(ad.getByText('Desativar o perfil Revenda?', { exact: true })));
+  check('perfil: foco inicial em "Manter ativo"', await focoEm(page, () => document.activeElement?.textContent?.trim() === 'Manter ativo'));
+  await ad.getByRole('button', { name: 'Manter ativo' }).click();
+  check('perfil: "Manter ativo" fecha o diálogo', await ad.waitFor({ state: 'hidden', timeout: 10_000 }).then(() => true, () => false));
+  check('configurações: só o PUT de ligar (simulado) mudou algo; nada desativado', mudancas.length === 1 && /\/ambientes\/producao\/emissao$/.test(mudancas[0]), JSON.stringify(mudancas));
+  const reais = reaisErros(erros);
+  check('cupom configurações: sem erro de console', reais.length === 0, reais.join(' | '));
+});
+
+// ---------------- CUPOM 5: Emitidos e Produtos sem rolagem lateral (360, 768, 800 e 1000 px) e com alvos de 44 px
+await blocoCupom('cupom 5 (emitidos e produtos)', { width: 360, height: 800 }, async ({ page, erros }) => {
+  const est = { situacao: () => situacaoCupom(), produtos: PRODUTOS_CUPOM, perfis: PERFIS_CUPOM, emitente: EMITENTE_CUPOM, lista: LISTA_CUPONS };
+  await simularCupom(page, est);
+  for (const [aba, texto] of [['emitidos', 'Cupom nº 16'], ['produtos', 'Porção de fritas']]) {
+    await page.setViewportSize({ width: 360, height: 800 });
+    await page.goto(`${BASE}/cupom?aba=${aba}`, { waitUntil: 'domcontentloaded', timeout: 180_000 });
+    if (aba === 'produtos') await simQ(page.getByRole('button', { name: /^Todos \(/ }), 120_000).then(() => page.getByRole('button', { name: /^Todos \(/ }).click());
+    check(`cupom ${aba}: a lista aparece`, await simQ(page.locator('[role=tabpanel][data-state=active]').getByText(texto).first(), 120_000));
+    for (const largura of [360, 768, 800, 1000]) {
+      await page.setViewportSize({ width: largura, height: 800 });
+      await page.waitForTimeout(400);
+      const l = await quemPassaDaBorda(page, largura);
+      check(`cupom ${aba}: sem rolagem lateral em ${largura}`, l.scroll <= largura, l.scroll <= largura ? '' : JSON.stringify({ ...l, todos: await passamDaBorda(page, largura) }));
+      const pequenos = await alvosPequenos(page);
+      check(`cupom ${aba}: alvos com 44 px em ${largura}`, pequenos.length === 0, JSON.stringify(pequenos.slice(0, 6)));
+      if (largura === 360 || largura === 800) await page.screenshot({ path: join(SHOTS, `admin-cupom-${aba}-${largura}.png`), fullPage: true });
+    }
+  }
+  const reais = reaisErros(erros);
+  check('cupom emitidos/produtos: sem erro de console', reais.length === 0, reais.join(' | '));
+  const banco = execFileSync('docker', ['exec', 'erp-freela-postgres', 'psql', '-U', 'erpfreela', '-d', 'erpfreela_browser', '-t', '-A', '-c',
+    "select (select count(*) from nfce_cupons) || '/' || (select count(*) from nfce_envios) || '/' || (select count(*) from nfce_ambientes where emissao_ligada)"]).toString().trim();
+  check('cupom: nenhum cupom, envio ou emissão ligada no banco (nada saiu de verdade)', banco === '0/0/0', banco);
+});
+
 // ---------------- LOJA (celular)
 {
   const { ctx, page, erros } = await sessao('loja@erpfreela.local', { width: 390, height: 844 });
@@ -1124,6 +1564,11 @@ const caixas = await Promise.all(['Substituir certificado', 'Remover'].map((n) =
   const menu = await page.locator('header nav a').allInnerTexts();
   check('menu da loja tem 4 itens', menu.length === 4, JSON.stringify(menu));
   check('loja não vê Vendas no menu', !menu.some((t) => t.includes('Vendas')));
+  check('loja não vê "Cupom Fiscal" no menu', !menu.some((t) => t.includes('Cupom Fiscal')), JSON.stringify(menu));
+  const pedidosCupom = [];
+  page.on('request', (r) => { if (r.url().includes('/v1/cupom-fiscal')) pedidosCupom.push(r.url()); });
+  await abrir(page, erros, '/cupom', 'Acesso negado.', 'loja-cupom-negado');
+  check('loja: nenhum pedido ao cupom fiscal', pedidosCupom.length === 0, pedidosCupom.join(' | '));
   await abrir(page, erros, '/fichas', 'Modo consulta', 'loja-fichas');
   check('loja não vê custo nas fichas', (await page.getByText('Custo').count()) === 0);
   await page.goto(`${BASE}/painel`, { waitUntil: 'domcontentloaded' });

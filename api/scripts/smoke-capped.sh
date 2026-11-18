@@ -46,7 +46,7 @@ trap 'kill -- -$API_PID 2>/dev/null || kill $API_PID 2>/dev/null || true' EXIT
 for _ in $(seq 1 90); do curl -sf "localhost:$PORTA/health" >/dev/null 2>&1 && break; sleep 1; done
 curl -sf "localhost:$PORTA/health" >/dev/null || { echo "API não subiu"; tail -30 "$LOG"; exit 1; }
 set +e
-BASE="http://localhost:$PORTA" PGDB="$DB" bash scripts/smoke.sh
+BASE="http://localhost:$PORTA" PGDB="$DB" API_LOG="$LOG" bash scripts/smoke.sh
 STATUS=$?
 set -e
 if grep -q 'smoke-sem-rede: conexão recusada' "$LOG"; then

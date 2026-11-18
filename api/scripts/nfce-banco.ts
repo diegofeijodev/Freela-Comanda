@@ -17,6 +17,7 @@ import { Prisma, PrismaClient } from '@prisma/client';
 import type { PrismaService } from '../src/common/database/prisma.service';
 import { montarChaveNfce } from '../src/common/fiscal/chave-acesso';
 import { todaySp } from '../src/common/time/dates';
+import { CertificadoErro } from '../src/modules/certificado-digital/certificado-digital.port';
 import { CupomCadastroService } from '../src/modules/cupom-fiscal/cadastro.service';
 import { CupomCancelamentoService } from '../src/modules/cupom-fiscal/cancelamento.service';
 import { cifrarCsc } from '../src/modules/cupom-fiscal/csc';
@@ -404,8 +405,9 @@ function eventoDe(fixture: string, chave: string, cStat?: number): string {
  * novo = 409), a consulta num cupom autorizado (só a lista branca), a T3 que falha (venda repetida no banco: `venda_erro` gravado no
  * autorizado) e o "Lançar de novo", o número descartado que volta (índice parcial: descartado + vivo), o cancelamento (Task 12: T1
  * `autorizado → cancelando`, 573 que fica `cancelando` até a consulta achar o evento, 135 direto a `cancelado`, recusa que volta a
- * `autorizado` sem o motivo, a venda desfeita uma vez só e o gatilho recusando o resto) e a série do caixa de hoje igual à daqui (a T1
- * recusa sem reservar nem enviar). Devolve o emitente, os ambientes e a empresa como estavam.
+ * `autorizado` sem o motivo, a venda desfeita uma vez só e o gatilho recusando o resto), a série do caixa de hoje igual à daqui (a T1
+ * recusa sem reservar nem enviar) e as recusas antes da T1 (total que mudou, produto que sumiu ou com o perfil desativado, sem certificado:
+ * nada reservado nem enviado). Devolve o emitente, os ambientes e a empresa como estavam.
  */
 async function emissao(db: PrismaClient, a: Item): Promise<void> {
   const conf = await db.configuracoes.findUniqueOrThrow({ where: { id: 1 } });
@@ -424,7 +426,14 @@ async function emissaoNoBanco(db: PrismaClient, a: Item): Promise<void> {
   const config = {
     get: (k: string) => (k === 'NFCE_AMBIENTE' ? 'producao' : k === 'CERTIFICADO_SECRET' ? SEGREDO_HARNESS : undefined),
   } as unknown as ConfigService;
-  const certificados = { emUso: async () => CLIENTE };
+  // `semCertificado` = a porta do certificado responde como sem certificado guardado (o 503 da porta de verdade), no bloco 7
+  let semCertificado = false;
+  const certificados = {
+    emUso: async () => {
+      if (semCertificado) throw new CertificadoErro('Sem certificado (nfce-banco).', 503, 'CERTIFICADO_NAO_CADASTRADO');
+      return CLIENTE;
+    },
+  };
   const porta = new SefazNfceFalso();
   const prisma = db as unknown as PrismaService;
   const cadastro = new CupomCadastroService(prisma, config, certificados);
@@ -679,6 +688,46 @@ async function emissaoNoBanco(db: PrismaClient, a: Item): Promise<void> {
       (await proximoNumero()) === BigInt(n3 + 2),
     'série do caixa de hoje: nada reservado, nada enviado',
   );
+  await db.nfce_emitente.update({ where: { id: 1 }, data: { sem_outro_sistema: true, series_outro_sistema: [] } });
+
+  // 7. recusas ANTES da T1 (Tarefa 16; desenho §4.2 passo 1): total que mudou, produto que sumiu ou saiu do cupom e emissão sem
+  // certificado. Nenhuma reserva número, grava cupom ou chama a porta.
+  const nada = async (oque: string) => {
+    conferir(
+      porta.chamadas.length === chamadas &&
+        (await db.nfce_cupons.count({ where: { emitido_por_nome: MARCA } })) === cupons &&
+        (await proximoNumero()) === BigInt(n3 + 2),
+      `${oque}: nada reservado, nada enviado`,
+    );
+  };
+  await recusaHttp(
+    svc.emitir({ ...venda(), total_esperado_centavos: 2300 }, QUEM),
+    409,
+    'NFCE_TOTAL_MUDOU',
+    'total que a tela viu ≠ o do servidor: 409',
+  );
+  await nada('total mudou');
+  await recusaHttp(
+    svc.emitir({ ...venda(), itens: [{ item_cardapio_id: randomUUID(), quantidade: '1' }], total_esperado_centavos: 1200 }, QUEM),
+    422,
+    'NFCE_ITEM_INDISPONIVEL',
+    'produto que não existe mais: 422',
+  );
+  await nada('produto que sumiu');
+  await db.nfce_perfis_fiscais.update({ where: { id: perfil.id }, data: { ativo: false } });
+  try {
+    await recusaHttp(svc.emitir(venda(), QUEM), 422, 'NFCE_ITEM_INDISPONIVEL', 'perfil fiscal desativado entre a tela e o envio: 422');
+  } finally {
+    await db.nfce_perfis_fiscais.update({ where: { id: perfil.id }, data: { ativo: true } });
+  }
+  await nada('perfil desativado');
+  semCertificado = true;
+  try {
+    await recusaHttp(svc.emitir(venda(), QUEM), 503, 'CERTIFICADO_NAO_CADASTRADO', 'emitir sem certificado: 503 antes de qualquer rede');
+  } finally {
+    semCertificado = false;
+  }
+  await nada('sem certificado');
 }
 
 async function main(): Promise<void> {

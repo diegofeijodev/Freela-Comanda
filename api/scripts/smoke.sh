@@ -636,6 +636,175 @@ check "SEFAZ: nenhum lote de respostas" 0 "$(sql "select count(*) from sefaz_eve
 check "SEFAZ: só os 2 eventos semeados" 2 "$(sql "select count(*) from sefaz_manifestacoes")"
 check "SEFAZ: nenhum evento enviando" 0 "$(sql "select count(*) from sefaz_manifestacoes where situacao = 'enviando'")"
 check "SEFAZ: eventos como semeados" "$EV1 registrada|$EV2 na_fila" "$(sql "select string_agg(id || ' ' || situacao, '|' order by id) from sefaz_manifestacoes")"
+
+# ---------- cupom fiscal (NFC-e). A API do smoke roda com NFCE_AMBIENTE=homologacao, SEM certificado e com a porta de VERDADE da SEFAZ
+# (a porta falsa é só do scripts/nfce-banco.ts, que já roda antes: emitir → autorizado → venda lançada uma vez, cancelar → venda desfeita
+# uma vez, 409 NFCE_TOTAL_MUDOU, 422 NFCE_ITEM_INDISPONIVEL e 503 sem certificado sem reservar número). Por isso, aqui a emissão NUNCA liga
+# (nem por SQL) e nenhuma rota que fala com a SEFAZ é chamada como admin (testar-conexao, reenviar, consultar, cancelar): só o cadastro, a
+# leitura de um cupom autorizado semeado por SQL e as recusas que vêm antes de qualquer rede. A barreira smoke-sem-rede.cjs segue valendo.
+CF=/v1/cupom-fiscal
+CSC=CSCTESTE0123456789ABCDEF
+# Trava: certificado guardado, emissão ligada ou qualquer envio à SEFAZ = o smoke PARA aqui (exit 1), antes de seguir.
+trava_nfce() { # trava_nfce MOMENTO
+  local certs ligadas envios
+  certs=$(sql "select count(*) from certificado_digital") || certs=erro
+  ligadas=$(sql "select count(*) from nfce_ambientes where emissao_ligada") || ligadas=erro
+  envios=$(sql "select count(*) from nfce_envios") || envios=erro
+  if [ "$certs" != 0 ] || [ "$ligadas" != 0 ] || [ "$envios" != 0 ]; then
+    echo "TRAVA DO SMOKE ($1): certificado_digital=$certs, emissões ligadas=$ligadas, envios=$envios. Nada disso deve existir aqui; smoke interrompido."
+    exit 1
+  fi
+}
+trava_nfce "antes do bloco do cupom fiscal"
+# a loja não alcança nenhuma rota do cupom (o guarda vem antes do corpo e do id: nada roda)
+for r in "GET $CF/situacao" "GET $CF/emitente" "PUT $CF/emitente" "GET $CF/ambientes/homologacao" "PUT $CF/ambientes/homologacao" \
+  "PUT $CF/ambientes/homologacao/emissao" "POST $CF/testar-conexao" "GET $CF/vendas-no-periodo?ini=$HOJE&fim=$HOJE" \
+  "GET $CF/xml-do-mes?mes=2026-11" "GET $CF/cupons" "POST $CF/cupons" "GET $CF/cupons/$ZERO" "GET $CF/cupons/$ZERO/danfe" \
+  "GET $CF/cupons/$ZERO/xml" "POST $CF/cupons/$ZERO/reenviar" "POST $CF/cupons/$ZERO/consultar" "POST $CF/cupons/$ZERO/cancelar" \
+  "POST $CF/cupons/$ZERO/descartar" "POST $CF/cupons/$ZERO/lancar-venda" "GET $CF/perfis" "POST $CF/perfis" "PATCH $CF/perfis/$ZERO" \
+  "GET $CF/produtos" "PUT $CF/produtos/perfil" "PUT $CF/produtos/$ZERO"; do
+  req "${r%% *}" "${r#* }" "$LOJA"; check "loja barrada em $r" 403 "$CODE"
+done
+req GET $CF/situacao; check "cupom fiscal sem token" 401 "$CODE"
+trava_nfce "depois da loja"
+
+# cadastro: empresa → numeração e CSC do modo de teste (o CSC só entra) → perfil → produto → a busca dos prontos
+ESPETO=$(sql "select id from itens_cardapio where nome='Smoke Espeto'")
+PICANHA=$(sql "select id from itens_cardapio where nome='Espeto de Picanha'")
+req PUT $CF/emitente "$ADM" '{"ie":"123456789012","crt":1,"logradouro":"Rua das Flores","numero":"100","bairro":"Centro","cep":"13270000"}'
+check "cupom: empresa no cupom: 200" 200 "$CODE"; check "cupom: regime gravado" 1 "$(j .crt)"; check "cupom: IE gravada" 123456789012 "$(j .ie)"
+req PUT $CF/ambientes/homologacao "$ADM" "{\"serie\":5,\"proximo_numero\":1,\"id_csc\":1,\"csc\":\"$CSC\"}"
+check "cupom: numeração e CSC do modo de teste: 200" 200 "$CODE"; check "cupom: série" 5 "$(j .serie)"
+check "cupom: só a dica do CSC volta" CDEF "$(j .csc_dica)"; check "cupom: a resposta não traz o CSC" 0 "$(echo "$BODY" | grep -c "$CSC")"
+req GET $CF/ambientes/homologacao "$ADM"; check "cupom: GET do ambiente sem o CSC" 0 "$(echo "$BODY" | grep -c "$CSC")"
+check "cupom: GET do ambiente com a dica" CDEF "$(j .csc_dica)"
+check "cupom: CSC cifrado no banco" 0 "$(sql "select count(*) from nfce_ambientes where csc_cifrado like '%$CSC%' or csc_cifrado like '%0123456789AB%'")"
+req POST $CF/perfis "$ADM" '{"nome":"Smoke Revenda","cfop":"5102","csosn":"102"}'; check "cupom: perfil fiscal: 201" 201 "$CODE"; PERFIL=$(j .id)
+req PUT "$CF/produtos/$ESPETO" "$ADM" "{\"ncm\":\"2203.00.00\",\"perfil_fiscal_id\":\"$PERFIL\"}"
+check "cupom: dados do produto: 200" 200 "$CODE"; check "cupom: produto pronto" true "$(j .pronto)"; check "cupom: NCM sem a máscara" 22030000 "$(j .ncm)"
+req GET "$CF/produtos?prontos=true" "$ADM"; check "cupom: prontos: 200" 200 "$CODE"
+check "cupom: prontos traz o produto" 1 "$(echo "$BODY" | jq --arg id "$ESPETO" '[.[] | select(.item_cardapio_id==$id)] | length')"
+check "cupom: prontos: preço em centavos" 1200 "$(echo "$BODY" | jq --arg id "$ESPETO" '.[] | select(.item_cardapio_id==$id) | .preco_venda_centavos')"
+check "cupom: prontos: só os prontos" true "$(echo "$BODY" | jq 'length > 0 and all(.[]; .pronto)')"
+req GET "$CF/produtos?prontos=false" "$ADM"; check "cupom: faltando não traz o pronto" 0 "$(echo "$BODY" | jq --arg id "$ESPETO" '[.[] | select(.item_cardapio_id==$id)] | length')"
+req GET "$CF/produtos?prontos=talvez" "$ADM"; check "cupom: filtro de prontos inválido: 400" 400 "$CODE"
+
+# ligar sem certificado: recusa antes de qualquer rede (o certificado é o único item que falta) e nada liga
+req GET $CF/situacao "$ADM"; check "cupom: situação: modo de teste" homologacao "$(j .ambiente)"; check "cupom: situação: desligada" false "$(j .emissao_ligada)"
+check "cupom: situação: só falta o certificado" '["certificado"]' "$(echo "$BODY" | jq -c '[.falta[].codigo]')"
+trava_nfce "antes do PUT de ligar a emissão"
+req PUT $CF/ambientes/homologacao/emissao "$ADM" '{"ligada":true}'
+case "$CODE" in 2*) echo "TRAVA DO SMOKE: ligar a emissão sem certificado deu $CODE; smoke interrompido."; exit 1 ;; esac
+trava_nfce "depois do PUT de ligar a emissão"
+check "cupom: ligar sem certificado: 422" 422 "$CODE"; check "cupom: ligar sem certificado: code" NFCE_CONFIG_INCOMPLETA "$(j .error.code)"
+check "cupom: ligar sem certificado: frase" "Falta configurar o cupom fiscal: certificado digital válido, do mesmo CNPJ da empresa." "$(j .error.message)"
+req PUT $CF/ambientes/producao/emissao "$ADM" '{"ligada":true,"confirmado":true}'; check "cupom: ligar o ambiente que não é o do servidor: 404" 404 "$CODE"
+trava_nfce "depois do PUT do outro ambiente"
+req PUT $CF/ambientes/homologacao/emissao "$ADM" '{"ligada":"sim"}'; check "cupom: ligar com valor que não é booleano: 400" 400 "$CODE"
+
+# emitir com a emissão desligada: 409 antes de qualquer rede; corpo fora do DTO = 400; nada é gravado
+emitir_corpo() { # $1=quantidade
+  jq -nc --arg id "$ESPETO" --arg k "$(cat /proc/sys/kernel/random/uuid)" --arg q "$1" \
+    '{chave_idempotencia:$k,itens:[{item_cardapio_id:$id,quantidade:$q}],pagamentos:[{t_pag:"01",valor_centavos:1200}],total_esperado_centavos:1200}'
+}
+req POST $CF/cupons "$ADM" "$(emitir_corpo 1)"; check "cupom: emitir desligado: 409" 409 "$CODE"
+check "cupom: emitir desligado: code" NFCE_EMISSAO_DESLIGADA "$(j .error.code)"
+req POST $CF/cupons "$ADM" "$(emitir_corpo '0,350')"; check "cupom: quantidade com vírgula: 400" 400 "$CODE"
+check "cupom: quantidade com vírgula: frase" "Quantidade com até 4 casas, ponto como separador e maior que zero." "$(j .error.message | cut -d' ' -f2-)"
+req POST $CF/cupons "$ADM" "$(emitir_corpo 1 | jq -c '. + {entrega:true}')"; check "cupom: campo a mais no corpo: 400" 400 "$CODE"
+check "cupom: emitir desligado: nenhum cupom gravado" 0 "$(sql "select count(*) from nfce_cupons")"
+trava_nfce "depois do emitir"
+
+# um cupom AUTORIZADO semeado por SQL (valendo, para a venda entrar no estoque): o nfeProc é a NFC-e fictícia dos testes
+# (cupom-fiscal/__tests__/fixtures) + o protNFe fictício da autorização (sefaz/__tests__/fixtures/nfce), com tpAmb 1
+CUP=00000000-0000-4000-8000-0000000000f1
+CH=35261112345678000195650010000000121402133776
+FXN=src/modules/cupom-fiscal/__tests__/fixtures/nfe-homologacao-simples.xml
+FXP=src/modules/sefaz/__tests__/fixtures/nfce/ret-autorizacao-100.xml
+NFEPROC="<nfeProc xmlns=\"http://www.portalfiscal.inf.br/nfe\" versao=\"4.00\">$(cat "$FXN")$(sed -n '/<protNFe/,/<\/protNFe>/p' "$FXP")</nfeProc>"
+NFEPROC=${NFEPROC//<tpAmb>2<\/tpAmb>/<tpAmb>1<\/tpAmb>}
+sql "insert into vendas (pedido, data, produto_relatorio, quantidade) values ('SMOKE-VELHA', '2026-11-17', 'SMOKE ESPETO', 1)" >/dev/null
+docker exec -i erp-freela-postgres psql -U erpfreela -d "$PGDB" -v ON_ERROR_STOP=1 -q -v cup="$CUP" -v ch="$CH" -v espeto="$ESPETO" \
+  -v picanha="$PICANHA" -v xml="$NFEPROC" >/dev/null <<'SQL'
+insert into nfce_cupons (id, ambiente, serie, numero, chave, c_nf, dh_emi, situacao, envios, chave_idempotencia, pedido_hash, lanca_venda,
+                         consumidor_doc, valor_produtos, valor_desconto, valor_total, valor_troco, emitido_por_nome)
+  values (:'cup', 'producao', 1, 12, :'ch', '40213377', '2026-11-17T14:30:00-03:00', 'enviando', 1, gen_random_uuid(), repeat('ab', 32),
+          true, '52998224725', 33.90, 1.90, 32.00, 10.00, 'Smoke');
+insert into nfce_cupom_itens (cupom_id, n_item, item_cardapio_id, nome_cardapio, c_prod, x_prod, ncm, origem, unidade, cfop, csosn,
+                              perfil_nome, quantidade, valor_unitario, valor_bruto, valor_desconto) values
+  (:'cup', 1, :'espeto', 'Smoke Espeto', 'PRATO-01', 'NOTA FISCAL EMITIDA EM AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL', '21069090', 0,
+   'UN', '5102', '102', 'Smoke Revenda', 2, 12.00, 24.00, 1.35),
+  (:'cup', 2, :'picanha', 'Espeto de Picanha', 'CHOPP-300', 'Chopp & "Lager" <300> ml', '22030000', 0, 'UN', '5405', '500',
+   'Smoke Revenda', 1, 9.90, 9.90, 0.55);
+insert into nfce_cupom_pagamentos (cupom_id, ordem, t_pag, valor, tp_integra) values (:'cup', 1, '01', 30.00, null), (:'cup', 2, '03', 12.00, 2);
+update nfce_cupons set situacao = 'autorizado', autorizada_em = '2026-11-17T14:30:02-03:00', c_stat = 100, x_motivo = 'Autorizado o uso da NF-e',
+       n_prot = '13526000000012345', dig_val = 'q2bBTSHNkQhO2Vb5w8Cqv6eVZaE=', xml_autorizado = :'xml' where id = :'cup';
+select nfce_lancar_venda(:'cup');
+SQL
+check "cupom semeado: autorizado" autorizado "$(sql "select situacao from nfce_cupons where id='$CUP'")"
+check "cupom semeado: a venda entrou (uma por item)" 2 "$(sql "select count(*) from vendas where nfce_cupom_id='$CUP'")"
+req GET "$CF/cupons?ambiente=producao" "$ADM"; check "cupom: lista valendo: 1" 1 "$(j length)"
+check "cupom: lista: CPF mascarado" "***.982.247-**" "$(j '.[0].consumidor_doc')"; check "cupom: lista: total em centavos" 3200 "$(j '.[0].valor_total_centavos')"
+check "cupom: lista: sem itens nem XML" false "$(echo "$BODY" | jq '.[0] | has("itens") or has("xml_autorizado")')"
+req GET "$CF/cupons" "$ADM"; check "cupom: lista sem ambiente = a do servidor (modo de teste): vazia" 0 "$(j length)"
+req GET "$CF/cupons?ambiente=producao&situacao=xyz" "$ADM"; check "cupom: lista com filtro inválido: 400" 400 "$CODE"
+req GET "$CF/cupons/$CUP" "$ADM"; check "cupom: GET do cupom: 200" 200 "$CODE"
+check "cupom: GET: autorizado, nº 12, R$ 32,00, 2 itens" "autorizado 12 3200 2" "$(j '[.situacao, .numero, .valor_total_centavos, (.itens | length)] | join(" ")')"
+check "cupom: GET: a venda no estoque" lancada "$(j .venda_estoque)"; check "cupom: GET: sem o XML" false "$(echo "$BODY" | jq 'has("xml_autorizado")')"
+req GET "$CF/cupons/$ZERO" "$ADM"; check "cupom inexistente: 404" 404 "$CODE"
+req GET "$CF/cupons/nao-e-uuid" "$ADM"; check "cupom com id malformado: 404" 404 "$CODE"
+req GET "$CF/cupons/$CUP/danfe" "$ADM"; check "DANFE: 200" 200 "$CODE"
+check "DANFE: chave, número, série e valor a pagar" "$CH 12 1 32.00" "$(j '[.chave, .ide.nNF, .ide.serie, .total.vNF] | join(" ")')"
+check "DANFE: 2 itens, o nome com & e < legível" 'Chopp & "Lager" <300> ml' "$(j '.det[1].xProd')"
+check "DANFE: valendo, protocolo e pagamentos" "false 13526000000012345 2 10.00" "$(j '[.homologacao, .nProt, (.pag.detPag | length), .pag.vTroco] | map(tostring) | join(" ")')"
+req GET "$CF/cupons/$ZERO/danfe" "$ADM"; check "DANFE de cupom inexistente: 404" 404 "$CODE"
+
+# XML e zip do mês pelo HTTP de verdade: cabeçalhos depois das checagens; os erros seguem em JSON
+baixar() { # baixar CAMINHO → $CODE, $CT (content-type), $CD (content-disposition), arquivo em "$OUT"
+  CODE=$(curl -s -o "$OUT" -D "$OUT.h" -w '%{http_code}' -H "authorization: Bearer $ADM" "$BASE$1")
+  CT=$(grep -i '^content-type:' "$OUT.h" | tr -d '\r' | cut -d' ' -f2-); CD=$(grep -i '^content-disposition:' "$OUT.h" | tr -d '\r' | cut -d' ' -f2-)
+  BODY=$(head -c 2000 "$OUT" | tr -d '\0')
+}
+baixar "$CF/cupons/$CUP/xml"; check "XML do cupom: 200" 200 "$CODE"; check "XML do cupom: content-type" "text/xml; charset=utf-8" "$CT"
+check "XML do cupom: nome do arquivo" 'attachment; filename="cupom-1-12.xml"' "$CD"
+check "XML do cupom: o nfeProc guardado, sem mudança" true "$([ "$(cat "$OUT")" == "$NFEPROC" ] && echo true || echo false)"
+baixar "$CF/cupons/$CUP/xml?tipo=abc"; check "XML com tipo inválido: 400" 400 "$CODE"; check "XML com tipo inválido: JSON" application/json "${CT%%;*}"
+baixar "$CF/cupons/$CUP/xml?tipo=cancelamento"; check "XML do cancelamento de um autorizado: recusa em JSON" "4 application/json" "${CODE:0:1} ${CT%%;*}"
+baixar "$CF/cupons/$ZERO/xml"; check "XML de cupom inexistente: 404 em JSON" "404 application/json" "$CODE ${CT%%;*}"
+baixar "$CF/xml-do-mes?mes=2026-11&ambiente=producao"; check "zip do mês: 200" 200 "$CODE"; check "zip do mês: content-type" application/zip "$CT"
+check "zip do mês: nome do arquivo" true "$(echo "$CD" | grep -q '^attachment; filename=".*\.zip"$' && echo true || echo false)"
+check "zip do mês: começa com PK\\x03\\x04" 504b0304 "$(head -c 4 "$OUT" | xxd -p)"
+cp "$OUT" "$OUT.zip"
+check "zip do mês: unzip -t" 0 "$(unzip -tq "$OUT.zip" >/dev/null 2>&1; echo $?)"
+check "zip do mês: o cupom e a lista dos números" "NFCe-$CH.xml numeros-nao-usados.csv" "$(unzip -Z1 "$OUT.zip" | sort | tr '\n' ' ' | sed 's/ $//')"
+check "zip do mês: o XML do cupom como foi guardado" true "$([ "$(unzip -p "$OUT.zip" "NFCe-$CH.xml")" == "$NFEPROC" ] && echo true || echo false)"
+check "zip do mês: o CPF não está no csv" 0 "$(unzip -p "$OUT.zip" numeros-nao-usados.csv | grep -c 52998224725)"
+rm -f "$OUT.zip" "$OUT.h"
+baixar "$CF/xml-do-mes?mes=2026-13"; check "zip com mês inválido: 400 em JSON" "400 application/json" "$CODE ${CT%%;*}"
+baixar "$CF/xml-do-mes?mes=2026-11&ambiente=teste"; check "zip com ambiente inválido: 400 em JSON" "400 application/json" "$CODE ${CT%%;*}"
+rm -f "$OUT.h"
+
+# a importação de vendas "Substituir" no dia do cupom apaga a venda importada e mantém a do cupom; o de-para também não a toca
+req GET "$CF/vendas-no-periodo?ini=2026-11-17&fim=2026-11-17" "$ADM"; check "cupom: aviso da importação" "1 3200" "$(j '[.quantidade, .valor_centavos] | map(tostring) | join(" ")')"
+req POST /v1/importacoes/vendas "$ADM" '{"arquivo":"vendas-17-11.csv","modo":"substituir","linhas":[{"pedido":"SUBST1","data":"2026-11-17","produto_relatorio":"SMOKE ESPETO","quantidade":"1","valor_total":"12"}]}'
+check "Substituir no dia do cupom: 201" 201 "$CODE"; check "Substituir: a venda importada do dia saiu" 0 "$(sql "select count(*) from vendas where pedido='SMOKE-VELHA'")"
+check "Substituir: a venda do arquivo entrou" 1 "$(sql "select count(*) from vendas where pedido='SUBST1'")"
+check "Substituir: as vendas do cupom ficaram" "2 NFC-e 1-12" "$(sql "select count(*) || ' ' || min(pedido) from vendas where nfce_cupom_id='$CUP'")"
+# o nome da venda do cupom no de-para (como se um relatório trouxesse o mesmo nome) e "mapear" para nenhum item: só as importadas mudam
+sql "insert into de_para_produtos (produto_relatorio, item_cardapio_id) values ('Smoke Espeto', '$ESPETO')" >/dev/null
+req PUT /v1/de-para "$ADM" '{"produto_relatorio":"Smoke Espeto","item_cardapio_id":null}'; check "de-para do nome do cupom: 200" 200 "$CODE"
+check "de-para não tira o item da venda do cupom" "$ESPETO" "$(sql "select item_cardapio_id from vendas where nfce_cupom_id='$CUP' and produto_relatorio='Smoke Espeto'")"
+
+# último check do cupom: nada saiu para a SEFAZ e nada ligou; só o cupom semeado existe
+trava_nfce "no fim do bloco do cupom fiscal"
+check "cupom: nenhum envio à SEFAZ" 0 "$(sql "select count(*) from nfce_envios")"
+check "cupom: nenhuma emissão ligada" 0 "$(sql "select count(*) from nfce_ambientes where emissao_ligada")"
+check "cupom: só o cupom semeado" "$CUP autorizado" "$(sql "select string_agg(id || ' ' || situacao, '|') from nfce_cupons")"
+check "cupom: nenhum cupom enviando" 0 "$(sql "select count(*) from nfce_cupons where situacao = 'enviando'")"
+if [ -n "${API_LOG:-}" ]; then
+  check "cupom: o CSC não aparece no log da API" 0 "$(grep -c "$CSC" "$API_LOG")"
+  check "cupom: o CPF do consumidor não aparece no log da API" 0 "$(grep -c 52998224725 "$API_LOG")"
+fi
 rm -f "$PDF" "$TXT" "$JPG" "$OUT"
 
 echo "smoke: $ok ok, $falhas falha(s)"
