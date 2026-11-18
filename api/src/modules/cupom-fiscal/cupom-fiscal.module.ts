@@ -5,6 +5,7 @@ import { CupomCadastroService } from './cadastro.service';
 import { CupomCancelamentoService } from './cancelamento.service';
 import { CupomFiscalController } from './cupom-fiscal.controller';
 import { CupomEmissaoService } from './emissao.service';
+import { CupomLeituraService } from './leitura.service';
 
 /**
  * Cupom fiscal (NFC-e modelo 65). Tudo nasce desligado: sem `NFCE_AMBIENTE` (e o "Emitir cupons" de cada ambiente) nenhum cupom sai; o
@@ -14,6 +15,6 @@ import { CupomEmissaoService } from './emissao.service';
 @Module({
   imports: [CertificadoDigitalModule, SefazModule],
   controllers: [CupomFiscalController],
-  providers: [CupomCadastroService, CupomEmissaoService, CupomCancelamentoService],
+  providers: [CupomCadastroService, CupomEmissaoService, CupomCancelamentoService, CupomLeituraService],
 })
 export class CupomFiscalModule {}

@@ -167,7 +167,10 @@ export interface CupomDetalhe {
   acoes: AcaoCupom[];
   /** O que a SEFAZ disse na última chamada respondida deste cupom (código, família, frase da UX 6.1 e o `xMotivo`), se não foi sucesso. */
   recusa: Recusa | null;
-  /** A frase da situação: a da `recusa` ou, sem ela, a da UX 6.1 para "não saiu" / "sem resposta" (nota 10 do controlador). */
+  /**
+   * A frase da situação: a da `recusa` ou, sem ela, a da UX 6.1 para "não saiu" / "sem resposta" (nota 10 do controlador) e a da UX 3.1
+   * para o `cancelando` (Tarefa 13).
+   */
   mensagem: string | null;
 }
 
@@ -963,7 +966,9 @@ export class CupomEmissaoService {
         ? FRASE_RETORNO.naoEnviado
         : s === 'sem_resposta'
           ? FRASE_RETORNO.semResposta(consultar_a_partir_de ?? agora)
-          : null);
+          : s === 'cancelando'
+            ? await this.fraseDoCancelando(c, consultar_a_partir_de ?? agora)
+            : null);
     return {
       id: c.id,
       ambiente: c.ambiente as AmbienteSefaz,
@@ -1014,6 +1019,23 @@ export class CupomEmissaoService {
       recusa,
       mensagem,
     };
+  }
+
+  /**
+   * A frase do `cancelando` (UX 3.1; Tarefa 13, nota 2), tirada do estado e não do clique: sem pedido nosso (a consulta disse "cancelado"
+   * sem mandar o evento, Ruling T12 fix-1) = a do comprovante; com pedido, o 573 do último pedido (no diário) ou "saiu e a SEFAZ não
+   * respondeu".
+   */
+  private async fraseDoCancelando(c: nfce_cupons, consultarAPartirDe: Date): Promise<string> {
+    if (c.cancelamento_pedido_em === null) return FRASE_RETORNO.cancelandoSemComprovante;
+    const ultimo = await this.prisma.nfce_envios.findFirst({
+      where: { cupom_id: c.id, servico: 'cancelamento' },
+      orderBy: [{ iniciada_em: 'desc' }, { tentativa: 'desc' }],
+      select: { c_stat: true },
+    });
+    return ultimo?.c_stat === 573
+      ? FRASE_RETORNO.cancelandoJaRecebido(consultarAPartirDe)
+      : FRASE_RETORNO.cancelandoSemResposta(c.cancelamento_pedido_em, consultarAPartirDe);
   }
 
   // =========================================================================================================== peças

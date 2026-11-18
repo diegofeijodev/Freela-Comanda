@@ -35,6 +35,7 @@ import {
   SalvarProdutoDto,
 } from './cupom-fiscal.dto';
 import { CupomEmissaoService } from './emissao.service';
+import { CupomLeituraService, filtroDaLista } from './leitura.service';
 
 /** `:ambiente` só aceita os dois ambientes da SEFAZ; outro valor = 404, como o id malformado do `ParseUuidPipe`. */
 class ParseAmbientePipeImpl implements PipeTransform<string, AmbienteSefaz> {
@@ -49,7 +50,8 @@ const autor = (eu: AuthUser): Autor => ({ id: eu.id, nome: eu.nome });
 
 /**
  * Cupom fiscal (NFC-e): cadastro (situação, empresa no cupom, numeração e CSC de cada ambiente, perfis fiscais e dados do cupom dos
- * produtos) e emissão (emitir, enviar de novo, consultar, cancelar, descartar, lançar a venda, testar a conexão e ligar/desligar).
+ * produtos), leitura (lista, cupom, DANFE, XML, zip do mês e vendas do período; com o servidor desligado também) e emissão (emitir,
+ * enviar de novo, consultar, cancelar, descartar, lançar a venda, testar a conexão e ligar/desligar).
  * Só admin: o cupom mostra preço de venda, que a loja nunca vê. O cadastro não fala com a SEFAZ e funciona com o servidor desligado
  * (`NFCE_AMBIENTE` vazia); a emissão responde 503 `NFCE_DESLIGADA` com ele desligado (menos `lancar-venda`, que não fala com a SEFAZ).
  * Dinheiro no fio em centavos inteiros (`*_centavos`); o CSC só entra (a resposta traz `csc_dica`). Rotas estáticas antes das com parâmetro.
@@ -63,6 +65,7 @@ export class CupomFiscalController {
     private readonly cadastro: CupomCadastroService,
     private readonly emissao: CupomEmissaoService,
     private readonly cancelamento: CupomCancelamentoService,
+    private readonly leitura: CupomLeituraService,
   ) {}
 
   /** "Para ligar a emissão, falta:", certificado, numeração e a faixa de pendentes do ambiente do servidor. */
@@ -104,6 +107,77 @@ export class CupomFiscalController {
   testarConexao(@CurrentUser() eu: AuthUser) {
     return this.emissao.testarConexao(autor(eu));
   }
+
+  // ---------------------------------------------------------------------------------------------------- leitura (servidor desligado ok)
+
+  /** O aviso da importação de vendas (desenho §3.4): cupons valendo com a venda no estoque entre `ini` e `fim` (dias de Brasília). */
+  @Get('vendas-no-periodo')
+  vendasNoPeriodo(@Query('ini') ini?: string, @Query('fim') fim?: string) {
+    return this.leitura.vendasNoPeriodo(ini ?? '', fim ?? '');
+  }
+
+  /**
+   * O zip do mês para o contador (`?mes=AAAA-MM&ambiente=`; sem ambiente, o do servidor). Os cabeçalhos só vão DEPOIS de o arquivo
+   * existir: com `@Header` eles ficariam também nas respostas de erro (JSON).
+   */
+  @Get('xml-do-mes')
+  async xmlDoMes(
+    @Query('mes') mes: string | undefined,
+    @Query('ambiente') ambiente: string | undefined,
+    @Res({ passthrough: true }) res: FastifyReply,
+  ): Promise<Buffer> {
+    if (ambiente !== undefined && ambiente !== 'homologacao' && ambiente !== 'producao') {
+      throw new BadRequestException({ code: 'VALIDATION_ERROR', message: 'Filtro inválido.' });
+    }
+    const r = await this.leitura.xmlDoMes(mes ?? '', ambiente);
+    void res.header('content-type', 'application/zip');
+    void res.header('content-disposition', `attachment; filename="${r.nome}"`);
+    return r.zip;
+  }
+
+  /** Emitidos: `ambiente`, `ini`/`fim`, `situacao=a,b`, `atencao=true`, `chave_idempotencia` (só lê: `[]` ou o cupom) e `limite`. */
+  @Get('cupons')
+  cupons(
+    @Query('ambiente') ambiente?: string,
+    @Query('ini') ini?: string,
+    @Query('fim') fim?: string,
+    @Query('situacao') situacao?: string | string[],
+    @Query('atencao') atencao?: string,
+    @Query('chave_idempotencia') chave_idempotencia?: string,
+    @Query('limite') limite?: string,
+  ) {
+    return this.leitura.listar(filtroDaLista({ ambiente, ini, fim, situacao, atencao, chave_idempotencia, limite }));
+  }
+
+  /** O cupom, com as horas e as ações calculadas no servidor (o mesmo formato do POST); sem XML. */
+  @Get('cupons/:id')
+  cupom(@Param('id', ParseUuidPipe) id: string) {
+    return this.leitura.detalhe(id);
+  }
+
+  /** Os dados do DANFE, só do XML autorizado guardado (valores como texto do XML). Só do cupom autorizado. */
+  @Get('cupons/:id/danfe')
+  danfe(@Param('id', ParseUuidPipe) id: string) {
+    return this.leitura.danfe(id);
+  }
+
+  /** O arquivo do cupom (`tipo=nota`, o padrão) ou do cancelamento, em `text/xml`, com o cabeçalho posto depois das checagens. */
+  @Get('cupons/:id/xml')
+  async xml(
+    @Param('id', ParseUuidPipe) id: string,
+    @Query('tipo') tipo: string | undefined,
+    @Res({ passthrough: true }) res: FastifyReply,
+  ): Promise<string> {
+    if (tipo !== undefined && tipo !== 'nota' && tipo !== 'cancelamento') {
+      throw new BadRequestException({ code: 'VALIDATION_ERROR', message: 'Filtro inválido.' });
+    }
+    const r = await this.leitura.xml(id, tipo ?? 'nota');
+    void res.header('content-type', 'text/xml; charset=utf-8');
+    void res.header('content-disposition', `attachment; filename="${r.nome}"`);
+    return r.xml;
+  }
+
+  // ---------------------------------------------------------------------------------------------------- emissão
 
   /** Emite: 201 com o cupom em qualquer situação final desta tentativa; 200 com o cupom já emitido pela mesma chave e o mesmo corpo. */
   @Post('cupons')

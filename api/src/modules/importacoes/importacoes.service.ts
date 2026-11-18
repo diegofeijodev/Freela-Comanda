@@ -83,7 +83,8 @@ export class ImportacoesService {
 
   /**
    * Vendas: produto novo entra no de-para (ligado ao item de mesmo nome, se houver); linhas repetidas somam; "Substituir"
-   * apaga as vendas do período do arquivo; venda já existente (pedido+produto+data) é ignorada. O gatilho gera as baixas.
+   * apaga as vendas do período do arquivo que vieram da importação (a do cupom fiscal, `nfce_cupom_id`, só sai pelo cancelamento do
+   * cupom); venda já existente (pedido+produto+data) é ignorada. O gatilho gera as baixas.
    */
   async vendas(dto: ImportacaoDto, usuarioId: string) {
     const vs = vendasDasLinhas(dto.linhas);
@@ -109,7 +110,9 @@ export class ImportacoesService {
       let apagadas = 0;
       if (dto.modo === 'substituir') {
         const datas = vs.map((v) => v.data).sort();
-        const r = await tx.vendas.deleteMany({ where: { data: { gte: dayToDb(datas[0]!), lte: dayToDb(datas[datas.length - 1]!) } } });
+        const r = await tx.vendas.deleteMany({
+          where: { nfce_cupom_id: null, data: { gte: dayToDb(datas[0]!), lte: dayToDb(datas[datas.length - 1]!) } },
+        });
         apagadas = r.count;
       }
       let inseridas = 0;
@@ -126,7 +129,14 @@ export class ImportacoesService {
         });
         inseridas += r.count;
       }
-      return { linhas: dto.linhas.length, vendas: vs.length, inseridas, ignoradas: vs.length - inseridas, apagadas, novos_produtos: novos.size };
+      return {
+        linhas: dto.linhas.length,
+        vendas: vs.length,
+        inseridas,
+        ignoradas: vs.length - inseridas,
+        apagadas,
+        novos_produtos: novos.size,
+      };
     }, OPCOES_TX);
   }
 
@@ -134,14 +144,23 @@ export class ImportacoesService {
     return this.prisma.de_para_produtos.findMany({ orderBy: { produto_relatorio: 'asc' } });
   }
 
-  /** Liga o produto do relatório a um item do cardápio e reaponta as vendas dele (o gatilho refaz as baixas). */
+  /**
+   * Liga o produto do relatório a um item do cardápio e reaponta as vendas dele (o gatilho refaz as baixas). Só as da importação: a venda
+   * do cupom fiscal (`nfce_cupom_id`) já nasce com o item certo e não muda.
+   */
   async mapear(produto: string, itemId: string | null) {
     if (!(await this.prisma.de_para_produtos.findUnique({ where: { produto_relatorio: produto } }))) {
       throw new NotFoundException({ code: 'NOT_FOUND', message: 'Produto não encontrado no de-para' });
     }
     return this.prisma.$transaction(async (tx) => {
-      await tx.de_para_produtos.update({ where: { produto_relatorio: produto }, data: { item_cardapio_id: itemId, updated_at: new Date() } });
-      const r = await tx.vendas.updateMany({ where: { produto_relatorio: produto }, data: { item_cardapio_id: itemId } });
+      await tx.de_para_produtos.update({
+        where: { produto_relatorio: produto },
+        data: { item_cardapio_id: itemId, updated_at: new Date() },
+      });
+      const r = await tx.vendas.updateMany({
+        where: { produto_relatorio: produto, nfce_cupom_id: null },
+        data: { item_cardapio_id: itemId },
+      });
       return { vendas: r.count };
     }, OPCOES_TX);
   }

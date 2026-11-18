@@ -187,6 +187,16 @@ const MAX_INF_CPL = 500;
 const PENDENTES_DA_SERIE: SituacaoCupom[] = ['enviando', 'sem_resposta', 'nao_enviado', 'nao_consta', 'rejeitado'];
 /** Situações que entram na faixa de pendentes (a venda pendente no estoque entra à parte: não é situação). */
 const PENDENTES_DA_FAIXA: SituacaoCupom[] = [...PENDENTES_DA_SERIE, 'cancelando'];
+/**
+ * Os cupons que podem estar na faixa de pendentes (UX 10.7), no banco: as situações pendentes e a venda que não entrou ou não saiu do
+ * estoque. É um superconjunto: quem decide é `tipoPendente` (o `enviando` só conta 2 min depois do envio). O mesmo do `atencao=true` da
+ * lista de cupons (`leitura.service.ts`), para a contagem bater.
+ */
+export const PENDENTES_NO_BANCO: Prisma.nfce_cuponsWhereInput[] = [
+  { situacao: { in: PENDENTES_DA_FAIXA } },
+  { situacao: 'autorizado', lanca_venda: true, venda_lancada_em: null },
+  { situacao: 'cancelado', lanca_venda: true, venda_lancada_em: { not: null }, venda_desfeita_em: null },
+];
 /** Cupom que chegou a ser autorizado. */
 const JA_AUTORIZADO: SituacaoCupom[] = ['autorizado', 'cancelando', 'cancelado'];
 
@@ -425,14 +435,7 @@ export class CupomCadastroService {
   /** A faixa de pendentes (UX 10.7) do ambiente: o tipo de cada cupom é o de `tipoPendente`; o primeiro é o mais velho. */
   private async pendentes(ambiente: AmbienteSefaz, agora: Date): Promise<Pendentes> {
     const linhas = await this.prisma.nfce_cupons.findMany({
-      where: {
-        ambiente,
-        OR: [
-          { situacao: { in: PENDENTES_DA_FAIXA } },
-          { situacao: 'autorizado', lanca_venda: true, venda_lancada_em: null },
-          { situacao: 'cancelado', lanca_venda: true, venda_lancada_em: { not: null }, venda_desfeita_em: null },
-        ],
-      },
+      where: { ambiente, OR: PENDENTES_NO_BANCO },
       select: {
         id: true,
         ambiente: true,

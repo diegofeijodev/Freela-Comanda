@@ -80,6 +80,10 @@ export const FRASES_VALIDACAO = {
   unidade: 'A unidade no cupom tem até 6 letras.',
 } as const;
 
+/** UX 3.1 (literal): a 2ª frase da caixa do `cancelando`. */
+const consulteCancelando = (d: Date) =>
+  `Consulte a partir das ${horaSp(d)}. Até lá, o cupom continua valendo e a venda continua no estoque.`;
+
 /** Retornos da SEFAZ: UX §6.1 (a de cancelamento recusado é da UX 4.3; as do "Testar a conexão", da UX 5.1). Horas de Brasília (`horaSp`). */
 export const FRASE_RETORNO = {
   autorizado: (autorizadaEm: Date, nProt: string) => `Autorizado às ${horaSp(autorizadaEm)} · protocolo ${nProt}`,
@@ -124,6 +128,16 @@ export const FRASE_RETORNO = {
     `A SEFAZ não respondeu. O cupom pode ter sido autorizado. Consulte a partir das ${horaSp(consultarAPartirDe)} e não emita outro cupom para esta venda até lá.`,
   cancelamentoRecusado: (codigo: number, motivo: string) =>
     `A SEFAZ não aceitou o cancelamento (código ${codigo})${comMotivo(motivo)}. O cupom continua valendo.`,
+  /**
+   * `cancelando` na tela do cupom (UX 3.1, literais; Tarefa 13, nota 2: a frase sai do estado, a de qualquer leitura): o pedido nosso
+   * saiu e a SEFAZ não respondeu, ou respondeu 573 (o diário diz qual); nos dois, mais a do "Consulte a partir das …".
+   */
+  cancelandoSemResposta: (pedidoEm: Date, consultarAPartirDe: Date) =>
+    `O pedido de cancelamento saiu às ${horaSp(pedidoEm)} e a SEFAZ não respondeu. ${consulteCancelando(consultarAPartirDe)}`,
+  cancelandoJaRecebido: (consultarAPartirDe: Date) =>
+    `A SEFAZ diz que já recebeu um pedido de cancelamento deste cupom. ${consulteCancelando(consultarAPartirDe)}`,
+  /** `cancelando` sem pedido nosso: a consulta disse "cancelada" sem mandar o evento (Ruling T12 fix-1, literal). */
+  cancelandoSemComprovante: 'A SEFAZ informa que este cupom foi cancelado, mas não mandou o comprovante. Consulte de novo mais tarde.',
   /** Nova (a UX não fixa; Ruling T12 I2), no estilo da UX §6.3: a consulta diz "cancelada" sem o registro do cancelamento deste cupom. */
   cancelamentoSemRegistro: (consultarAPartirDe: Date) =>
     `A SEFAZ diz que este cupom foi cancelado, mas não mandou o registro do cancelamento. Consulte de novo a partir das ${horaSp(consultarAPartirDe)}.`,
@@ -160,13 +174,17 @@ const ESTADO_CUPOM: Record<SituacaoCupom, string> = {
   cancelado: 'já foi cancelado',
   descartado: 'foi descartado',
 };
-const ACAO_CUPOM: Record<AcaoCupom, string> = {
+/** As ações da tela mais os dois arquivos (UX 3.5: "Baixar o arquivo do cupom (XML)" / "… do cancelamento (XML)"). */
+export type AcaoDaFrase = AcaoCupom | 'baixar_xml' | 'baixar_xml_cancelamento';
+const ACAO_CUPOM: Record<AcaoDaFrase, string> = {
   enviar_de_novo: 'enviar de novo',
   consultar: 'consultar na SEFAZ',
   cancelar: 'cancelar',
   descartar: 'descartar',
   lancar_venda: 'lançar a venda no estoque',
   imprimir: 'imprimir',
+  baixar_xml: 'baixar o arquivo do cupom (XML)',
+  baixar_xml_cancelamento: 'baixar o arquivo do cancelamento (XML)',
 };
 
 /** Erros de validação e travas: UX §6.2, pelo código do erro (`NFCE_PARADA` = a mensagem guardada no ambiente). */
@@ -183,7 +201,7 @@ export const FRASE_ERRO = {
   NFCE_DOC_INVALIDO: (tipo: 'cpf' | 'cnpj') =>
     tipo === 'cpf' ? 'Este CPF não confere. Confira os números.' : 'Este CNPJ não confere. Confira os 14 caracteres.',
   NFCE_DOC_OBRIGATORIO: 'Acima de R$ 10.000,00, o CPF ou CNPJ do consumidor é obrigatório.',
-  NFCE_SITUACAO: (situacao: SituacaoCupom, acao: AcaoCupom) => `Este cupom ${ESTADO_CUPOM[situacao]}; não dá para ${ACAO_CUPOM[acao]}.`,
+  NFCE_SITUACAO: (situacao: SituacaoCupom, acao: AcaoDaFrase) => `Este cupom ${ESTADO_CUPOM[situacao]}; não dá para ${ACAO_CUPOM[acao]}.`,
   NFCE_CONSULTA_CEDO: (ate: Date) => `Espere até as ${horaSp(ate)} para consultar: a SEFAZ bloqueia consultas repetidas.`,
   NFCE_LIMITE_ENVIOS: 'Este cupom já foi enviado 3 vezes. Descarte e emita outro.',
   NFCE_CANCELAMENTO_FORA_DO_PRAZO: (autorizadaEm: Date) =>
@@ -225,4 +243,22 @@ export const FRASES_EMISSAO = {
   valorMaximo: 'O total do cupom tem de ser menor que R$ 200.000,00.',
   /** A linha "A venda deste cupom não baixou o estoque: <frase>." quando o erro não é uma recusa da função do banco. */
   vendaErro: 'o servidor não conseguiu gravar a venda agora',
+} as const;
+
+/**
+ * Leitura (Tarefa 13): o que a UX não fixa, no estilo da UX §6.3. Os motivos vão na coluna "motivo" de `numeros-nao-usados.csv` (o
+ * arquivo do mês para o contador, desenho §4.3 e §7.4): por que o número da série não virou cupom.
+ */
+export const FRASES_LEITURA = {
+  /** O cupom cancelado sem o arquivo do cancelamento no diário (não deve acontecer: o `cancelado` só nasce do evento conferido). */
+  semArquivoDoCancelamento: 'O arquivo do cancelamento deste cupom não ficou guardado. Fale com o suporte do Freela Comanda.',
+  naoUsado: {
+    semResposta: 'Enviado à SEFAZ sem resposta: só a consulta diz se o número foi usado.',
+    outraNota: 'A SEFAZ diz que outra nota já usa este número (código 539).',
+    descartado: 'Descartado: a SEFAZ não registrou este número.',
+    naoSaiu: 'Não saiu: a SEFAZ não recebeu este cupom (ainda pendente no Comanda).',
+    naoConsta: 'A SEFAZ confirmou que não tem este cupom (ainda pendente no Comanda).',
+    recusado: (codigo: number | null) =>
+      `Recusado pela SEFAZ${codigo === null ? '' : ` (código ${codigo})`}: a SEFAZ não registrou este número (ainda pendente no Comanda).`,
+  },
 } as const;
