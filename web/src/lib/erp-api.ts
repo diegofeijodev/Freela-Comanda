@@ -509,6 +509,353 @@ export const lerFotoNota = async <T>(fotos: File[]) => {
   return (await api.post<T>('/v1/notas/ler-foto', fd)).data;
 };
 
+// ---------- Cupom fiscal (NFC-e; admin). Tipos copiados das rotas da API (`api/src/modules/cupom-fiscal`: controller, dto, cadastro,
+// emissão, leitura e danfe); datas chegam como string ISO; dinheiro em centavos inteiros (`*_centavos`, na tela `BigInt(n)`). O CSC só vai.
+export type AmbienteSefaz = 'homologacao' | 'producao';
+export type AmbienteServidor = AmbienteSefaz | 'desligado';
+export type SituacaoCupom =
+  | 'enviando' | 'nao_enviado' | 'sem_resposta' | 'nao_consta' | 'rejeitado' | 'autorizado' | 'cancelando' | 'denegado' | 'cancelado' | 'descartado';
+export type AcaoCupom = 'enviar_de_novo' | 'consultar' | 'cancelar' | 'descartar' | 'lancar_venda' | 'imprimir';
+export type VendaEstoque = 'lancada' | 'pendente' | 'desfeita' | 'desfazer_pendente' | 'teste' | 'nao_lanca';
+export type TipoPendente = 'sem_resposta' | 'nao_saiu' | 'recusado' | 'venda_pendente';
+export type SituacaoAmbienteCupom = 'ok' | 'parada_656' | 'parada_certificado' | 'parada_configuracao' | 'parada_serie_em_uso';
+export type FamiliaRecusa = 'produto' | 'empresa' | 'consumidor' | 'valores' | 'hora' | 'outra';
+export type MotivoProduto =
+  'falta_ncm' | 'falta_perfil' | 'sem_preco' | 'inativo' | 'perfil_inativo' | 'perfil_fora_do_regime' | 'nome_fora_do_padrao';
+export type CodigoFalta =
+  | 'certificado' | 'cnpj' | 'ie' | 'crt' | 'endereco' | 'serie' | 'csc' | 'produto_pronto' | 'teste_homologacao' | 'lanca_venda'
+  | 'series_outro_sistema';
+export type TPagCupom = '01' | '03' | '04' | '10' | '11' | '17';
+/** O que a SEFAZ disse (código, família, a frase da UX 6.1 e o `xMotivo` à parte). */
+export type RecusaCupom = { codigo: number; familia: FamiliaRecusa; frase: string; x_motivo: string };
+export type SituacaoCupomFiscal = {
+  ambiente: AmbienteServidor;
+  agora: string;
+  emissao_ligada: boolean;
+  situacao: SituacaoAmbienteCupom;
+  mensagem: string | null;
+  bloqueado_ate: string | null;
+  serie: number | null;
+  proximo_numero: number;
+  falta: { codigo: CodigoFalta; texto: string }[];
+  certificado: { ok: boolean; mensagem: string | null };
+  pendentes: { total: number; primeiro: { id: string; serie: number; numero: number; tipo: TipoPendente } | null };
+};
+export type EmitenteCupom = {
+  cnpj: string;
+  razao_social: string;
+  nome_fantasia: string;
+  ie: string | null;
+  crt: number | null;
+  logradouro: string | null;
+  numero: string | null;
+  complemento: string | null;
+  bairro: string | null;
+  cep: string | null;
+  cod_municipio: string;
+  municipio: string;
+  uf: string;
+  telefone: string | null;
+  nat_op: string;
+  inf_cpl: string | null;
+  resp_tec_cnpj: string | null;
+  resp_tec_contato: string | null;
+  resp_tec_email: string | null;
+  resp_tec_fone: string | null;
+  series_outro_sistema: number[];
+  sem_outro_sistema: boolean;
+  cupom_lanca_venda: boolean | null;
+  cupom_lanca_venda_por_nome: string | null;
+  cupom_lanca_venda_em: string | null;
+  tp_regime_ibscbs: number | null;
+  atualizado_por_nome: string | null;
+  atualizado_em: string | null;
+};
+/** PUT emitente: cada quadro manda só os seus campos (o que não vem fica). */
+export type SalvarEmitenteCupom = Partial<Omit<EmitenteCupom,
+  'cnpj' | 'razao_social' | 'nome_fantasia' | 'uf' | 'cupom_lanca_venda_por_nome' | 'cupom_lanca_venda_em' | 'atualizado_por_nome' | 'atualizado_em'>>;
+export type AmbienteCupom = {
+  ambiente: AmbienteSefaz;
+  serie: number | null;
+  proximo_numero: number;
+  ultimo_numero_usado: number | null;
+  pendentes_na_serie: { total: number; primeiro_id: string | null };
+  id_csc: number | null;
+  /** Só os 4 últimos caracteres: o CSC nunca volta. */
+  csc_dica: string | null;
+  emissao_ligada: boolean;
+  situacao: SituacaoAmbienteCupom;
+  mensagem: string | null;
+  bloqueado_ate: string | null;
+  alterada_por_nome: string | null;
+  alterada_em: string | null;
+  historico: { evento: string; campos: string[]; mensagem: string | null; feito_por_nome: string | null; feito_em: string }[];
+};
+export type SalvarAmbienteCupom = { serie?: number | null; proximo_numero?: number | null; id_csc?: number | null; csc?: string | null };
+export type TesteConexaoCupom = { em_operacao: boolean; codigo: number | null; frase: string; agora: string; testar_de_novo_em: string };
+/** Alíquotas (%) chegam como número (o `wire.ts` converte o numeric); não são dinheiro. */
+export type PerfilFiscal = {
+  id: string;
+  nome: string;
+  cfop: string;
+  csosn: string | null;
+  cst_icms: string | null;
+  aliq_icms: number | null;
+  pis_cst: string | null;
+  cofins_cst: string | null;
+  c_ativ_sn: string | null;
+  ibs_sn_aliq: number | null;
+  cbs_sn_aliq: number | null;
+  ibscbs_cst: string | null;
+  ibscbs_cclass_trib: string | null;
+  ativo: boolean;
+  produtos: number;
+  vale_no_regime: boolean | null;
+  atualizado_por_nome: string | null;
+  atualizado_em: string | null;
+};
+export type SalvarPerfilFiscal = {
+  nome?: string;
+  cfop?: string;
+  csosn?: string | null;
+  cst_icms?: string | null;
+  aliq_icms?: string | null;
+  pis_cst?: string | null;
+  cofins_cst?: string | null;
+  c_ativ_sn?: string | null;
+  ibs_sn_aliq?: string | null;
+  cbs_sn_aliq?: string | null;
+  ibscbs_cst?: string | null;
+  ibscbs_cclass_trib?: string | null;
+  ativo?: boolean;
+};
+/** Uma linha de GET produtos: a grade da aba Produtos e a busca da aba Emitir. */
+export type ProdutoCupom = {
+  item_cardapio_id: string;
+  nome: string;
+  categoria: string;
+  unidade_venda: string;
+  /** O preço do cardápio já arredondado UMA vez pelo servidor; null = sem preço que sirva. */
+  preco_venda_centavos: number | null;
+  ativo: boolean;
+  ncm: string | null;
+  cest: string | null;
+  gtin: string | null;
+  origem: number;
+  descricao_cupom: string | null;
+  unidade: string | null;
+  perfil_fiscal_id: string | null;
+  perfil_nome: string | null;
+  pronto: boolean;
+  motivos: MotivoProduto[];
+};
+export type SalvarProdutoCupom = {
+  ncm?: string | null;
+  cest?: string | null;
+  gtin?: string | null;
+  origem?: number | null;
+  descricao_cupom?: string | null;
+  unidade?: string | null;
+  perfil_fiscal_id?: string | null;
+};
+export type ItemDoCupom = {
+  n_item: number;
+  item_cardapio_id: string | null;
+  nome_cardapio: string;
+  x_prod: string;
+  unidade: string;
+  /** Com 4 casas ("2.0000"): não é dinheiro. */
+  quantidade: string;
+  valor_unitario_centavos: number;
+  valor_bruto_centavos: number;
+  valor_desconto_centavos: number;
+  perfil_nome: string;
+};
+/** O cupom (GET cupons/:id e a resposta de todos os POST do cupom): horas e ações calculadas no servidor; CPF completo. */
+export type CupomDetalhe = {
+  id: string;
+  ambiente: AmbienteSefaz;
+  serie: number;
+  numero: number;
+  chave: string;
+  situacao: SituacaoCupom;
+  dh_emi: string;
+  envios: number;
+  numero_reaproveitavel: boolean;
+  consumidor_doc: string | null;
+  valor_produtos_centavos: number;
+  valor_desconto_centavos: number;
+  valor_total_centavos: number;
+  valor_troco_centavos: number;
+  itens: ItemDoCupom[];
+  pagamentos: { t_pag: string; valor_centavos: number }[];
+  autorizada_em: string | null;
+  n_prot: string | null;
+  c_stat: number | null;
+  x_motivo: string | null;
+  alerta: { c_msg: string | null; x_msg: string | null } | null;
+  cancelado_em: string | null;
+  cancelamento_motivo: string | null;
+  cancelamento_n_prot: string | null;
+  cancelamento_pedido_em: string | null;
+  venda_estoque: VendaEstoque | null;
+  venda_erro: string | null;
+  descartado_em: string | null;
+  descarte_motivo: string | null;
+  emitido_por_nome: string | null;
+  criado_em: string;
+  /** A hora do servidor (a contagem da tela não depende do relógio do aparelho). */
+  agora: string;
+  consultar_a_partir_de: string | null;
+  cancelar_ate: string | null;
+  acoes: AcaoCupom[];
+  recusa: RecusaCupom | null;
+  mensagem: string | null;
+};
+/** Uma linha de Emitidos: sem itens; o CPF mascarado (`***.982.247-**`). */
+export type CupomLinha = {
+  id: string;
+  ambiente: AmbienteSefaz;
+  serie: number;
+  numero: number;
+  chave: string;
+  situacao: SituacaoCupom;
+  dh_emi: string;
+  criado_em: string;
+  autorizada_em: string | null;
+  cancelado_em: string | null;
+  descartado_em: string | null;
+  envios: number;
+  valor_total_centavos: number;
+  pagamentos: { t_pag: string; valor_centavos: number }[];
+  consumidor_doc: string | null;
+  venda_estoque: VendaEstoque | null;
+  acoes: AcaoCupom[];
+  consultar_a_partir_de: string | null;
+  cancelar_ate: string | null;
+};
+export type FiltroCupons = {
+  ambiente?: AmbienteSefaz;
+  ini?: string;
+  fim?: string;
+  situacao?: SituacaoCupom[];
+  atencao?: boolean;
+  chave_idempotencia?: string;
+  limite?: number;
+};
+/** POST cupons: os preços são do servidor; a tela manda só o total que mostrou (`total_esperado_centavos`). */
+export type EmitirCupom = {
+  chave_idempotencia: string;
+  itens: { item_cardapio_id: string; quantidade: string }[];
+  desconto_centavos: number;
+  pagamentos: { t_pag: TPagCupom; valor_centavos: number }[];
+  consumidor_doc: string | null;
+  total_esperado_centavos: number;
+};
+/** Os dados do DANFE, só do XML autorizado guardado: valores como texto do XML ("24.00", "2.0000"). */
+export type DanfeItem = { nItem: number; cProd: string; xProd: string; qCom: string; uCom: string; vUnCom: string; vProd: string; vDesc: string | null };
+export type Danfe = {
+  emit: {
+    CNPJ: string;
+    xNome: string;
+    xFant: string | null;
+    IE: string | null;
+    enderEmit: {
+      xLgr: string | null; nro: string | null; xCpl: string | null; xBairro: string | null; xMun: string | null; UF: string | null;
+      CEP: string | null; fone: string | null;
+    };
+  };
+  det: DanfeItem[];
+  total: { qItens: number; vProd: string; vDesc: string; vFrete: string; vSeg: string; vOutro: string; vNF: string };
+  pag: { detPag: { tPag: string; xPag: string | null; vPag: string }[]; vTroco: string | null };
+  chave: string;
+  urlChave: string | null;
+  qrCode: string | null;
+  dest: { CPF: string | null; CNPJ: string | null; idEstrangeiro: string | null; xNome: string | null } | null;
+  ide: { nNF: string; serie: string; dhEmi: string; tpEmis: string };
+  nProt: string | null;
+  dhRecbto: string | null;
+  homologacao: boolean;
+  infCpl: string | null;
+  cMsg: string | null;
+  xMsg: string | null;
+};
+const CF = '/v1/cupom-fiscal';
+export const situacaoCupomFiscal = () => get<SituacaoCupomFiscal>(`${CF}/situacao`);
+export const emitenteCupom = () => get<EmitenteCupom>(`${CF}/emitente`);
+export const salvarEmitenteCupom = (dto: SalvarEmitenteCupom) => put<EmitenteCupom>(`${CF}/emitente`, dto);
+export const ambienteCupom = (a: AmbienteSefaz) => get<AmbienteCupom>(`${CF}/ambientes/${a}`);
+export const salvarAmbienteCupom = (a: AmbienteSefaz, dto: SalvarAmbienteCupom) => put<AmbienteCupom>(`${CF}/ambientes/${a}`, dto);
+/** "Ligar a emissão de cupons" / "Desligar a emissão" → a situação. Valendo, ligar pede `confirmado` (as três marcações). */
+export const ligarEmissaoCupom = (a: AmbienteSefaz, ligada: boolean, confirmado?: boolean) =>
+  put<SituacaoCupomFiscal>(`${CF}/ambientes/${a}/emissao`, { ligada, ...(confirmado === undefined ? {} : { confirmado }) });
+export const testarConexaoCupom = () => post<TesteConexaoCupom>(`${CF}/testar-conexao`);
+export const vendasCupomNoPeriodo = (ini: string, fim: string) =>
+  get<{ quantidade: number; valor_centavos: number }>(`${CF}/vendas-no-periodo`, { ini, fim });
+export const listarCupons = (f: FiltroCupons = {}) =>
+  get<CupomLinha[]>(`${CF}/cupons`, {
+    ...(f.ambiente ? { ambiente: f.ambiente } : {}),
+    ...(f.ini ? { ini: f.ini } : {}),
+    ...(f.fim ? { fim: f.fim } : {}),
+    ...(f.situacao && f.situacao.length > 0 ? { situacao: f.situacao.join(',') } : {}),
+    ...(f.atencao === undefined ? {} : { atencao: String(f.atencao) }),
+    ...(f.chave_idempotencia ? { chave_idempotencia: f.chave_idempotencia } : {}),
+    ...(f.limite === undefined ? {} : { limite: f.limite }),
+  });
+export const cupomFiscal = (id: string) => get<CupomDetalhe>(`${CF}/cupons/${id}`);
+export const danfeCupom = (id: string) => get<Danfe>(`${CF}/cupons/${id}/danfe`);
+/** 201 = emitido agora; 200 = o cupom que a mesma chave e o mesmo corpo já tinham emitido. Nos dois, o cupom. */
+export const emitirCupom = (v: EmitirCupom) => post<CupomDetalhe>(`${CF}/cupons`, v);
+export const reenviarCupom = (id: string) => post<CupomDetalhe>(`${CF}/cupons/${id}/reenviar`);
+export const consultarCupom = (id: string) => post<CupomDetalhe>(`${CF}/cupons/${id}/consultar`);
+export const cancelarCupom = (id: string, motivo: string) => post<CupomDetalhe>(`${CF}/cupons/${id}/cancelar`, { motivo });
+export const descartarCupom = (id: string, motivo: string) => post<CupomDetalhe>(`${CF}/cupons/${id}/descartar`, { motivo });
+export const lancarVendaCupom = (id: string) => post<CupomDetalhe>(`${CF}/cupons/${id}/lancar-venda`);
+export const perfisFiscais = () => get<PerfilFiscal[]>(`${CF}/perfis`);
+export const criarPerfilFiscal = (dto: SalvarPerfilFiscal & { nome: string; cfop: string }) => post<PerfilFiscal>(`${CF}/perfis`, dto);
+export const atualizarPerfilFiscal = (id: string, dto: SalvarPerfilFiscal) => patch<PerfilFiscal>(`${CF}/perfis/${id}`, dto);
+/** `true` só os prontos (busca da aba Emitir); `false` só os que faltam dados; sem o filtro, todos. */
+export const produtosCupom = (prontos?: boolean) =>
+  get<ProdutoCupom[]>(`${CF}/produtos`, prontos === undefined ? undefined : { prontos: String(prontos) });
+export const perfilEmLoteCupom = (itens: string[], perfil_fiscal_id: string) =>
+  put<{ atualizados: number; perfil_fiscal_id: string; perfil_nome: string }>(`${CF}/produtos/perfil`, { itens, perfil_fiscal_id });
+export const salvarProdutoCupom = (itemCardapioId: string, dto: SalvarProdutoCupom) =>
+  put<ProdutoCupom>(`${CF}/produtos/${itemCardapioId}`, dto);
+/**
+ * O arquivo do cupom (`nota`) ou do cancelamento, como texto. Com `responseType: 'text'` o corpo do erro também chega como texto: volta a
+ * ser objeto aqui (como em `xmlNotaSefaz`), para o `errMsg` achar a frase do servidor.
+ */
+export const xmlCupom = async (id: string, tipo: 'nota' | 'cancelamento') => {
+  try {
+    return (await api.get<string>(`${CF}/cupons/${id}/xml`, { params: { tipo }, responseType: 'text' })).data;
+  } catch (e) {
+    if (isAxiosError(e) && e.response && typeof e.response.data === 'string') e.response.data = corpoDoErroArquivo(e.response.data, 'Não consegui baixar o arquivo do cupom. Tente de novo.');
+    throw e;
+  }
+};
+/** O zip do mês para o contador (`mes` = "AAAA-MM"; sem ambiente, o do servidor). O erro volta a ser objeto, como no XML. */
+export const xmlDoMesCupom = async (mes: string, ambiente?: AmbienteSefaz) => {
+  try {
+    return (await api.get<Blob>(`${CF}/xml-do-mes`, { params: { mes, ...(ambiente ? { ambiente } : {}) }, responseType: 'blob' })).data;
+  } catch (e) {
+    if (isAxiosError(e) && e.response && e.response.data instanceof Blob) {
+      e.response.data = corpoDoErroArquivo(await e.response.data.text(), 'Não consegui preparar o arquivo agora. Tente de novo.');
+    }
+    throw e;
+  }
+};
+/** O status HTTP de um erro do axios (null = sem resposta): a aba Emitir separa o erro da API do "não sei se saiu" (UX 2.7). */
+export const statusDoErro = (e: unknown): number | null => (isAxiosError(e) ? (e.response?.status ?? null) : null);
+function corpoDoErroArquivo(texto: string, frase: string): unknown {
+  try {
+    const j = JSON.parse(texto) as { error?: { code?: unknown; message?: unknown } } | null;
+    if (typeof j?.error?.message === 'string' && j.error.message) return j;
+  } catch {
+    // não é o JSON da API (proxy, HTML…): fica a frase fixa
+  }
+  return { error: { message: frase } };
+}
+
 // ---------- contas / DRE / caixa
 export const listarContas = () => get<Conta[]>('/v1/contas-pagar');
 export const criarConta = (c: Record<string, unknown>) => post<Conta>('/v1/contas-pagar', c);
