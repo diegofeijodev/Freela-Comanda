@@ -11,6 +11,7 @@ import { CertificadoDigitalController } from '../../modules/certificado-digital/
 import { CardapioController } from '../../modules/cardapio/cardapio.controller';
 import { ComprasController } from '../../modules/compras/compras.controller';
 import { ContasController } from '../../modules/contas/contas.controller';
+import { CupomFiscalController } from '../../modules/cupom-fiscal/cupom-fiscal.controller';
 import { EstoqueController } from '../../modules/estoque/estoque.controller';
 import { ImportacoesController } from '../../modules/importacoes/importacoes.controller';
 import { InventariosController } from '../../modules/inventarios/inventarios.controller';
@@ -30,6 +31,7 @@ const CONTROLLERS = [
   CertificadoDigitalController,
   ComprasController,
   ContasController,
+  CupomFiscalController,
   EstoqueController,
   ImportacoesController,
   InventariosController,
@@ -115,6 +117,22 @@ describe('proteção das rotas (substitui as políticas RLS do Supabase)', () =>
       { rota: 'POST /v1/notas-sefaz/:id/ignorar', marca: 'admin' },
       { rota: 'POST /v1/notas-sefaz/:id/reabrir', marca: 'admin' },
       { rota: 'POST /v1/notas-sefaz/:id/responder-de-novo', marca: 'admin' },
+    ]);
+  });
+
+  it('o cupom fiscal é só do admin (cadastro; o cupom mostra preço de venda)', () => {
+    expect(todas.filter((r) => r.rota.includes('/cupom-fiscal'))).toEqual([
+      { rota: 'GET /v1/cupom-fiscal/situacao', marca: 'admin' },
+      { rota: 'GET /v1/cupom-fiscal/emitente', marca: 'admin' },
+      { rota: 'PUT /v1/cupom-fiscal/emitente', marca: 'admin' },
+      { rota: 'GET /v1/cupom-fiscal/ambientes/:ambiente', marca: 'admin' },
+      { rota: 'PUT /v1/cupom-fiscal/ambientes/:ambiente', marca: 'admin' },
+      { rota: 'GET /v1/cupom-fiscal/perfis', marca: 'admin' },
+      { rota: 'POST /v1/cupom-fiscal/perfis', marca: 'admin' },
+      { rota: 'PATCH /v1/cupom-fiscal/perfis/:id', marca: 'admin' },
+      { rota: 'GET /v1/cupom-fiscal/produtos', marca: 'admin' },
+      { rota: 'PUT /v1/cupom-fiscal/produtos/perfil', marca: 'admin' },
+      { rota: 'PUT /v1/cupom-fiscal/produtos/:itemCardapioId', marca: 'admin' },
     ]);
   });
 
