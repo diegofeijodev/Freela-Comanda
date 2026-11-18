@@ -2,7 +2,7 @@
 // (série 0–889, CSC 16–36, NCM, CSOSN × CFOP…) são do serviço, com 422 e a frase da UX — assim a tela recebe sempre a mesma frase, venha
 // o valor torto como texto ou como número. Dinheiro do cupom vai em centavos inteiros (`*_centavos`).
 
-import { Transform } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   ArrayMinSize,
@@ -17,8 +17,9 @@ import {
   MaxLength,
   Min,
   ValidateBy,
+  ValidateNested,
 } from 'class-validator';
-import { FRASE_ERRO, FRASES_VALIDACAO } from './frases';
+import { FRASE_ERRO, FRASES_EMISSAO, FRASES_VALIDACAO } from './frases';
 import { FRASES_CADASTRO } from './frases-cadastro';
 import { quantidadeValida, type TPag } from './totais';
 
@@ -124,8 +125,9 @@ export class PerfilEmLoteDto {
 }
 
 // ---------------------------------------------------------------------------------------------- corpo da emissão (Tarefa 11)
-// Preparado aqui (nota 4 do controlador): o pagamento > 0 e o `tPag` da lista, e a quantidade conferida por `quantidadeValida` ANTES de
-// `calcularTotais`. A Tarefa 11 junta estas peças no corpo do POST cupons.
+// O pagamento > 0 e o `tPag` da lista, e a quantidade conferida por `quantidadeValida` ANTES de `calcularTotais` (nota 4 do controlador da
+// Tarefa 10). O serviço confere o mesmo (a frase é a mesma); o DTO barra antes, com `whitelist + forbidNonWhitelisted` (um campo
+// `entrega`, UX 10.9, é recusado).
 
 /** Formas de pagamento aceitas (o CHECK de `nfce_cupom_pagamentos.t_pag`): dinheiro, crédito, débito, vale-alimentação, vale-refeição e Pix. */
 export const T_PAG_ACEITOS: readonly TPag[] = ['01', '03', '04', '10', '11', '17'];
@@ -145,4 +147,43 @@ export class ItemDoCupomDto {
 export class PagamentoDoCupomDto {
   @IsIn([...T_PAG_ACEITOS], { message: FRASES_CADASTRO.tPag }) t_pag!: TPag;
   @IsInt({ message: FRASES_CADASTRO.valorPagamento }) @Min(1, { message: FRASES_CADASTRO.valorPagamento }) valor_centavos!: number;
+}
+
+/** POST cupons (desenho §8.2): dinheiro em centavos inteiros; os preços são do servidor (a tela manda só o total que mostrou). */
+export class EmitirCupomDto {
+  @IsUUID('all', { message: FRASES_EMISSAO.chaveDaVenda }) chave_idempotencia!: string;
+  @IsArray({ message: FRASE_ERRO.NFCE_SEM_ITENS })
+  @ArrayMinSize(1, { message: FRASE_ERRO.NFCE_SEM_ITENS })
+  @ArrayMaxSize(990)
+  @ValidateNested({ each: true })
+  @Type(() => ItemDoCupomDto)
+  itens!: ItemDoCupomDto[];
+  @IsOptional()
+  @IsInt({ message: FRASES_EMISSAO.valorEmCentavos })
+  @Min(0, { message: FRASES_EMISSAO.valorEmCentavos })
+  desconto_centavos?: number;
+  @IsArray({ message: FRASES_CADASTRO.tPag })
+  @ArrayMinSize(1, { message: FRASES_CADASTRO.tPag })
+  @ArrayMaxSize(100)
+  @ValidateNested({ each: true })
+  @Type(() => PagamentoDoCupomDto)
+  pagamentos!: PagamentoDoCupomDto[];
+  /** CPF ou CNPJ, com ou sem máscara; o DV é do serviço (400 `NFCE_DOC_INVALIDO`, com a frase do tipo). */
+  @IsOptional() @IsString() @MaxLength(30) consumidor_doc?: string | null;
+  @IsInt({ message: FRASES_EMISSAO.valorEmCentavos })
+  @Min(0, { message: FRASES_EMISSAO.valorEmCentavos })
+  total_esperado_centavos!: number;
+}
+
+/** POST cupons/:id/descartar. O tamanho (3 a 255 depois de aparar) é do serviço: 400 `NFCE_MOTIVO` com a frase da UX. */
+export class DescartarCupomDto {
+  @IsString({ message: FRASE_ERRO.NFCE_MOTIVO('descartar') })
+  @MaxLength(1000, { message: FRASE_ERRO.NFCE_MOTIVO('descartar') })
+  motivo!: string;
+}
+
+/** PUT ambientes/:ambiente/emissao: ligar ou desligar; valendo, ligar pede `confirmado` (as três marcações da UX 5.1). */
+export class LigarEmissaoDto {
+  @IsBoolean() ligada!: boolean;
+  @IsOptional() @IsBoolean() confirmado?: boolean;
 }

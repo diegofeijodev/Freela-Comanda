@@ -120,13 +120,20 @@ describe('proteção das rotas (substitui as políticas RLS do Supabase)', () =>
     ]);
   });
 
-  it('o cupom fiscal é só do admin (cadastro; o cupom mostra preço de venda)', () => {
+  it('o cupom fiscal é só do admin (cadastro e emissão; o cupom mostra preço de venda)', () => {
     expect(todas.filter((r) => r.rota.includes('/cupom-fiscal'))).toEqual([
       { rota: 'GET /v1/cupom-fiscal/situacao', marca: 'admin' },
       { rota: 'GET /v1/cupom-fiscal/emitente', marca: 'admin' },
       { rota: 'PUT /v1/cupom-fiscal/emitente', marca: 'admin' },
       { rota: 'GET /v1/cupom-fiscal/ambientes/:ambiente', marca: 'admin' },
       { rota: 'PUT /v1/cupom-fiscal/ambientes/:ambiente', marca: 'admin' },
+      { rota: 'PUT /v1/cupom-fiscal/ambientes/:ambiente/emissao', marca: 'admin' },
+      { rota: 'POST /v1/cupom-fiscal/testar-conexao', marca: 'admin' },
+      { rota: 'POST /v1/cupom-fiscal/cupons', marca: 'admin' },
+      { rota: 'POST /v1/cupom-fiscal/cupons/:id/reenviar', marca: 'admin' },
+      { rota: 'POST /v1/cupom-fiscal/cupons/:id/consultar', marca: 'admin' },
+      { rota: 'POST /v1/cupom-fiscal/cupons/:id/descartar', marca: 'admin' },
+      { rota: 'POST /v1/cupom-fiscal/cupons/:id/lancar-venda', marca: 'admin' },
       { rota: 'GET /v1/cupom-fiscal/perfis', marca: 'admin' },
       { rota: 'POST /v1/cupom-fiscal/perfis', marca: 'admin' },
       { rota: 'PATCH /v1/cupom-fiscal/perfis/:id', marca: 'admin' },
@@ -137,14 +144,22 @@ describe('proteção das rotas (substitui as políticas RLS do Supabase)', () =>
   });
 
   it('só estas rotas são públicas', () => {
-    expect(todas.filter((r) => r.marca === 'public').map((r) => r.rota).sort()).toEqual(
-      ['GET /health', 'GET /v1/auth/existe-admin', 'POST /v1/auth/login', 'POST /v1/auth/primeiro-acesso'].sort(),
-    );
+    expect(
+      todas
+        .filter((r) => r.marca === 'public')
+        .map((r) => r.rota)
+        .sort(),
+    ).toEqual(['GET /health', 'GET /v1/auth/existe-admin', 'POST /v1/auth/login', 'POST /v1/auth/primeiro-acesso'].sort());
   });
 
   // A fronteira da loja (is_staff no protótipo): nada aqui devolve custo, preço, teórico ou financeiro.
   it('a loja alcança exatamente estas rotas', () => {
-    expect(todas.filter((r) => r.marca === 'staff').map((r) => r.rota).sort()).toEqual(
+    expect(
+      todas
+        .filter((r) => r.marca === 'staff')
+        .map((r) => r.rota)
+        .sort(),
+    ).toEqual(
       [
         'GET /v1/auth/me',
         'POST /v1/auth/trocar-senha',

@@ -5,6 +5,8 @@ import {
   type itens_cardapio,
   type nfce_ambientes,
   type nfce_ambientes_historico,
+  type nfce_cupom_itens,
+  type nfce_cupom_pagamentos,
   type nfce_cupons,
   type nfce_emitente,
   type nfce_envios,
@@ -18,12 +20,16 @@ import type { PrismaService } from '../../../common/database/prisma.service';
  * `notas-sefaz/__tests__/prisma-sefaz.falso.ts`. Os testes semeiam e conferem direto em `t`. Nasce como a migração `nfce`: o emitente
  * (id = 1) e os dois ambientes, com a emissão desligada.
  *
- * Estrito de propósito: confere os CHECKs, os únicos e as chaves estrangeiras das tabelas que o cadastro grava (o Postgres recusa e o
- * filtro vira 500 ou 409 `EM_USO`), devolve `Prisma.Decimal` e `bigint` como o Prisma, e conta as transações (`est.transacoes`) e os
- * `FOR UPDATE` pedidos dentro delas (`est.travas`, os valores do `$queryRaw`).
+ * Estrito de propósito: confere os CHECKs, os únicos e as chaves estrangeiras das tabelas que o cadastro e a emissão gravam (o Postgres
+ * recusa e o filtro vira 500 ou 409 `EM_USO`), o gatilho de imutável dos cupons (`nfce_cupons_imutavel`, só a lista branca passa depois
+ * de autorizado) e o dos itens e pagamentos (`nfce_filhos_imutaveis`), e os índices únicos parciais dos cupons vivos; devolve
+ * `Prisma.Decimal` e `bigint` como o Prisma, e conta as transações (`est.transacoes`) e os `FOR UPDATE` pedidos dentro delas
+ * (`est.travas`, os valores do `$queryRaw`). Os outros `$queryRaw` da emissão: `nextval('nfce_id_lote_seq')` (`est.idLote`) e as
+ * funções da venda (`nfce_lancar_venda`/`nfce_desfazer_venda`, com as recusas da migração; `est.vendas` guarda cada chamada que lançou
+ * ou desfez e `est.falharVenda` faz as próximas N falharem como um erro do banco).
  */
 export type TabelasCupom = {
-  configuracoes: { id: number; cnpj: string };
+  configuracoes: { id: number; cnpj: string; razao_social: string; nome_fantasia: string };
   nfce_emitente: nfce_emitente[];
   nfce_ambientes: nfce_ambientes[];
   nfce_ambientes_historico: nfce_ambientes_historico[];
@@ -31,6 +37,8 @@ export type TabelasCupom = {
   nfce_itens: nfce_itens[];
   itens_cardapio: itens_cardapio[];
   nfce_cupons: nfce_cupons[];
+  nfce_cupom_itens: nfce_cupom_itens[];
+  nfce_cupom_pagamentos: nfce_cupom_pagamentos[];
   nfce_envios: nfce_envios[];
 };
 type NomeTabela = Exclude<keyof TabelasCupom, 'configuracoes'>;
@@ -42,6 +50,8 @@ const TABELAS: NomeTabela[] = [
   'nfce_itens',
   'itens_cardapio',
   'nfce_cupons',
+  'nfce_cupom_itens',
+  'nfce_cupom_pagamentos',
   'nfce_envios',
 ];
 
@@ -192,6 +202,26 @@ function padroes(tabela: NomeTabela): Record<string, unknown> {
         criado_em: agora,
         atualizado_em: agora,
       };
+    case 'nfce_cupom_itens':
+      return {
+        id: randomUUID(),
+        item_cardapio_id: null,
+        cest: null,
+        gtin: null,
+        csosn: null,
+        cst_icms: null,
+        aliq_icms: null,
+        pis_cst: null,
+        cofins_cst: null,
+        c_ativ_sn: null,
+        ibs_sn_aliq: null,
+        cbs_sn_aliq: null,
+        ibscbs_cst: null,
+        ibscbs_cclass_trib: null,
+        valor_desconto: '0',
+      };
+    case 'nfce_cupom_pagamentos':
+      return { id: randomUUID(), tp_integra: null };
     case 'nfce_envios':
       return {
         id: randomUUID(),
@@ -227,12 +257,16 @@ const CHAVE: Record<NomeTabela, string> = {
   nfce_itens: 'item_cardapio_id',
   itens_cardapio: 'id',
   nfce_cupons: 'id',
+  nfce_cupom_itens: 'id',
+  nfce_cupom_pagamentos: 'id',
   nfce_envios: 'id',
 };
 const DECIMAIS: Partial<Record<NomeTabela, string[]>> = {
   itens_cardapio: ['preco_venda', 'mkup', 'aliquota'],
   nfce_perfis_fiscais: ['aliq_icms', 'ibs_sn_aliq', 'cbs_sn_aliq'],
   nfce_cupons: ['valor_produtos', 'valor_desconto', 'valor_total', 'valor_troco'],
+  nfce_cupom_itens: ['aliq_icms', 'ibs_sn_aliq', 'cbs_sn_aliq', 'quantidade', 'valor_unitario', 'valor_bruto', 'valor_desconto'],
+  nfce_cupom_pagamentos: ['valor'],
 };
 const BIGINTS: Partial<Record<NomeTabela, string[]>> = {
   nfce_ambientes: ['proximo_numero'],
@@ -348,10 +382,143 @@ function conferir(t: TabelasCupom, n: NomeTabela, l: Record<string, any>, antiga
       if (t.nfce_itens.some((o) => o !== antiga && o.item_cardapio_id === l.item_cardapio_id)) throw erroPrisma('PK (falso)', 'P2002');
       return;
     }
+    case 'nfce_cupons': {
+      if (!AMBIENTES.includes(l.ambiente)) throw check('nfce_cupons_ambiente');
+      if (!inteiroEntre(l.serie, 0, 889) || l.serie === null) throw check('nfce_cupons_serie');
+      if (!(typeof l.numero === 'bigint' && l.numero >= 1n && l.numero <= 999_999_999n)) throw check('nfce_cupons_numero');
+      if (!(typeof l.chave === 'string' && /^35[0-9]{4}[0-9A-Z]{12}[0-9]{2}65[0-9]{22}$/.test(l.chave))) throw check('nfce_cupons_chave');
+      const partes =
+        l.chave.slice(22, 25) === String(l.serie).padStart(3, '0') &&
+        l.chave.slice(25, 34) === String(l.numero).padStart(9, '0') &&
+        l.chave.slice(34, 35) === String(l.tp_emis) &&
+        l.chave.slice(35, 43) === l.c_nf;
+      if (!partes) throw check('nfce_cupons_chave_partes');
+      if (!(typeof l.c_nf === 'string' && /^[0-9]{8}$/.test(l.c_nf))) throw check('nfce_cupons_c_nf');
+      if (!SITUACOES_CUPOM.includes(l.situacao)) throw check('nfce_cupons_situacao');
+      if (!inteiroEntre(l.envios, 0, 3) || l.envios === null) throw check('nfce_cupons_envios');
+      if (!(typeof l.pedido_hash === 'string' && /^[0-9a-f]{64}$/.test(l.pedido_hash))) throw check('nfce_cupons_pedido_hash');
+      if (typeof l.lanca_venda !== 'boolean' || (l.ambiente !== 'producao' && l.lanca_venda)) throw check('nfce_cupons_lanca_venda');
+      if (!casaRe(l.consumidor_doc, /^([0-9]{11}|[0-9A-Z]{12}[0-9]{2})$/)) throw check('nfce_cupons_consumidor_doc');
+      const valores = [l.valor_produtos, l.valor_desconto, l.valor_total, l.valor_troco] as Prisma.Decimal[];
+      if (!valores.every((v) => v instanceof Prisma.Decimal && v.gte(0))) throw check('nfce_cupons_valores');
+      if (!l.valor_total.equals(l.valor_produtos.minus(l.valor_desconto))) throw check('nfce_cupons_valor_total');
+      if (!casaRe(l.n_prot, /^[0-9]{15}([0-9]{2})?$/)) throw check('nfce_cupons_n_prot');
+      if (!casaRe(l.cancelamento_n_prot, /^[0-9]{15}([0-9]{2})?$/)) throw check('nfce_cupons_cancelamento_n_prot');
+      if (!inteiroEntre(l.c_stat, 100, 9999)) throw check('nfce_cupons_c_stat');
+      if (antiga !== null) imutavel(antiga as Record<string, any>, l);
+      const outros = t.nfce_cupons.filter((o) => o !== antiga) as Record<string, any>[];
+      if (outros.some((o) => o.id === l.id || o.chave_idempotencia === l.chave_idempotencia)) {
+        throw erroPrisma('chave_idempotencia repetida (falso)', 'P2002');
+      }
+      const vivo = (o: Record<string, any>) => o.situacao !== 'descartado';
+      if (vivo(l) && outros.some((o) => vivo(o) && o.ambiente === l.ambiente && o.serie === l.serie && o.numero === l.numero)) {
+        throw erroPrisma('Key (ambiente, serie, numero)= (falso: nfce_cupons_numero_vivo)', 'P2002');
+      }
+      if (vivo(l) && outros.some((o) => vivo(o) && o.chave === l.chave))
+        throw erroPrisma('Key (chave)= (falso: nfce_cupons_chave_viva)', 'P2002');
+      return;
+    }
+    case 'nfce_cupom_itens':
+    case 'nfce_cupom_pagamentos': {
+      const cupom = t.nfce_cupons.find((c) => c.id === l.cupom_id);
+      if (!cupom) throw erroPrisma(`FK ${n}.cupom_id (falso)`, 'P2003');
+      const antes = antiga === null ? null : t.nfce_cupons.find((c) => c.id === (antiga as Record<string, any>).cupom_id);
+      if ([cupom, antes].some((c) => c && PROTEGIDAS.includes(c.situacao))) throw check(`nfce_filhos_imutaveis (${cupom.situacao})`);
+      if (n === 'nfce_cupom_itens') {
+        if (!inteiroEntre(l.n_item, 1, 990) || l.n_item === null) throw check('nfce_cupom_itens_n_item');
+        if (!(typeof l.ncm === 'string' && /^[0-9]{8}$/.test(l.ncm))) throw check('nfce_cupom_itens_ncm');
+        if (!(typeof l.cfop === 'string' && /^[0-9]{4}$/.test(l.cfop))) throw check('nfce_cupom_itens_cfop');
+        if ((l.csosn === null) === (l.cst_icms === null)) throw check('nfce_cupom_itens_icms');
+        if (!(Number.isInteger(l.origem) && l.origem >= 0 && l.origem <= 8)) throw check('nfce_cupom_itens_origem');
+        if (!(l.quantidade instanceof Prisma.Decimal && l.quantidade.gt(0))) throw check('nfce_cupom_itens_quantidade');
+        const v = l as Record<string, Prisma.Decimal>;
+        if (!(v.valor_unitario.gte(0) && v.valor_bruto.gte(0) && v.valor_desconto.gte(0) && v.valor_desconto.lte(v.valor_bruto))) {
+          throw check('nfce_cupom_itens_valores');
+        }
+        if (tamanho(l.c_prod) > 60 || tamanho(l.x_prod) > 120 || tamanho(l.unidade) > 6) throw check('varchar nfce_cupom_itens');
+        if (typeof l.nome_cardapio !== 'string' || typeof l.perfil_nome !== 'string') throw check('nfce_cupom_itens NOT NULL');
+        const dup = (t.nfce_cupom_itens as Record<string, any>[]).some(
+          (o) => o !== antiga && o.cupom_id === l.cupom_id && o.n_item === l.n_item,
+        );
+        if (dup) throw erroPrisma('(cupom_id, n_item) repetido (falso)', 'P2002');
+      } else {
+        if (!(Number.isInteger(l.ordem) && l.ordem >= 1)) throw check('nfce_cupom_pagamentos_ordem');
+        if (!['01', '03', '04', '10', '11', '17'].includes(l.t_pag)) throw check('nfce_cupom_pagamentos_t_pag');
+        if (!(l.valor instanceof Prisma.Decimal && l.valor.gt(0))) throw check('nfce_cupom_pagamentos_valor');
+        if (!(l.tp_integra === null || [1, 2].includes(l.tp_integra))) throw check('nfce_cupom_pagamentos_tp_integra');
+        const dup = (t.nfce_cupom_pagamentos as Record<string, any>[]).some(
+          (o) => o !== antiga && o.cupom_id === l.cupom_id && o.ordem === l.ordem,
+        );
+        if (dup) throw erroPrisma('(cupom_id, ordem) repetido (falso)', 'P2002');
+      }
+      return;
+    }
+    case 'nfce_envios': {
+      if (!AMBIENTES.includes(l.ambiente)) throw check('nfce_envios_ambiente');
+      if (!['autorizacao', 'consulta', 'cancelamento', 'status'].includes(l.servico)) throw check('nfce_envios_servico');
+      if ((l.servico === 'status') !== (l.cupom_id === null)) throw check('nfce_envios_cupom');
+      if (!(l.tentativa === null || (Number.isInteger(l.tentativa) && l.tentativa >= 1))) throw check('nfce_envios_tentativa');
+      if (!(l.id_lote === null || (typeof l.id_lote === 'bigint' && l.id_lote >= 1n && l.id_lote <= 999_999_999_999_999n))) {
+        throw check('nfce_envios_id_lote');
+      }
+      const resultados = ['respondida', 'falha_antes_de_enviar', 'sem_resposta', 'interrompida'];
+      if (!(l.resultado === null || resultados.includes(l.resultado))) throw check('nfce_envios_resultado');
+      if (!(l.iniciada_em instanceof Date)) throw check('nfce_envios iniciada_em NOT NULL');
+      if (!casaRe(l.n_prot, /^[0-9]{1,17}$/)) throw check('varchar(17) nfce_envios.n_prot');
+      if (l.cupom_id !== null && !t.nfce_cupons.some((c) => c.id === l.cupom_id))
+        throw erroPrisma('FK nfce_envios.cupom_id (falso)', 'P2003');
+      return;
+    }
     default:
-      return; // cardápio, cupons e envios: o cadastro só lê
+      return; // cardápio: só a semente do teste
   }
 }
+
+/** Situações em que o cupom é documento fiscal (gatilhos `nfce_cupons_imutavel` e `nfce_filhos_imutaveis`). */
+const PROTEGIDAS = ['autorizado', 'cancelando', 'denegado', 'cancelado'];
+const SITUACOES_CUPOM = [
+  'enviando',
+  'nao_enviado',
+  'sem_resposta',
+  'nao_consta',
+  'rejeitado',
+  'autorizado',
+  'cancelando',
+  'denegado',
+  'cancelado',
+  'descartado',
+];
+const CAMPOS_DO_CANCELAMENTO = ['cancelado_em', 'cancelamento_motivo', 'cancelamento_n_prot', 'cancelamento_pedido_em'];
+
+const mesmoValor = (a: unknown, b: unknown): boolean => {
+  if (a instanceof Date && b instanceof Date) return a.getTime() === b.getTime();
+  if (a instanceof Prisma.Decimal && b instanceof Prisma.Decimal) return a.equals(b);
+  if (Array.isArray(a) && Array.isArray(b)) return a.length === b.length && a.every((x, i) => mesmoValor(x, b[i]));
+  return (a ?? null) === (b ?? null);
+};
+
+/** O gatilho `nfce_cupons_imutavel` da migração: com o cupom já documento fiscal, só a lista branca muda. */
+function imutavel(antiga: Record<string, any>, nova: Record<string, any>): void {
+  if (!PROTEGIDAS.includes(antiga.situacao)) return;
+  const passa =
+    nova.situacao === antiga.situacao ||
+    (antiga.situacao === 'autorizado' && ['cancelando', 'cancelado'].includes(nova.situacao)) ||
+    (antiga.situacao === 'cancelando' && ['autorizado', 'cancelado'].includes(nova.situacao));
+  if (!passa) throw check(`nfce_cupons_imutavel: ${antiga.situacao} não passa para ${nova.situacao}`);
+  const livres = new Set(['situacao', 'venda_lancada_em', 'venda_desfeita_em', 'venda_erro', 'atualizado_em']);
+  if (antiga.situacao === 'autorizado' || antiga.situacao === 'cancelando') for (const c of CAMPOS_DO_CANCELAMENTO) livres.add(c);
+  for (const k of new Set([...Object.keys(antiga), ...Object.keys(nova)])) {
+    if (!livres.has(k) && !mesmoValor(antiga[k], nova[k])) throw check(`nfce_cupons_imutavel: ${antiga.situacao} não muda ${k}`);
+  }
+}
+
+/** Erro de `raise exception` dentro de um `$queryRaw` (como o Prisma entrega: P2010 com o SQLSTATE P0001). */
+const erroRegra = (msg: string) =>
+  new Prisma.PrismaClientKnownRequestError(`Raw query failed. Code: \`P0001\`. Message: \`ERROR: ${msg}\``, {
+    code: 'P2010',
+    clientVersion: 'falso',
+    meta: { code: 'P0001', message: `ERROR: ${msg}` },
+  });
 
 const igual = (a: unknown, b: unknown): boolean => {
   if (a instanceof Date && b instanceof Date) return a.getTime() === b.getTime();
@@ -428,13 +595,31 @@ const copia = <T>(x: T): T => (Array.isArray(x) ? (x.map(copiaLinha) as T) : cop
  * `AND`; `orderBy`; `take`; `select` é ignorado e a linha inteira volta). `$transaction(cb)` desfaz tudo se `cb` lançar. `est.transacoes`
  * conta as transações; `est.travas` guarda os valores de cada `$queryRaw` feito dentro delas (o `SELECT … FOR UPDATE` do ambiente).
  */
+export type EstadoFalso = {
+  transacoes: number;
+  travas: unknown[][];
+  /** O texto de cada `$queryRaw` (os pedaços do molde, juntos por `$n`). */
+  sql: string[];
+  /** Último valor de `nextval('nfce_id_lote_seq')`. */
+  idLote: number;
+  /** Cada chamada de `nfce_lancar_venda`/`nfce_desfazer_venda` que gravou (o id do cupom). */
+  vendas: { lancar: string[]; desfazer: string[] };
+  /** As próximas N chamadas das funções da venda falham como erro do banco (antes de conferir o cupom). */
+  falharVenda: number;
+};
+
 export function montarPrismaCupom(o: { cnpjEmpresa?: string } = {}): {
   prisma: PrismaService;
   t: TabelasCupom;
-  est: { transacoes: number; travas: unknown[][] };
+  est: EstadoFalso;
 } {
   const t: TabelasCupom = {
-    configuracoes: { id: 1, cnpj: o.cnpjEmpresa ?? '12.345.678/0001-95' },
+    configuracoes: {
+      id: 1,
+      cnpj: o.cnpjEmpresa ?? '12.345.678/0001-95',
+      razao_social: 'Chopp e Espeto Valinhos Ltda',
+      nome_fantasia: 'Chopp & Espeto',
+    },
     nfce_emitente: [linhaCom('nfce_emitente', {})],
     nfce_ambientes: [linhaCom('nfce_ambientes', { ambiente: 'homologacao' }), linhaCom('nfce_ambientes', { ambiente: 'producao' })],
     nfce_ambientes_historico: [],
@@ -442,9 +627,11 @@ export function montarPrismaCupom(o: { cnpjEmpresa?: string } = {}): {
     nfce_itens: [],
     itens_cardapio: [],
     nfce_cupons: [],
+    nfce_cupom_itens: [],
+    nfce_cupom_pagamentos: [],
     nfce_envios: [],
   };
-  const est = { transacoes: 0, travas: [] as unknown[][] };
+  const est: EstadoFalso = { transacoes: 0, travas: [], sql: [], idLote: 0, vendas: { lancar: [], desfazer: [] }, falharVenda: 0 };
 
   const lista = (n: NomeTabela) => t[n] as unknown as Record<string, unknown>[];
   const porChave = (n: NomeTabela, where: Record<string, unknown>) => {
@@ -498,6 +685,29 @@ export function montarPrismaCupom(o: { cnpjEmpresa?: string } = {}): {
     },
   });
 
+  /** As recusas e o efeito de `nfce_lancar_venda`/`nfce_desfazer_venda` da migração (sem a tabela `vendas`: só conta). */
+  const venda = (tipo: 'lancar' | 'desfazer', id: string): number => {
+    if (est.falharVenda > 0) {
+      est.falharVenda--;
+      throw new Error('conexão com o banco caiu (falso)');
+    }
+    const c = t.nfce_cupons.find((x) => x.id === id);
+    if (!c) throw erroRegra('Cupom fiscal não encontrado.');
+    if (tipo === 'desfazer') {
+      if (c.situacao !== 'cancelado') throw erroRegra(`Só o cupom cancelado desfaz a venda no estoque (este está ${c.situacao}).`);
+      est.vendas.desfazer.push(id);
+      Object.assign(c, { venda_desfeita_em: c.venda_desfeita_em ?? new Date(), venda_erro: null });
+      return 1;
+    }
+    if (c.ambiente !== 'producao') throw erroRegra('Cupom de homologação (modo de teste) não lança venda no estoque.');
+    if (c.situacao !== 'autorizado') throw erroRegra(`Só o cupom autorizado lança a venda no estoque (este está ${c.situacao}).`);
+    if (!c.lanca_venda) throw erroRegra('Este cupom não lança a venda no estoque: a venda dele vem da importação do outro sistema.');
+    const ja = c.venda_lancada_em !== null;
+    if (!ja) est.vendas.lancar.push(id);
+    Object.assign(c, { venda_lancada_em: c.venda_lancada_em ?? new Date(), venda_erro: null });
+    return ja ? 0 : 1;
+  };
+
   const tabelas = {
     configuracoes: { findUnique: async () => copia(t.configuracoes) },
     ...(Object.fromEntries(TABELAS.map((n) => [n, operacoes(n)])) as Record<NomeTabela, ReturnType<typeof operacoes>>),
@@ -510,7 +720,12 @@ export function montarPrismaCupom(o: { cnpjEmpresa?: string } = {}): {
       const antes = Object.fromEntries(TABELAS.map((n) => [n, copia(lista(n))])) as Record<NomeTabela, Record<string, unknown>[]>;
       const tx = {
         ...tabelas,
-        $queryRaw: async (_sql: unknown, ...valores: unknown[]) => {
+        $queryRaw: async (molde: TemplateStringsArray, ...valores: unknown[]) => {
+          const sql = Array.from(molde).reduce((a, p, i) => (i === 0 ? p : `${a}$${i}${p}`), '');
+          est.sql.push(sql);
+          if (sql.includes('nextval')) return [{ id: BigInt(++est.idLote) }];
+          if (sql.includes('nfce_lancar_venda')) return [{ n: venda('lancar', valores[0] as string) }];
+          if (sql.includes('nfce_desfazer_venda')) return [{ n: venda('desfazer', valores[0] as string) }];
           est.travas.push(valores);
           return [{ ok: true }];
         },

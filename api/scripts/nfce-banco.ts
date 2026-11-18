@@ -2,16 +2,29 @@
 // CHECKs da série e do número, o índice único parcial dos cupons vivos), os gatilhos de imutável (`nfce_cupons_imutavel` e
 // `nfce_filhos_imutaveis`, inclusive o ON DELETE SET NULL do cardápio que passa) e as funções da venda (`nfce_lancar_venda` soma as linhas
 // do mesmo item, a baixa vem do gatilho `vendas_baixa`, idempotente, recusa homologação; `nfce_desfazer_venda` apaga a venda e as baixas).
-// Só SQL: nenhuma porta, nenhuma rede (o smoke ainda roda sob a barreira). Cada checagem conta um "ok"; a 1ª que falha sai com erro.
+// Depois, a emissão (Task 11) com o serviço de verdade, a porta da NFC-e FALSA e o certificado fictício dos testes: T1 → porta → T2 → T3
+// (ver `emissao`). Nenhuma rede (o smoke ainda roda sob a barreira). Cada checagem conta um "ok"; a 1ª que falha sai com erro.
 // Uso (o smoke-capped.sh já chama):
 //   DATABASE_URL=... npx ts-node --transpile-only scripts/nfce-banco.ts
 // Só roda no banco descartável do smoke: em qualquer outro, sai com erro ANTES de conectar (nada é apagado). Os cupons nunca são
 // apagados pela aplicação (o gatilho recusa DELETE): a limpeza desliga os 3 gatilhos numa transação só, apaga o que este script criou
 // (marcado com MARCA) e religa, e confere que voltaram ligados.
 import { randomUUID } from 'node:crypto';
-import { Logger } from '@nestjs/common';
+import { HttpException, Logger } from '@nestjs/common';
+import type { ConfigService } from '@nestjs/config';
 import { Prisma, PrismaClient } from '@prisma/client';
+import type { PrismaService } from '../src/common/database/prisma.service';
 import { montarChaveNfce } from '../src/common/fiscal/chave-acesso';
+import { todaySp } from '../src/common/time/dates';
+import { CupomCadastroService } from '../src/modules/cupom-fiscal/cadastro.service';
+import { cifrarCsc } from '../src/modules/cupom-fiscal/csc';
+import { CupomEmissaoService, type VendaParaCupom } from '../src/modules/cupom-fiscal/emissao.service';
+import { FRASES_EMISSAO } from '../src/modules/cupom-fiscal/frases';
+import { CLIENTE } from '../src/modules/sefaz/__tests__/certificado-teste';
+import { fixtureNfce, SefazNfceFalso } from '../src/modules/sefaz/__tests__/sefaz-nfce.falso';
+import { dhSefaz } from '../src/modules/sefaz/eventos-xml';
+import { lerRetornoAutorizacao, lerRetornoConsulta } from '../src/modules/sefaz/nfce.adapter';
+import { sefazErro } from '../src/modules/sefaz/sefaz-erro';
 
 /** O nome que o `smoke-capped.sh` dá ao banco que ele recria a cada rodada. */
 const BANCO_DO_SMOKE = 'erpfreela_smoke';
@@ -141,8 +154,13 @@ async function limpar(db: PrismaClient): Promise<void> {
     await tx.$executeRawUnsafe(`DELETE FROM nfce_cupons WHERE emitido_por_nome = '${MARCA}'`);
     for (const [t, g] of GATILHOS) await tx.$executeRawUnsafe(`ALTER TABLE ${t} ENABLE TRIGGER ${g}`);
   });
-  await db.itens_cardapio.deleteMany({ where: { nome: { startsWith: `${MARCA} ` } } });
+  // a venda "repetida" que a emissão usa para a T3 falhar (sem cupom: a importação faria igual)
+  await db.vendas.deleteMany({ where: { produto_relatorio: { startsWith: `${MARCA} ` }, nfce_cupom_id: null } });
+  await db.itens_cardapio.deleteMany({ where: { nome: { startsWith: `${MARCA} ` } } }); // e os nfce_itens deles, em cascata
   await db.itens_estoque.deleteMany({ where: { nome: { startsWith: `${MARCA} ` } } });
+  await db.nfce_perfis_fiscais.deleteMany({ where: { nome: { startsWith: `${MARCA} ` } } });
+  // ligar/desligar pela rota (feito por MARCA) e as paradas automáticas (sem autor); o smoke recria o banco a cada rodada
+  await db.nfce_ambientes_historico.deleteMany({ where: { OR: [{ feito_por_nome: MARCA }, { feito_por: null }] } });
 }
 
 async function estrutura(db: PrismaClient): Promise<void> {
@@ -329,6 +347,217 @@ async function venda(db: PrismaClient, a: Item, b: Item, insumo: string): Promis
   conferir((await db.vendas.count({ where: { nfce_cupom_id: c13 } })) === 2, 'o outro cupom continua com a venda');
 }
 
+// --- emissão (Tarefa 11): o serviço de verdade, com a porta da NFC-e e o certificado FALSOS (nunca rede) ----------------------------
+
+const SEGREDO_HARNESS = 'nfce-banco-segredo-de-teste-0123456789';
+const CSC_TESTE = 'CSCTESTE0123456789ABCDEF';
+const SERIE = 7;
+const PRIMEIRO = 41;
+const QUEM = { id: '0b8f5c2e-2222-4000-8000-0000000000bb', nome: MARCA };
+const CH_FIXTURE = '35261112345678000195650010000000121402133776';
+const DIG_FIXTURE = 'q2bBTSHNkQhO2Vb5w8Cqv6eVZaE=';
+const DH_FIXTURE = '2026-11-17T14:30:02-03:00';
+
+/** A operação recusa com este HttpException (status e code). */
+async function recusaHttp(p: Promise<unknown>, status: number, code: string, oque: string): Promise<void> {
+  try {
+    await p;
+  } catch (e) {
+    const r = e instanceof HttpException ? (e.getResponse() as { code?: string }) : null;
+    conferir(
+      e instanceof HttpException && e.getStatus() === status && r?.code === code,
+      `${oque} (veio ${e instanceof Error ? e.message : e})`,
+    );
+    return;
+  }
+  conferir(false, `${oque}: não recusou`);
+}
+
+/** Uma resposta fictícia (fixtures/nfce) com a chave e o DigestValue do pedido `base`, a hora de agora e `tpAmb` 1 (valendo). */
+function respostaDe(fixture: string, chave: string, base: string): string {
+  const dig = /<DigestValue>([^<]+)<\/DigestValue>/.exec(base)?.[1];
+  if (!dig) throw new Error('pedido sem DigestValue');
+  return fixtureNfce(fixture)
+    .replaceAll(CH_FIXTURE, chave)
+    .replaceAll(DIG_FIXTURE, dig)
+    .replaceAll(DH_FIXTURE, dhSefaz(new Date()))
+    .replaceAll('<tpAmb>2</tpAmb>', '<tpAmb>1</tpAmb>');
+}
+
+/**
+ * Emissão valendo contra o Postgres de verdade: ligar pela rota, dois `emitir` em paralelo (o `FOR UPDATE` da T1 = N e N+1), a T2 que
+ * grava `autorizado` num UPDATE só (o gatilho de imutável aceita) e a T3 com `nfce_lancar_venda` (uma venda e uma baixa por cupom; de
+ * novo = 409), a consulta num cupom autorizado (só a lista branca), a T3 que falha (venda repetida no banco: `venda_erro` gravado no
+ * autorizado) e o "Lançar de novo", o número descartado que volta (índice parcial: descartado + vivo) e a série do caixa de hoje igual à
+ * daqui (a T1 recusa sem reservar nem enviar). Devolve o emitente, os ambientes e a empresa como estavam.
+ */
+async function emissao(db: PrismaClient, a: Item): Promise<void> {
+  const conf = await db.configuracoes.findUniqueOrThrow({ where: { id: 1 } });
+  const { id: _id, ...emitente } = await db.nfce_emitente.findUniqueOrThrow({ where: { id: 1 } });
+  const ambientes = await db.nfce_ambientes.findMany();
+  try {
+    await emissaoNoBanco(db, a);
+  } finally {
+    await db.configuracoes.update({ where: { id: 1 }, data: { cnpj: conf.cnpj } });
+    await db.nfce_emitente.update({ where: { id: 1 }, data: emitente });
+    for (const { ambiente, ...resto } of ambientes) await db.nfce_ambientes.update({ where: { ambiente }, data: resto });
+  }
+}
+
+async function emissaoNoBanco(db: PrismaClient, a: Item): Promise<void> {
+  const config = {
+    get: (k: string) => (k === 'NFCE_AMBIENTE' ? 'producao' : k === 'CERTIFICADO_SECRET' ? SEGREDO_HARNESS : undefined),
+  } as unknown as ConfigService;
+  const certificados = { emUso: async () => CLIENTE };
+  const porta = new SefazNfceFalso();
+  const prisma = db as unknown as PrismaService;
+  const cadastro = new CupomCadastroService(prisma, config, certificados);
+  const svc = new CupomEmissaoService(prisma, config, certificados, porta, cadastro);
+
+  // a porta falsa responde a cada pedido com a chave e o DigestValue dele: autorizado (100), ou "não consegui falar" quando pedido
+  let proxima: 'autorizar' | 'nao_enviado' = 'autorizar';
+  porta.aoChamar = () => {
+    const ult = porta.chamadas[porta.chamadas.length - 1]!;
+    if (ult.servico === 'autorizacao') {
+      const chave = /Id="NFe([0-9A-Z]{44})"/.exec(ult.corpo)![1]!;
+      porta.respostas.push(
+        proxima === 'nao_enviado'
+          ? sefazErro('SEFAZ_REDE', false)
+          : lerRetornoAutorizacao(respostaDe('ret-autorizacao-100.xml', chave, ult.corpo)),
+      );
+    } else if (ult.servico === 'consulta') {
+      const chave = /<chNFe>([0-9A-Z]{44})<\/chNFe>/.exec(ult.corpo)![1]!;
+      const base = porta.chamadas.find((c) => c.servico === 'autorizacao' && c.corpo.includes(`Id="NFe${chave}"`))!.corpo;
+      porta.respostas.push(lerRetornoConsulta(respostaDe('ret-consulta-100.xml', chave, base)));
+    }
+  };
+
+  await db.configuracoes.update({ where: { id: 1 }, data: { cnpj: CNPJ } });
+  await db.nfce_emitente.update({
+    where: { id: 1 },
+    data: {
+      ie: '123456789012',
+      crt: 1,
+      logradouro: 'Rua das Flores',
+      numero: '10',
+      bairro: 'Centro',
+      cep: '13270000',
+      sem_outro_sistema: true,
+      series_outro_sistema: [],
+      cupom_lanca_venda: true,
+    },
+  });
+  await db.nfce_ambientes.update({
+    where: { ambiente: 'producao' },
+    data: {
+      serie: SERIE,
+      proximo_numero: BigInt(PRIMEIRO),
+      id_csc: 1,
+      csc_cifrado: cifrarCsc(CSC_TESTE, SEGREDO_HARNESS),
+      csc_dica: CSC_TESTE.slice(-4),
+      situacao: 'ok',
+      mensagem: null,
+      bloqueado_ate: null,
+      ultimo_656_em: null,
+    },
+  });
+  const perfil = await db.nfce_perfis_fiscais.create({ data: { nome: `${MARCA} Revenda`, cfop: '5102', csosn: '102' } });
+  await db.nfce_itens.upsert({
+    where: { item_cardapio_id: a.id },
+    create: { item_cardapio_id: a.id, ncm: '22030000', perfil_fiscal_id: perfil.id },
+    update: { ncm: '22030000', perfil_fiscal_id: perfil.id },
+  });
+  // ligar valendo pede um cupom autorizado e um cancelado no modo de teste (o autorizado de homologação já existe da `venda`)
+  await novoCupom(db, { ambiente: 'homologacao', serie: 1, numero: 400, situacao: 'cancelado' });
+  await svc.ligarEmissao('producao', true, true, QUEM);
+  const ligado = await db.nfce_ambientes.findUniqueOrThrow({ where: { ambiente: 'producao' } });
+  conferir(ligado.emissao_ligada && ligado.ligada_cnpj === CNPJ && ligado.ligada_serie === SERIE, 'emissão ligada valendo pela rota');
+
+  const venda = (): VendaParaCupom => ({
+    chave_idempotencia: randomUUID(),
+    itens: [{ item_cardapio_id: a.id, quantidade: '2' }],
+    desconto_centavos: 0,
+    pagamentos: [{ t_pag: '01', valor_centavos: 2400 }],
+    consumidor_doc: null,
+    total_esperado_centavos: 2400,
+  });
+  const proximoNumero = async () => (await db.nfce_ambientes.findUniqueOrThrow({ where: { ambiente: 'producao' } })).proximo_numero;
+
+  // 1. dois emitir ao mesmo tempo: o FOR UPDATE da T1 põe um atrás do outro (N e N+1, nenhum índice violado)
+  const [r1, r2] = await Promise.all([svc.emitir(venda(), QUEM), svc.emitir(venda(), QUEM)]);
+  const numeros = [r1.cupom.numero, r2.cupom.numero].sort((x, y) => x - y);
+  conferir(numeros[0] === PRIMEIRO && numeros[1] === PRIMEIRO + 1, `dois emitir em paralelo = N e N+1 (veio ${numeros.join(', ')})`);
+  conferir((await proximoNumero()) === BigInt(PRIMEIRO + 2), 'próximo número = N+2');
+  for (const r of [r1, r2]) {
+    const c = await db.nfce_cupons.findUniqueOrThrow({ where: { id: r.cupom.id } });
+    conferir(
+      r.status === 201 && c.situacao === 'autorizado' && c.n_prot === '13526000000012345' && !!c.xml_autorizado?.startsWith('<nfeProc'),
+      `T2: autorizado num UPDATE só, com protocolo e nfeProc, sob o gatilho de imutável (nº ${r.cupom.numero})`,
+    );
+    const vs = await db.vendas.findMany({ where: { nfce_cupom_id: r.cupom.id } });
+    conferir(
+      vs.length === 1 && vs[0]!.pedido === `NFC-e ${SERIE}-${r.cupom.numero}` && Number(vs[0]!.quantidade) === 2,
+      `T3: nfce_lancar_venda lançou uma venda (nº ${r.cupom.numero})`,
+    );
+    conferir(
+      (await db.movimentacoes.count({ where: { venda_id: vs[0]!.id, tipo: 'baixa_venda' } })) === 1 && r.cupom.venda_estoque === 'lancada',
+      `T3: uma baixa pelo gatilho vendas_baixa (nº ${r.cupom.numero})`,
+    );
+  }
+  await recusaHttp(svc.lancarVenda(r1.cupom.id), 409, 'NFCE_SITUACAO', 'lançar de novo a venda já lançada = 409');
+  conferir((await db.vendas.count({ where: { nfce_cupom_id: r1.cupom.id } })) === 1, 'a venda entrou uma vez só');
+
+  // 2. consulta num cupom já autorizado: só a lista branca do gatilho (nada do documento muda)
+  const c1 = await svc.consultar(r1.cupom.id, QUEM, new Date(Date.now() + 3 * 60_000));
+  conferir(
+    c1.situacao === 'autorizado' &&
+      (await db.nfce_envios.count({ where: { cupom_id: r1.cupom.id, servico: 'consulta', resultado: 'respondida' } })) === 1,
+    'consulta no autorizado: continua autorizado e o envio fica no diário',
+  );
+
+  // 3. a T3 falha (a venda "NFC-e 7-43" já está no banco: chave única de vendas) → autorizado com venda_erro; tirada a repetida, lança
+  const n3 = PRIMEIRO + 2;
+  await db.vendas.create({
+    data: { pedido: `NFC-e ${SERIE}-${n3}`, data: new Date(`${todaySp()}T00:00:00Z`), produto_relatorio: a.nome, quantidade: '1' },
+  });
+  const r3 = await svc.emitir(venda(), QUEM);
+  conferir(
+    r3.cupom.numero === n3 &&
+      r3.cupom.situacao === 'autorizado' &&
+      r3.cupom.venda_estoque === 'pendente' &&
+      r3.cupom.venda_erro === FRASES_EMISSAO.vendaErro,
+    `T3 falhou: o cupom continua autorizado, com venda_erro gravado sob o gatilho (veio ${r3.cupom.situacao}/${r3.cupom.venda_erro})`,
+  );
+  await db.vendas.deleteMany({ where: { pedido: `NFC-e ${SERIE}-${n3}`, nfce_cupom_id: null } });
+  const r3b = await svc.lancarVenda(r3.cupom.id);
+  conferir(
+    r3b.venda_estoque === 'lancada' && r3b.venda_erro === null && (await db.vendas.count({ where: { nfce_cupom_id: r3.cupom.id } })) === 1,
+    'Lançar no estoque de novo: a venda entra uma vez e o erro some',
+  );
+
+  // 4. falha antes de enviar → nao_enviado; descartado, o número vai para o próximo (descartado + vivo com o mesmo número)
+  proxima = 'nao_enviado';
+  const r4 = await svc.emitir(venda(), QUEM);
+  conferir(r4.cupom.numero === n3 + 1 && r4.cupom.situacao === 'nao_enviado', 'falha antes de enviar: nao_enviado');
+  await svc.descartar(r4.cupom.id, 'Venda desfeita', QUEM);
+  proxima = 'autorizar';
+  const r5 = await svc.emitir(venda(), QUEM);
+  conferir(r5.cupom.numero === n3 + 1 && r5.cupom.situacao === 'autorizado' && r5.cupom.id !== r4.cupom.id, 'o número descartado volta');
+  conferir((await proximoNumero()) === BigInt(n3 + 2), 'o reaproveitado não avança o próximo número');
+
+  // 5. a série daqui virou uma das do caixa de hoje (fora da rota, que recusaria): a T1 recusa sem reservar número nem chamar a porta
+  const chamadas = porta.chamadas.length;
+  const cupons = await db.nfce_cupons.count({ where: { emitido_por_nome: MARCA } });
+  await db.nfce_emitente.update({ where: { id: 1 }, data: { sem_outro_sistema: false, series_outro_sistema: [SERIE] } });
+  await recusaHttp(svc.emitir(venda(), QUEM), 422, 'NFCE_SERIE_INVALIDA', 'série do caixa de hoje igual à daqui: a T1 recusa');
+  conferir(
+    porta.chamadas.length === chamadas &&
+      (await db.nfce_cupons.count({ where: { emitido_por_nome: MARCA } })) === cupons &&
+      (await proximoNumero()) === BigInt(n3 + 2),
+    'série do caixa de hoje: nada reservado, nada enviado',
+  );
+}
+
 async function main(): Promise<void> {
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error('DATABASE_URL ausente');
@@ -354,6 +583,7 @@ async function main(): Promise<void> {
       await estrutura(db);
       await gatilhos(db, g);
       await venda(db, a, b, insumo.id);
+      await emissao(db, a);
     } finally {
       await limpar(db);
     }

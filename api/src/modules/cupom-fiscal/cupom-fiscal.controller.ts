@@ -3,15 +3,18 @@ import {
   Body,
   Controller,
   Get,
+  HttpCode,
   NotFoundException,
   Param,
   Patch,
   Post,
   Put,
   Query,
+  Res,
   type PipeTransform,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import type { FastifyReply } from 'fastify';
 import { AuthUser } from '../../common/auth/auth-user';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { AdminOnly } from '../../common/decorators/permissao.decorator';
@@ -20,12 +23,16 @@ import type { AmbienteSefaz } from '../sefaz/distribuicao.port';
 import { CupomCadastroService, type Autor } from './cadastro.service';
 import {
   AtualizarPerfilDto,
+  DescartarCupomDto,
+  EmitirCupomDto,
+  LigarEmissaoDto,
   PerfilEmLoteDto,
   PerfilFiscalDto,
   SalvarAmbienteDto,
   SalvarEmitenteDto,
   SalvarProdutoDto,
 } from './cupom-fiscal.dto';
+import { CupomEmissaoService } from './emissao.service';
 
 /** `:ambiente` só aceita os dois ambientes da SEFAZ; outro valor = 404, como o id malformado do `ParseUuidPipe`. */
 class ParseAmbientePipeImpl implements PipeTransform<string, AmbienteSefaz> {
@@ -40,16 +47,20 @@ const autor = (eu: AuthUser): Autor => ({ id: eu.id, nome: eu.nome });
 
 /**
  * Cupom fiscal (NFC-e): cadastro (situação, empresa no cupom, numeração e CSC de cada ambiente, perfis fiscais e dados do cupom dos
- * produtos). Só admin: o cupom mostra preço de venda, que a loja nunca vê. Estas rotas não falam com a SEFAZ e funcionam com o servidor
- * desligado (`NFCE_AMBIENTE` vazia). Dinheiro no fio em centavos inteiros (`*_centavos`); o CSC só entra (a resposta traz `csc_dica`).
- * Rotas estáticas antes das com parâmetro (`produtos/perfil` antes de `produtos/:itemCardapioId`).
+ * produtos) e emissão (emitir, enviar de novo, consultar, descartar, lançar a venda, testar a conexão e ligar/desligar). Só admin: o
+ * cupom mostra preço de venda, que a loja nunca vê. O cadastro não fala com a SEFAZ e funciona com o servidor desligado (`NFCE_AMBIENTE`
+ * vazia); a emissão responde 503 `NFCE_DESLIGADA` com ele desligado (menos `lancar-venda`, que não fala com a SEFAZ). Dinheiro no fio em
+ * centavos inteiros (`*_centavos`); o CSC só entra (a resposta traz `csc_dica`). Rotas estáticas antes das com parâmetro.
  */
 @ApiTags('Cupom fiscal')
 @ApiBearerAuth()
 @AdminOnly()
 @Controller('v1/cupom-fiscal')
 export class CupomFiscalController {
-  constructor(private readonly cadastro: CupomCadastroService) {}
+  constructor(
+    private readonly cadastro: CupomCadastroService,
+    private readonly emissao: CupomEmissaoService,
+  ) {}
 
   /** "Para ligar a emissão, falta:", certificado, numeração e a faixa de pendentes do ambiente do servidor. */
   @Get('situacao')
@@ -76,6 +87,64 @@ export class CupomFiscalController {
   @Put('ambientes/:ambiente')
   salvarAmbiente(@CurrentUser() eu: AuthUser, @Param('ambiente', ParseAmbientePipe) a: AmbienteSefaz, @Body() dto: SalvarAmbienteDto) {
     return this.cadastro.salvarAmbiente(a, dto, autor(eu));
+  }
+
+  /** "Ligar a emissão de cupons" / "Desligar a emissão" (só o ambiente do servidor) → a situação. Valendo, ligar pede `confirmado`. */
+  @Put('ambientes/:ambiente/emissao')
+  ligarEmissao(@CurrentUser() eu: AuthUser, @Param('ambiente', ParseAmbientePipe) a: AmbienteSefaz, @Body() dto: LigarEmissaoDto) {
+    return this.emissao.ligarEmissao(a, dto.ligada, dto.confirmado === true, autor(eu));
+  }
+
+  /** Status do serviço da SEFAZ (no máximo 1 a cada 5 min). */
+  @Post('testar-conexao')
+  @HttpCode(200)
+  testarConexao(@CurrentUser() eu: AuthUser) {
+    return this.emissao.testarConexao(autor(eu));
+  }
+
+  /** Emite: 201 com o cupom em qualquer situação final desta tentativa; 200 com o cupom já emitido pela mesma chave e o mesmo corpo. */
+  @Post('cupons')
+  async emitir(@CurrentUser() eu: AuthUser, @Body() dto: EmitirCupomDto, @Res({ passthrough: true }) res: FastifyReply) {
+    const r = await this.emissao.emitir(
+      {
+        chave_idempotencia: dto.chave_idempotencia,
+        itens: dto.itens.map((i) => ({ item_cardapio_id: i.item_cardapio_id, quantidade: i.quantidade })),
+        desconto_centavos: dto.desconto_centavos ?? 0,
+        pagamentos: dto.pagamentos.map((p) => ({ t_pag: p.t_pag, valor_centavos: p.valor_centavos })),
+        consumidor_doc: dto.consumidor_doc ?? null,
+        total_esperado_centavos: dto.total_esperado_centavos,
+      },
+      autor(eu),
+    );
+    void res.status(r.status);
+    return r.cupom;
+  }
+
+  /** "Enviar de novo": o mesmo número, a hora nova (até 3 envios). */
+  @Post('cupons/:id/reenviar')
+  @HttpCode(200)
+  reenviar(@CurrentUser() eu: AuthUser, @Param('id', ParseUuidPipe) id: string) {
+    return this.emissao.reenviar(id, autor(eu));
+  }
+
+  /** "Consultar na SEFAZ" pela chave (nunca reenvia). */
+  @Post('cupons/:id/consultar')
+  @HttpCode(200)
+  consultar(@CurrentUser() eu: AuthUser, @Param('id', ParseUuidPipe) id: string) {
+    return this.emissao.consultar(id, autor(eu));
+  }
+
+  @Post('cupons/:id/descartar')
+  @HttpCode(200)
+  descartar(@CurrentUser() eu: AuthUser, @Param('id', ParseUuidPipe) id: string, @Body() dto: DescartarCupomDto) {
+    return this.emissao.descartar(id, dto.motivo, autor(eu));
+  }
+
+  /** Refaz a venda no estoque (lançar ou tirar). Não fala com a SEFAZ: funciona com o servidor desligado. */
+  @Post('cupons/:id/lancar-venda')
+  @HttpCode(200)
+  lancarVenda(@Param('id', ParseUuidPipe) id: string) {
+    return this.emissao.lancarVenda(id);
   }
 
   @Get('perfis')

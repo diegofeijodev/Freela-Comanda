@@ -203,4 +203,23 @@ export const FRASE_ERRO = {
     'O cancelamento deste cupom já foi pedido 3 vezes. Para não bloquear o CNPJ, não sai outro pedido: fale com o contador.',
   NFCE_BLOQUEADA: FRASE_RETORNO.bloqueio656,
   NFCE_MUITAS_RECUSAS: FRASE_RETORNO.muitasRecusas,
+  // desenho §8.4 (a UX 6.2 não lista): a do desenho nomeia o produto, mas o POST não manda os preços que a tela viu, então o servidor
+  // não sabe QUAL preço mudou; a frase diz o total novo e a tela relê `GET /produtos` (Tarefa 11)
+  NFCE_TOTAL_MUDOU: (total: bigint) => `O preço de algum produto mudou. O total agora é ${reais(total)}: confira antes de emitir.`,
+  // desenho §8.4 (literal)
+  NFCE_CHAVE_REUSADA: 'Esta venda já foi enviada com outros dados. Abra o cupom emitido ou comece uma venda nova.',
+} as const;
+
+/** Emissão (Tarefa 11): o que a UX não fixa, no estilo da UX §6.3 (a das três confirmações é da UX 5.1, literal). */
+export const FRASES_EMISSAO = {
+  /** UX 5.1 (literal): ligar valendo sem as três marcações. */
+  confirmacoes: 'Marque as três confirmações.',
+  /** A venda chegou sem a chave de idempotência (só a tela gera; um uuid). */
+  chaveDaVenda: 'Esta venda chegou sem identificação. Recarregue a página e monte a venda de novo.',
+  /** Desconto e total esperado: centavos inteiros de 0 em diante. */
+  valorEmCentavos: 'Os valores da venda chegaram fora do formato. Recarregue a página e monte a venda de novo.',
+  /** vNF de R$ 200.000,00 em diante (B.3). */
+  valorMaximo: 'O total do cupom tem de ser menor que R$ 200.000,00.',
+  /** A linha "A venda deste cupom não baixou o estoque: <frase>." quando o erro não é uma recusa da função do banco. */
+  vendaErro: 'o servidor não conseguiu gravar a venda agora',
 } as const;
