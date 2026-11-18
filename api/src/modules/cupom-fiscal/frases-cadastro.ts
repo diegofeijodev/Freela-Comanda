@@ -78,6 +78,8 @@ export const FRASES_CADASTRO = {
   caractere: (rotulo: string) => `${rotulo} não confere: a SEFAZ não aceita emoji nem símbolos.`,
   email: 'Este e-mail não confere.',
   semOutroComSeries: 'Marque “nenhum outro sistema” ou informe as séries do caixa de hoje, não os dois.',
+  /** A série do caixa de hoje igual à do Comanda (num dos dois ambientes): os dois emitiriam na mesma série (539). */
+  serieDoComanda: (serie: number) => `A série ${serie} é a do Comanda. O caixa de hoje precisa usar outra série.`,
   tpRegimeIbscbs: 'O regime do IBS/CBS não confere.',
   numeroForaDaFaixa: 'O número do próximo cupom vai de 1 a 999999999.',
   /** Sem `CERTIFICADO_SECRET` o CSC não é gravado (a frase do certificado, para o código de segurança). */

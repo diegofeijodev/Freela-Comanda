@@ -290,6 +290,16 @@ describe('cadastro: série e número', () => {
     }
   });
 
+  it('trocar só a série (sem próximo número) começa a série nova no 1, sem herdar o contador da velha', async () => {
+    const m = montar();
+    await m.svc.salvarAmbiente('homologacao', { serie: 2, proximo_numero: 50 }, EU, AGORA);
+    cupom(m.t, { numero: 49, situacao: 'autorizado' });
+    const r = await m.svc.salvarAmbiente('homologacao', { serie: 3 }, EU, AGORA);
+    expect(r).toMatchObject({ serie: 3, proximo_numero: 1, ultimo_numero_usado: null });
+    expect(m.t.nfce_ambientes[0].proximo_numero).toBe(1n);
+    expect(m.t.nfce_ambientes_historico.at(-1)?.campos).toEqual(['serie', 'proximo_numero']);
+  });
+
   it('trocar a série confere o próximo número contra a série NOVA', async () => {
     const m = montar();
     await m.svc.salvarAmbiente('homologacao', { serie: 2, proximo_numero: 5 }, EU, AGORA);
@@ -724,6 +734,25 @@ describe('cadastro: empresa no cupom', () => {
     expect(m.t.nfce_emitente[0]).toMatchObject({ resp_tec_cnpj: '11222333000181', resp_tec_fone: '1932320000' });
     await m.svc.salvarEmitente({ resp_tec_cnpj: '', resp_tec_contato: '', resp_tec_email: '', resp_tec_fone: '' }, EU, AGORA);
     expect(m.t.nfce_emitente[0]).toMatchObject({ resp_tec_cnpj: null, resp_tec_contato: null, resp_tec_email: null, resp_tec_fone: null });
+  });
+
+  it('série do caixa de hoje igual à série do Comanda em qualquer ambiente → 422 (os dois emitiriam na mesma série); nada muda', async () => {
+    const m = montar();
+    await m.svc.salvarAmbiente('homologacao', { serie: 2 }, EU, AGORA);
+    await m.svc.salvarAmbiente('producao', { serie: 5 }, EU, AGORA);
+    for (const [series, serie] of [
+      [[1, 5], 5],
+      [[2], 2],
+    ] as const) {
+      expect(await erro(m.svc.salvarEmitente({ series_outro_sistema: [...series] }, EU, AGORA))).toEqual({
+        status: 422,
+        code: 'NFCE_EMITENTE_INVALIDO',
+        message: 'A série ' + serie + ' é a do Comanda. O caixa de hoje precisa usar outra série.',
+      });
+    }
+    expect(m.t.nfce_emitente[0].series_outro_sistema).toEqual([]);
+    await m.svc.salvarEmitente({ series_outro_sistema: [1, 3] }, EU, AGORA);
+    expect(m.t.nfce_emitente[0].series_outro_sistema).toEqual([1, 3]);
   });
 
   it('"quem conta no estoque": grava quem respondeu e quando; repetir a mesma resposta não troca o autor', async () => {

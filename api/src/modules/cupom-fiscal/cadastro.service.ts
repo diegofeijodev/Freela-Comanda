@@ -624,6 +624,13 @@ export class CupomCadastroService {
     const vazios = resp.filter((r) => r === null).length;
     if (vazios !== 0 && vazios !== resp.length) throw invalido(F.respTecTudoOuNada);
     if (final.sem_outro_sistema && final.series_outro_sistema.length > 0) throw invalido(F.semOutroComSeries);
+    if (muda.series_outro_sistema !== undefined) {
+      // a série do caixa de hoje não pode ser a do Comanda em nenhum ambiente (os dois emitiriam na mesma série: 539). O outro sentido
+      // (série do Comanda igual a uma do caixa de hoje) é barrado em `salvarAmbiente`.
+      const doComanda = await this.prisma.nfce_ambientes.findMany({ select: { serie: true }, orderBy: { ambiente: 'asc' } });
+      const igual = doComanda.find((a) => a.serie !== null && final.series_outro_sistema.includes(a.serie));
+      if (igual?.serie != null) throw invalido(F.serieDoComanda(igual.serie));
+    }
 
     await this.prisma.nfce_emitente.update({
       where: { id: 1 },
@@ -698,7 +705,8 @@ export class CupomCadastroService {
   /**
    * Série, próximo número, IdCSC e CSC de um ambiente. `null` ou ausente = não muda; CSC vazio = não muda (é só escrita). Formatos antes de
    * tudo (422); depois, numa transação com o ambiente travado (`FOR UPDATE`, a mesma trava da reserva do número), os pendentes da série
-   * atual (409) e o maior número usado na série que vale (422). Trocar a série com a emissão ligada desliga a emissão (§7.1).
+   * atual (409) e o maior número usado na série que vale (422). Trocar a série sem `proximo_numero` começa a série nova no 1. Trocar a
+   * série com a emissão ligada desliga a emissão (§7.1).
    */
   async salvarAmbiente(a: AmbienteSefaz, dto: SalvarAmbienteDto, autor: Autor, agora: Date = new Date()): Promise<AmbienteResposta> {
     const serie = dto.serie ?? null;
@@ -729,7 +737,8 @@ export class CupomCadastroService {
         throw new ConflictException({ code: 'NFCE_SERIE_COM_PENDENTES', message: FRASE_ERRO.NFCE_SERIE_COM_PENDENTES });
       }
       const novaSerie = trocaSerie ? serie : amb.serie;
-      const novoNumero = numero !== null ? BigInt(numero) : amb.proximo_numero;
+      // série nova sem número informado começa no 1 (UX 5.3), sem herdar o contador da velha; série já usada = 422 abaixo
+      const novoNumero = numero !== null ? BigInt(numero) : trocaSerie ? 1n : amb.proximo_numero;
       const mudaNumero = novoNumero !== amb.proximo_numero;
       if ((trocaSerie || mudaNumero) && novaSerie !== null) {
         const ultimo = await this.ultimoUsado(tx, a, novaSerie);
