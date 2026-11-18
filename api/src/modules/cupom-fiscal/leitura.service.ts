@@ -12,7 +12,7 @@ import { PrismaService } from '../../common/database/prisma.service';
 import { mascararCpf } from '../../common/fiscal/documentos';
 import { addDays, isDateString } from '../../common/time/dates';
 import type { AmbienteSefaz } from '../sefaz/distribuicao.port';
-import { lerXml, primeiro, texto } from '../sefaz/xml-leitura';
+import { elementos, lerXml, texto, xmlDoElemento, type NoXml } from '../sefaz/xml-leitura';
 import { CupomCadastroService, PENDENTES_NO_BANCO } from './cadastro.service';
 import { danfeDoNfeProc, type Danfe } from './danfe';
 import { CupomEmissaoService, paraAcoes, r409, type CupomDetalhe } from './emissao.service';
@@ -159,8 +159,10 @@ type EnvioDoCancelamento = {
  * O `procEventoNFe` do cancelamento deste cupom, montado do diário (Tarefa 13, nota 3), ou null. Só o cancelamento que a SEFAZ registrou
  * com o protocolo gravado no cupom (`cancelamento_n_prot`), conferido contra a chave e o ambiente (nunca um XML não autorizado):
  *   1. o pedido nosso que voltou 135/155: o `evento` assinado que saiu (`xml_enviado`) + o `retEvento` da resposta dele;
- *   2. senão (o cancelamento que a consulta confirmou), o `procEventoNFe` que a SEFAZ mandou na consulta, como veio (com o namespace da
- *      NF-e posto na raiz, que lá ele herdava do `retConsSitNFe`).
+ *   2. senão (o cancelamento que a consulta confirmou), o `procEventoNFe` que a SEFAZ mandou na consulta.
+ * Os retornos são lidos pelo leitor de XML do projeto (`lerXml`), pelo nome local: com ou sem prefixo de namespace (`ns2:retEvento`),
+ * como o adaptador e o cancelamento os aceitam. O pedaço volta a texto com as declarações de namespace que usa (`xmlDoElemento`).
+ * Retorno ilegível = nada (quem chama avisa: o cupom nunca some calado).
  */
 export function procEventoDoCancelamento(
   c: Pick<nfce_cupons, 'chave' | 'ambiente' | 'cancelamento_n_prot'>,
@@ -170,29 +172,42 @@ export function procEventoDoCancelamento(
   if (nProt === null) return null;
   for (const e of envios) {
     if (e.servico !== 'cancelamento' || e.c_stat === null || !EVENTO_REGISTRADO.has(e.c_stat) || e.n_prot !== nProt) continue;
-    const ret = e.xml_retorno === null ? null : (/<retEvento[\s>][\s\S]*?<\/retEvento>/.exec(e.xml_retorno)?.[0] ?? null);
-    if (e.xml_enviado === null || ret === null) continue;
-    const proc = `<procEventoNFe xmlns="${NS_NFE}" versao="1.00">${e.xml_enviado}${ret}</procEventoNFe>`;
-    if (eventoDoCupom(proc, c, nProt)) return proc;
+    if (e.xml_enviado === null || e.xml_retorno === null) continue;
+    for (const ret of elementosDoXml(e.xml_retorno, 'retEvento')) {
+      const proc = `<procEventoNFe xmlns="${NS_NFE}" versao="1.00">${e.xml_enviado}${xmlDoElemento(ret)}</procEventoNFe>`;
+      if (eventoDoCupom(proc, c, nProt)) return proc;
+    }
   }
   for (const e of envios) {
     if (e.servico !== 'consulta' || e.xml_retorno === null) continue;
-    for (const m of e.xml_retorno.matchAll(/<procEventoNFe[\s>][\s\S]*?<\/procEventoNFe>/g)) {
-      const abre = m[0].slice(0, m[0].indexOf('>'));
-      const proc = /\sxmlns=/.test(abre) ? m[0] : `<procEventoNFe xmlns="${NS_NFE}"${m[0].slice('<procEventoNFe'.length)}`;
+    for (const p of elementosDoXml(e.xml_retorno, 'procEventoNFe')) {
+      const proc = xmlDoElemento(p);
       if (eventoDoCupom(proc, c, nProt)) return proc;
     }
   }
   return null;
 }
 
-/** O `procEventoNFe` é XML legível da NF-e, com o evento 110111 desta chave e o registro (135/155) deste protocolo e deste ambiente. */
+/** Os elementos `nomeLocal` (com ou sem prefixo) de um XML guardado no diário; ilegível = nenhum. */
+function elementosDoXml(xml: string, nomeLocal: string): NoXml[] {
+  try {
+    return elementos(lerXml(xml), nomeLocal);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * O `procEventoNFe` é XML legível da NF-e: na raiz, o `evento` 110111 desta chave e o `retEvento` com o registro (135/155) deste
+ * protocolo e deste ambiente, os dois no namespace da NF-e.
+ */
 function eventoDoCupom(proc: string, c: Pick<nfce_cupons, 'chave' | 'ambiente'>, nProt: string): boolean {
   try {
-    const doc = lerXml(proc);
-    if (doc.documentElement?.localName !== 'procEventoNFe' || doc.documentElement.namespaceURI !== NS_NFE) return false;
-    const evento = primeiro(doc, 'evento');
-    const ret = primeiro(doc, 'retEvento');
+    const raiz = lerXml(proc).documentElement;
+    if (raiz === null || raiz.localName !== 'procEventoNFe' || raiz.namespaceURI !== NS_NFE) return false;
+    const filho = (nome: string) => elementos(raiz, nome).find((e) => e.parentNode === raiz && e.namespaceURI === NS_NFE) ?? null;
+    const evento = filho('evento');
+    const ret = filho('retEvento');
     if (evento === null || ret === null) return false;
     return (
       texto(evento, 'tpEvento') === '110111' &&
@@ -230,6 +245,9 @@ function motivoNaoUsado(c: { situacao: string; numero_reaproveitavel: boolean; c
       return M.semResposta;
   }
 }
+
+/** Uma linha de `numeros-nao-usados.csv`. */
+type LinhaDoCsv = { serie: number; numero: bigint; motivo: string };
 
 /** Campo de CSV com `;` (o Excel em português): entre aspas se tiver `;`, aspas ou quebra de linha. */
 const campoCsv = (s: string) => (/[;"\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);
@@ -407,7 +425,7 @@ export class CupomLeituraService {
     if (c.situacao !== 'cancelado') throw await this.semArquivo(c, 'baixar_xml_cancelamento', agora);
     const xml = procEventoDoCancelamento(c, await this.enviosDoCancelamento([id]));
     if (xml === null) {
-      this.semCancelamento(c);
+      this.semArquivoNoDiario(c, 'cancelamento_sem_arquivo');
       throw new NotFoundException({ code: 'NOT_FOUND', message: FRASES_LEITURA.semArquivoDoCancelamento });
     }
     return { nome, xml };
@@ -419,6 +437,8 @@ export class CupomLeituraService {
    * O zip do mês para o contador (desenho §7.4; UX 4.6), dos cupons emitidos no mês (o `dhEmi`, em Brasília): o `nfeProc` de cada
    * autorizado, cancelando, denegado e cancelado, como foi guardado (`NFCe-<chave>.xml`), o `procEventoNFe` de cada cancelamento
    * (`NFCe-<chave>-cancelamento.xml`) e `numeros-nao-usados.csv` (desenho §4.3: série, número e motivo dos números que não viraram cupom).
+   * O documento cujo arquivo não está guardado ou não se remonta (o cancelamento sem o `procEventoNFe`) nunca some calado: entra no csv
+   * com o aviso, e o zip ganha o `AVISOS.txt` com esses casos (rodada de correção 1).
    */
   async xmlDoMes(mes: string, ambiente?: AmbienteSefaz, agora: Date = new Date()): Promise<{ nome: string; zip: Buffer }> {
     if (!MES.test(mes)) throw invalido('mes deve ser AAAA-MM');
@@ -443,28 +463,46 @@ export class CupomLeituraService {
     });
     const envios = await this.enviosDoCancelamento(cupons.filter((c) => c.situacao === 'cancelado').map((c) => c.id));
     const arquivos: { nome: string; dados: Buffer }[] = [];
+    // Rodada de correção 1 (I1): o documento cujo arquivo falta nunca some calado; vai para o csv e para o AVISOS.txt
+    const avisos: LinhaDoCsv[] = [];
     for (const c of cupons) {
-      if (!DOCUMENTO.includes(c.situacao) || c.xml_autorizado === null) continue;
-      arquivos.push({ nome: `NFCe-${c.chave}.xml`, dados: Buffer.from(c.xml_autorizado, 'utf8') });
+      if (!DOCUMENTO.includes(c.situacao)) continue;
+      if (c.xml_autorizado === null) {
+        this.semArquivoNoDiario(c, 'documento_sem_arquivo');
+        avisos.push({ serie: c.serie, numero: c.numero, motivo: FRASES_LEITURA.aviso.cupomIndisponivel(c.situacao as SituacaoCupom) });
+      } else {
+        arquivos.push({ nome: `NFCe-${c.chave}.xml`, dados: Buffer.from(c.xml_autorizado, 'utf8') });
+      }
       if (c.situacao !== 'cancelado') continue;
       const proc = procEventoDoCancelamento(
         c,
         envios.filter((e) => e.cupom_id === c.id),
       );
-      if (proc === null) this.semCancelamento(c);
-      else arquivos.push({ nome: `NFCe-${c.chave}-cancelamento.xml`, dados: Buffer.from(proc, 'utf8') });
+      if (proc !== null) {
+        arquivos.push({ nome: `NFCe-${c.chave}-cancelamento.xml`, dados: Buffer.from(proc, 'utf8') });
+        continue;
+      }
+      this.semArquivoNoDiario(c, 'cancelamento_sem_arquivo');
+      avisos.push({ serie: c.serie, numero: c.numero, motivo: FRASES_LEITURA.aviso.cancelamentoIndisponivel });
     }
-    arquivos.push({ nome: 'numeros-nao-usados.csv', dados: Buffer.from(await this.naoUsados(a, cupons), 'utf8') });
+    const csv = await this.naoUsados(a, cupons, avisos);
+    if (avisos.length > 0) {
+      const texto = [FRASES_LEITURA.aviso.titulo(mes, a), ...avisos.map((v) => FRASES_LEITURA.aviso.linha(v.serie, v.numero, v.motivo))];
+      arquivos.unshift({ nome: 'AVISOS.txt', dados: Buffer.from(`\ufeff${texto.join('\r\n')}\r\n`, 'utf8') });
+    }
+    arquivos.push({ nome: 'numeros-nao-usados.csv', dados: Buffer.from(csv, 'utf8') });
     return { nome: a === 'producao' ? `cupons-${mes}.zip` : `cupons-de-teste-${mes}.zip`, zip: zipSemCompressao(arquivos, agora) };
   }
 
   /**
    * `numeros-nao-usados.csv`: cada número dos cupons do mês que não é de nenhum documento fiscal (nem de um cupom de outro mês, quando o
-   * número descartado foi reaproveitado depois), com o motivo do cupom mais novo com ele. Com BOM, para o Excel ler os acentos.
+   * número descartado foi reaproveitado depois), com o motivo do cupom mais novo com ele, mais os `avisos` (documento cujo arquivo falta).
+   * Em ordem de série e número; com BOM, para o Excel ler os acentos.
    */
   private async naoUsados(
     a: AmbienteSefaz,
     cupons: { id: string; serie: number; numero: bigint; situacao: string; numero_reaproveitavel: boolean; c_stat: number | null }[],
+    avisos: LinhaDoCsv[],
   ): Promise<string> {
     const chave = (c: { serie: number; numero: bigint }) => `${c.serie}-${c.numero}`;
     const usados = new Set(cupons.filter((c) => DOCUMENTO.includes(c.situacao)).map(chave));
@@ -491,8 +529,12 @@ export class CupomLeituraService {
             })
           ).map((e) => e.cupom_id),
     );
-    const linhas = [...porNumero.values()].map((c) => `${c.serie};${c.numero};${campoCsv(motivoNaoUsado(c, com539.has(c.id)))}`);
-    return `\ufeff${['serie;numero;motivo', ...linhas].join('\n')}\n`;
+    const linhas: LinhaDoCsv[] = [
+      ...[...porNumero.values()].map((c) => ({ serie: c.serie, numero: c.numero, motivo: motivoNaoUsado(c, com539.has(c.id)) })),
+      ...avisos,
+    ].sort((x, y) => x.serie - y.serie || (x.numero < y.numero ? -1 : x.numero > y.numero ? 1 : 0));
+    const texto = linhas.map((l) => `${l.serie};${l.numero};${campoCsv(l.motivo)}`);
+    return `\ufeff${['serie;numero;motivo', ...texto].join('\n')}\n`;
   }
 
   /** Os pedidos de cancelamento e as consultas respondidas destes cupons, do mais novo para o mais velho. */
@@ -505,12 +547,15 @@ export class CupomLeituraService {
     });
   }
 
-  /** O cupom cancelado sem o arquivo do cancelamento: alerta no log (série e número; nunca chave, CPF ou XML). */
-  private semCancelamento(c: Pick<nfce_cupons, 'ambiente' | 'serie' | 'numero'>): void {
+  /** O documento sem o arquivo do cupom ou do cancelamento: alerta no log (série e número; nunca chave, CPF ou XML). */
+  private semArquivoNoDiario(
+    c: Pick<nfce_cupons, 'ambiente' | 'serie' | 'numero'>,
+    alerta: 'cancelamento_sem_arquivo' | 'documento_sem_arquivo',
+  ): void {
     this.logger.error(
       JSON.stringify({
         evento: 'nfce.leitura',
-        alerta: 'cancelamento_sem_arquivo',
+        alerta,
         ambiente: c.ambiente,
         serie: c.serie,
         numero: Number(c.numero),

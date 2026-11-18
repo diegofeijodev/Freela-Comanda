@@ -245,6 +245,14 @@ export const FRASES_EMISSAO = {
   vendaErro: 'o servidor não conseguiu gravar a venda agora',
 } as const;
 
+/** Rótulo do documento fiscal, como a tag da UX 3.1, em minúscula. */
+const ROTULO_DOCUMENTO: Partial<Record<SituacaoCupom, string>> = {
+  autorizado: 'autorizado',
+  cancelando: 'cancelando',
+  denegado: 'uso negado',
+  cancelado: 'cancelado',
+};
+
 /**
  * Leitura (Tarefa 13): o que a UX não fixa, no estilo da UX §6.3. Os motivos vão na coluna "motivo" de `numeros-nao-usados.csv` (o
  * arquivo do mês para o contador, desenho §4.3 e §7.4): por que o número da série não virou cupom.
@@ -252,6 +260,16 @@ export const FRASES_EMISSAO = {
 export const FRASES_LEITURA = {
   /** O cupom cancelado sem o arquivo do cancelamento no diário (não deve acontecer: o `cancelado` só nasce do evento conferido). */
   semArquivoDoCancelamento: 'O arquivo do cancelamento deste cupom não ficou guardado. Fale com o suporte do Freela Comanda.',
+  /** O documento do mês cujo arquivo falta (rodada de correção 1): a linha do csv e o `AVISOS.txt` do zip. */
+  aviso: {
+    /** Decisão do controlador (literal). */
+    cancelamentoIndisponivel: 'cancelado — comprovante do cancelamento indisponível, peça ao suporte',
+    /** O mesmo molde, para o documento sem o próprio arquivo (o rótulo é o da tag da UX 3.1). */
+    cupomIndisponivel: (s: SituacaoCupom) => `${ROTULO_DOCUMENTO[s] ?? s} — arquivo do cupom indisponível, peça ao suporte`,
+    titulo: (mes: string, ambiente: AmbienteSefaz) =>
+      `Cupons de ${mes.slice(5, 7)}/${mes.slice(0, 4)} (${ambiente === 'producao' ? 'valendo' : 'modo de teste'}) com arquivo faltando neste zip. Fale com o suporte do Freela Comanda antes de mandar ao contador:`,
+    linha: (serie: number, numero: number | bigint, motivo: string) => `Série ${serie}, nº ${numero}: ${motivo}.`,
+  },
   naoUsado: {
     semResposta: 'Enviado à SEFAZ sem resposta: só a consulta diz se o número foi usado.',
     outraNota: 'A SEFAZ diz que outra nota já usa este número (código 539).',

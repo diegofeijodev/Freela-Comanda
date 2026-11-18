@@ -1,5 +1,5 @@
 import { gunzipSync } from 'node:zlib';
-import { DOMParser } from '@xmldom/xmldom';
+import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
 import type { Document, Element } from '@xmldom/xmldom';
 
 // Único arquivo que importa '@xmldom/xmldom' (versão exata no package.json). Lê XML de fontes externas (SEFAZ) sem expandir
@@ -44,6 +44,14 @@ export function elementos(raiz: Document | NoXml, nomeLocal: string): NoXml[] {
 
 export function primeiro(raiz: Document | NoXml, nomeLocal: string): NoXml | null {
   return elementos(raiz, nomeLocal)[0] ?? null;
+}
+
+/**
+ * Um elemento já lido, de volta a texto, com as declarações de namespace que ele usa postas nele (o prefixo `ns2:` declarado num
+ * ancestral vai junto): serve para remontar um documento com um pedaço de outro (o `retEvento` dentro do `procEventoNFe`).
+ */
+export function xmlDoElemento(no: NoXml): string {
+  return new XMLSerializer().serializeToString(no);
 }
 
 export function texto(raiz: Document | NoXml, nomeLocal: string): string | null {

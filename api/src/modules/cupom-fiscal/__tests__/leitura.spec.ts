@@ -19,7 +19,7 @@ import { cifrarCsc } from '../csc';
 import { danfeDoNfeProc } from '../danfe';
 import { CupomEmissaoService, type VendaParaCupom } from '../emissao.service';
 import { FRASE_ERRO, FRASES_LEITURA } from '../frases';
-import { CupomLeituraService, filtroDaLista } from '../leitura.service';
+import { CupomLeituraService, filtroDaLista, procEventoDoCancelamento } from '../leitura.service';
 import { XPROD_HOMOLOGACAO } from '../montagem-xml';
 import { URL_CHAVE, URL_QR } from '../qrcode-nfce';
 import { zipSemCompressao } from '../zip';
@@ -158,9 +158,9 @@ const aut =
   (corpo) =>
     lerRetornoAutorizacao(trocar(fixtureNfce(nome), corpo, dh, a));
 const ev =
-  (nome: string, dh: Date, a: Amb = 'producao'): Resposta =>
+  (nome: string, dh: Date, a: Amb = 'producao', mexer: (x: string) => string = (x) => x): Resposta =>
   (corpo) =>
-    lerRetornoEvento(trocar(fixtureNfce(nome), corpo, dh, a));
+    lerRetornoEvento(mexer(trocar(fixtureNfce(nome), corpo, dh, a)));
 const cons =
   (m: M, dh: Date, a: Amb = 'producao', mexer: (x: string) => string = (x) => x): Resposta =>
   (corpo) => {
@@ -169,6 +169,18 @@ const cons =
     return lerRetornoConsulta(mexer(trocar(fixtureNfce('ret-consulta-cancelada.xml'), base, dh, a)));
   };
 const semResposta: Resposta = () => sefazErro('SEFAZ_TEMPO', true);
+/**
+ * O retorno com prefixo de namespace: `<ns2:raiz xmlns:ns2="…/nfe">` e cada marca de dentro com `ns2:` (a `Signature` do evento fica no
+ * namespace dela, sem prefixo). O adaptador e o cancelamento aceitam esse formato; a leitura tem de remontar o cancelamento dele também.
+ */
+const comPrefixo = (raiz: string) => (x: string) =>
+  x.replace(new RegExp(`<${raiz} xmlns="${NS}"[\\s\\S]*</${raiz}>`), (bloco) =>
+    bloco
+      .replace(` xmlns="${NS}"`, ` xmlns:ns2="${NS}"`)
+      .split(/(<Signature[\s\S]*?<\/Signature>)/)
+      .map((parte, i) => (i % 2 === 1 ? parte : parte.replace(/<(\/?)([A-Za-z][\w.-]*)(?=[\s>/])/g, '<$1ns2:$2')))
+      .join(''),
+  );
 
 function responder(m: M, ...fila: Resposta[]) {
   m.porta.aoChamar = () => {
@@ -708,9 +720,9 @@ describe('XML do mês para o contador (GET xml-do-mes)', () => {
     // o nfeProc vai como está guardado (é o documento fiscal: o CPF do consumidor fica dentro dele)
     expect(de(`NFCe-${ids[0].chave}.xml`)).toBe(ids[0].xml_autorizado);
     for (const c of ids.slice(1)) {
-      const x = de(`NFCe-${c.chave}-cancelamento.xml`);
-      expect(x.startsWith(`<procEventoNFe xmlns="${NS}" versao="1.00">`)).toBe(true);
-      const ret = primeiro(lerXml(x), 'retEvento')!;
+      const doc = lerXml(de(`NFCe-${c.chave}-cancelamento.xml`));
+      expect([doc.documentElement?.localName, doc.documentElement?.namespaceURI]).toEqual(['procEventoNFe', NS]);
+      const ret = primeiro(doc, 'retEvento')!;
       expect([texto(ret, 'chNFe'), texto(ret, 'nProt'), texto(ret, 'cStat')]).toEqual([c.chave, c.cancelamento_n_prot, '135']);
     }
     // o csv: série, número e motivo dos números que não viraram cupom (o 50 foi reaproveitado; outubro não entra)
@@ -726,6 +738,77 @@ describe('XML do mês para o contador (GET xml-do-mes)', () => {
       `2;55;${M.notaSemArquivo}`,
     ]);
     expect(csv).not.toContain(CPF);
+  });
+
+  it('retorno do pedido com prefixo de namespace (ns2:retEnvEvento): o procEventoNFe se remonta pelo nome local, sem aviso', async () => {
+    const m = montar();
+    await pronto(m, 'producao');
+    const id = await emitido(m, 'producao', T0);
+    responder(m, ev('ret-evento-135.xml', mais(T0, 5 * MIN), 'producao', comPrefixo('retEnvEvento')));
+    expect((await m.cancelamento.cancelar(id, MOTIVO, EU, mais(T0, 5 * MIN))).situacao).toBe('cancelado');
+    const pedido = m.t.nfce_envios.find((e) => e.cupom_id === id && e.servico === 'cancelamento')!;
+    expect(pedido.xml_retorno).toContain('<ns2:retEvento ');
+    const c = cupomDe(m.t, id);
+    const { xml } = await m.leitura.xml(id, 'cancelamento', mais(T0, 6 * MIN));
+    expect(xml.startsWith(`<procEventoNFe xmlns="${NS}" versao="1.00">${pedido.xml_enviado}<ns2:retEvento `)).toBe(true);
+    const doc = lerXml(xml);
+    const ret = primeiro(doc, 'retEvento')!;
+    expect(ret.namespaceURI).toBe(NS);
+    expect([texto(ret, 'chNFe'), texto(ret, 'tpAmb'), texto(ret, 'nProt'), texto(ret, 'cStat')]).toEqual([
+      c.chave,
+      '1',
+      c.cancelamento_n_prot,
+      '135',
+    ]);
+    const nomes = lerZip((await m.leitura.xmlDoMes('2026-11', undefined, mais(T0, 6 * MIN))).zip).map((a) => a.nome);
+    expect(nomes.sort()).toEqual([`NFCe-${c.chave}-cancelamento.xml`, `NFCe-${c.chave}.xml`, 'numeros-nao-usados.csv'].sort());
+  });
+
+  it('procEventoNFe da consulta com prefixo de namespace (ns2:retConsSitNFe): remonta com o namespace declarado na raiz', () => {
+    // a consulta com prefixo hoje não chega a gravar `cancelado` (o adaptador recusa o protNFe com prefixo); a leitura aceita assim mesmo
+    const x = comPrefixo('retConsSitNFe')(fixtureNfce('ret-consulta-cancelada.xml'));
+    const retorno = x.slice(x.indexOf('<ns2:retConsSitNFe'), x.indexOf('</ns2:retConsSitNFe>') + '</ns2:retConsSitNFe>'.length);
+    const c = { chave: CH_FIXTURE, ambiente: 'homologacao', cancelamento_n_prot: '13526000000067890' };
+    const envio = { servico: 'consulta', c_stat: 100, n_prot: '13526000000012345', xml_enviado: null, xml_retorno: retorno };
+    const proc = procEventoDoCancelamento(c, [envio])!;
+    expect(proc).not.toBeNull();
+    const doc = lerXml(proc);
+    expect([doc.documentElement?.localName, doc.documentElement?.namespaceURI]).toEqual(['procEventoNFe', NS]);
+    expect(texto(primeiro(doc, 'retEvento')!, 'nProt')).toBe('13526000000067890');
+    expect(elementos(doc, 'Signature')).toHaveLength(1);
+    // outro protocolo, outra chave ou outro ambiente: nada
+    expect(procEventoDoCancelamento({ ...c, cancelamento_n_prot: '13526000000099999' }, [envio])).toBeNull();
+    expect(procEventoDoCancelamento({ ...c, ambiente: 'producao' }, [envio])).toBeNull();
+    expect(
+      procEventoDoCancelamento(c, [{ ...envio, xml_retorno: retorno.replaceAll(CH_FIXTURE, CH_FIXTURE.replace(/.$/, '7')) }]),
+    ).toBeNull();
+  });
+
+  it('cancelado com o retorno ilegível e documento sem o arquivo: nunca somem calados (linha no csv e AVISOS.txt)', async () => {
+    const m = montar();
+    await pronto(m, 'producao');
+    const id = await emitido(m, 'producao', T0);
+    responder(m, ev('ret-evento-135.xml', mais(T0, 5 * MIN)));
+    await m.cancelamento.cancelar(id, MOTIVO, EU, mais(T0, 5 * MIN));
+    m.t.nfce_envios.find((e) => e.cupom_id === id && e.servico === 'cancelamento')!.xml_retorno = '<retEnvEvento><retEvento>cortado';
+    // documento sem o nfeProc (não deve acontecer: o arquivo é gravado junto com o protocolo)
+    semear(m.t, { numero: 40, situacao: 'autorizado', dh_emi: T0 });
+    const c = cupomDe(m.t, id);
+    const arquivos = lerZip((await m.leitura.xmlDoMes('2026-11', undefined, mais(T0, 6 * MIN))).zip);
+    expect(arquivos.map((a) => a.nome).sort()).toEqual(['AVISOS.txt', `NFCe-${c.chave}.xml`, 'numeros-nao-usados.csv'].sort());
+    const de = (nome: string) => arquivos.find((a) => a.nome === nome)!.dados.toString('utf8');
+    expect(de('numeros-nao-usados.csv').replace('\ufeff', '').trim().split('\n').slice(1)).toEqual([
+      '2;1;cancelado — comprovante do cancelamento indisponível, peça ao suporte',
+      '2;40;autorizado — arquivo do cupom indisponível, peça ao suporte',
+    ]);
+    const avisos = de('AVISOS.txt');
+    expect(avisos).toContain('11/2026');
+    expect(avisos).toContain('Série 2, nº 1: cancelado — comprovante do cancelamento indisponível, peça ao suporte.');
+    expect(avisos).toContain('Série 2, nº 40: autorizado — arquivo do cupom indisponível, peça ao suporte.');
+    // a rota do arquivo diz o mesmo (404 com frase), e o log tem o alerta sem a chave
+    expect(await falha(m.leitura.xml(id, 'cancelamento', mais(T0, 6 * MIN)))).toMatchObject({ status: 404 });
+    expect(logs.filter((l) => l.includes('sem_arquivo')).length).toBeGreaterThanOrEqual(2);
+    expect(logs.join('\n')).not.toContain(c.chave);
   });
 
   it('mês sem cupom = zip só com o csv (cabeçalho); homologação tem nome próprio; com o servidor desligado vale producao', async () => {
