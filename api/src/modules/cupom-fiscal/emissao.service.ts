@@ -71,10 +71,12 @@ import {
   acaoAutorizacao,
   acaoConsulta,
   acaoStatus,
+  atalhoDaRecusa,
   mensagemDoAmbiente,
   motivoSefaz,
   relogioDiverge,
   type AcaoRetorno,
+  type Atalho,
   type ContextoRetorno,
   type Recusa,
 } from './retornos';
@@ -167,6 +169,11 @@ export interface CupomDetalhe {
   acoes: AcaoCupom[];
   /** O que a SEFAZ disse na última chamada respondida deste cupom (código, família, frase da UX 6.1 e o `xMotivo`), se não foi sucesso. */
   recusa: Recusa | null;
+  /**
+   * O atalho que conserta a `recusa` (UX 6.1; Ruling T14 I2), calculado em `retornos.ts` junto da frase: a tela só mostra o que vier,
+   * sem tabela de códigos. null = nenhum (a frase diz o que fazer).
+   */
+  atalho: Atalho | null;
   /**
    * A frase da situação: a da `recusa` ou, sem ela, a da UX 6.1 para "não saiu" / "sem resposta" (nota 10 do controlador) e a da UX 3.1
    * para o `cancelando` (Tarefa 13).
@@ -1017,6 +1024,7 @@ export class CupomEmissaoService {
       cancelar_ate,
       acoes,
       recusa,
+      atalho: atalhoDaRecusa(recusa),
       mensagem,
     };
   }

@@ -105,6 +105,39 @@ export function relogioDiverge(dhRecbto: string, agora: Date): boolean {
 
 const mais = (d: Date, ms: number) => new Date(d.getTime() + ms);
 
+/**
+ * O atalho da tela que conserta a recusa (UX 6.1, coluna "Ação na tela"; Ruling T14 I2: o servidor decide, a tela não classifica por
+ * código): `certificado` = o certificado digital em Configurações; `csc` = o código de segurança (CSC) e o IdCSC em Configurações →
+ * Cupom fiscal; `produtos` = "Corrigir os produtos" (a aba Produtos com os produtos do cupom); `perfil` = reservado (o controlador define o
+ * que ele abre; hoje nenhum código o produz).
+ */
+export type Atalho = 'certificado' | 'csc' | 'perfil' | 'produtos';
+
+/**
+ * O atalho da recusa da AUTORIZAÇÃO ou da CONSULTA (as do diário que o cupom mostra; a do cancelamento fica no diálogo), pelo MESMO
+ * caminho que escolhe a frase (`efeitoNoAmbiente` e `acaoPeloCodigo`), para frase e atalho não se desencontrarem:
+ *   - certificado (213, 280–286, 290–298; chega como `nao_enviado`, ou fica na consulta) → `certificado`;
+ *   - QR (394, 395; a frase manda conferir o CSC e o IdCSC) → `csc`;
+ *   - família produto e a "sem família" (`recusaOutra`: "se ela falar de um produto, confira os produtos") → `produtos`;
+ *   - sem atalho: 656 (bloqueio), 781 (credenciamento: o contador), esquema e lote (erro do sistema), autorizado, denegado (o contador),
+ *     108/109 (fora do ar), os 1xx e o 999 (sem resposta), 204 (só a consulta), 539 (só Descartar), 373 (erro do sistema), 704 (Enviar
+ *     de novo), consumidor e valores (Descartar) e a família empresa (o atalho `perfil` ainda não foi definido).
+ */
+export function atalhoDaRecusa(r: Pick<Recusa, 'codigo'> | null): Atalho | null {
+  if (r === null) return null;
+  const c = r.codigo;
+  // efeitoNoAmbiente, na mesma ordem
+  if (c === 656 || c === 781) return null;
+  if (certificado(c)) return 'certificado';
+  if (ESQUEMA_E_LOTE.has(c)) return null;
+  // acaoPeloCodigo, na mesma ordem
+  if (AUTORIZADO.has(c) || DENEGADO.has(c) || FORA_DO_AR.has(c) || c < 200 || c === NAO_CATALOGADO) return null;
+  if (c === 204 || c === 539 || c === NOME_HOMOLOGACAO) return null;
+  if (QR.has(c)) return 'csc';
+  const f = familiaDoCodigo(c);
+  return f === 'produto' || f === 'outra' ? 'produtos' : null;
+}
+
 function recusaDe(codigo: number, xMotivo: string | null | undefined, frase: (motivo: string) => string): Recusa {
   const x_motivo = motivoSefaz(xMotivo);
   return { codigo, familia: familiaDoCodigo(codigo), frase: frase(x_motivo), x_motivo };

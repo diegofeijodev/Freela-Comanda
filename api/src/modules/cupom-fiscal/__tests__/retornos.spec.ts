@@ -8,12 +8,14 @@ import {
   acaoCancelamento,
   acaoConsulta,
   acaoStatus,
+  atalhoDaRecusa,
   familiaDoCodigo,
   motivoSefaz,
   mensagemDoAmbiente,
   relogioDiverge,
   type AcaoRetorno,
   type AcaoStatus,
+  type Atalho,
   type ContextoRetorno,
   type Familia,
   type Recusa,
@@ -777,5 +779,46 @@ describe('frases.ts = UX §6.1 e §6.2, literais', () => {
 
   it('hora em Brasília também com TZ=UTC (14h05, nunca 17h05)', () => {
     expect(F.autorizado(new Date('2026-11-17T17:05:31Z'), '135260000000012')).toBe('Autorizado às 14h05 · protocolo 135260000000012');
+  });
+});
+
+describe('atalhoDaRecusa (Ruling T14 I2): o atalho sai do mesmo caminho que escolhe a frase', () => {
+  const consulta = (cStat: number): RespostaConsulta => ({
+    cStat,
+    xMotivo: `Rejeição: consulta ${cStat}`,
+    protocolo: null,
+    cancelamento: null,
+    xmlRetorno: '<retConsSitNFe/>',
+  });
+
+  it.each<[string, RespostaAutorizacao, SituacaoCupom, string, Atalho | null]>([
+    ['285 certificado (chega como nao_enviado)', aut(285), 'nao_enviado', U.certificado285, 'certificado'],
+    ['225 esquema (chega como nao_enviado): erro do sistema', lote(225), 'nao_enviado', U.sistema225, null],
+    ['394 QR: o CSC e o IdCSC', aut(394), 'rejeitado', U.qr394Teste, 'csc'],
+    ['373 nome do 1º item em homologação: erro do sistema', aut(373), 'rejeitado', FRASE_RETORNO.erroDoSistema(373), null],
+    ['386 família produto', aut(386), 'rejeitado', U.produto, 'produtos'],
+    ['600 sem família ("se ela falar de um produto, confira os produtos")', aut(600), 'rejeitado', U.outra600, 'produtos'],
+    ['539 série em uso: só Descartar', aut(539), 'rejeitado', U.serie539, null],
+    ['704 hora: Enviar de novo', aut(704), 'rejeitado', U.hora704, null],
+    ['786 consumidor: Descartar e refazer', aut(786), 'rejeitado', U.consumidor, null],
+    ['780 valores: Descartar', aut(780), 'rejeitado', U.valores780, null],
+    ['108 fora do ar', lote(108), 'nao_enviado', U.foraDoAr108, null],
+    ['204 duplicidade: só a consulta', aut(204), 'sem_resposta', U.jaTem, null],
+    ['110 uso negado: fale com o contador', aut(110, { xMotivo: 'motivo 110.' }), 'denegado', U.denegado110, null],
+    ['656 bloqueio', lote(656), 'nao_enviado', U.bloqueio15h10, null],
+    ['781 credenciamento: com o contador', lote(781), 'nao_enviado', U.credenciada781, null],
+  ])('%s', (_n, r, cupom, frase, atalho) => {
+    const a = acaoAutorizacao(r, ctx());
+    expect(a.cupom).toBe(cupom);
+    expect(a.recusa?.frase).toBe(frase);
+    expect(atalhoDaRecusa(a.recusa)).toBe(atalho);
+  });
+
+  it('certificado na consulta (o cupom fica sem resposta) também leva ao certificado; sem recusa, sem atalho', () => {
+    const a = acaoConsulta(consulta(285), 'sem_resposta', ctx());
+    expect(a).toMatchObject({ cupom: 'sem_resposta', recusa: { frase: U.certificado285 } });
+    expect(atalhoDaRecusa(a.recusa)).toBe('certificado');
+    expect(atalhoDaRecusa(acaoAutorizacao(aut(100), ctx()).recusa)).toBeNull();
+    expect(atalhoDaRecusa(null)).toBeNull();
   });
 });
