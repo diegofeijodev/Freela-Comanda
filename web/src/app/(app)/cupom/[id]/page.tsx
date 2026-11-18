@@ -87,7 +87,8 @@ export default function CupomPage() {
   // relógio do servidor, andando aqui (o celular com o relógio errado não habilita nada antes da hora)
   const [desvio, setDesvio] = useState(0);
   const [, setTique] = useState(0);
-  useEffect(() => { if (c) setDesvio(new Date(c.agora).getTime() - Date.now()); }, [c]);
+  const chegouEm = cupomQ.dataUpdatedAt;
+  useEffect(() => { if (c && chegouEm > 0) setDesvio(new Date(c.agora).getTime() - chegouEm); }, [c, chegouEm]);
   useEffect(() => {
     const t = setInterval(() => setTique((x) => x + 1), 1_000);
     return () => clearInterval(t);

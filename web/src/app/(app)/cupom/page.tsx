@@ -1,8 +1,8 @@
 'use client';
 
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Suspense } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { Suspense, useEffect, useRef } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { CircleAlert } from 'lucide-react';
 import { produtosCupom, situacaoCupomFiscal } from '@/lib/erp-api';
 import { useMe } from '@/lib/auth';
@@ -30,8 +30,16 @@ function CupomFiscal() {
   const admin = me?.perfil === 'admin';
   const pedida = params.get('aba');
   const aba: Aba = ABAS.includes(pedida as Aba) ? (pedida as Aba) : 'emitir';
+  const qc = useQueryClient();
   const situacaoQ = useQuery({ queryKey: CHAVES_CUPOM.situacao, queryFn: situacaoCupomFiscal, enabled: admin });
   const produtosQ = useQuery({ queryKey: CHAVES_CUPOM.produtos, queryFn: () => produtosCupom(), enabled: admin });
+
+  // a aba Emitir fica montada (a venda em montagem e a chave sobrevivem à troca de aba): ao voltar para ela, os preços são relidos
+  const abaAntes = useRef(aba);
+  useEffect(() => {
+    if (aba === 'emitir' && abaAntes.current !== 'emitir') void qc.invalidateQueries({ queryKey: CHAVES_CUPOM.produtos });
+    abaAntes.current = aba;
+  }, [aba, qc]);
 
   if (me && !admin) return <Empty>Acesso negado.</Empty>;
 
@@ -67,9 +75,13 @@ function CupomFiscal() {
             {nFaltando > 0 ? `Produtos · ${nFaltando}` : 'Produtos'}
           </TabsTrigger>
         </TabsList>
-        <TabsContent value="emitir" className="mt-0">
+        {/* forceMount: a venda (e a chave da venda) não se perde ao olhar Emitidos ou Produtos */}
+        <TabsContent value="emitir" forceMount className="mt-0 data-[state=inactive]:hidden">
           <ErrorBoundary fallback={<p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm">Não consegui mostrar a aba Emitir agora. Recarregue a página.</p>}>
-            <Emitir situacao={s} situacaoErro={situacaoQ.isError} onTentarSituacao={() => void situacaoQ.refetch()} />
+            <Emitir
+              situacao={s} situacaoEm={situacaoQ.dataUpdatedAt} situacaoErro={situacaoQ.isError}
+              onTentarSituacao={() => void situacaoQ.refetch()}
+            />
           </ErrorBoundary>
         </TabsContent>
         {/* Tarefa 15: `emitidos.tsx` (UX 4.1 e 4.6) e `produtos.tsx` + `perfis.tsx` (UX 5.6 e 5.7). */}

@@ -45,8 +45,10 @@ const plural = (n: number, um: string, varios: string) => (n === 1 ? um : varios
  * diz o que falta; "Conferir o cupom" envia. Nada da venda vai para o storage: recarregar perde a venda (a faixa de pendentes e o "Último
  * cupom" dizem se algo saiu). A `chave_idempotencia` nasce uma vez por venda e só muda depois de uma resposta com cupom.
  */
-export function Emitir({ situacao, situacaoErro, onTentarSituacao }: {
+export function Emitir({ situacao, situacaoEm, situacaoErro, onTentarSituacao }: {
   situacao: SituacaoCupomFiscal | undefined;
+  /** Quando a situação chegou (`dataUpdatedAt`): o desvio do relógio é `agora` do servidor − essa hora. */
+  situacaoEm: number;
   situacaoErro: boolean;
   onTentarSituacao(): void;
 }) {
@@ -96,8 +98,8 @@ export function Emitir({ situacao, situacaoErro, onTentarSituacao }: {
   const [desvio, setDesvio] = useState(0);
   const [, setTique] = useState(0);
   useEffect(() => {
-    if (situacao) setDesvio(new Date(situacao.agora).getTime() - Date.now());
-  }, [situacao]);
+    if (situacao && situacaoEm > 0) setDesvio(new Date(situacao.agora).getTime() - situacaoEm);
+  }, [situacao, situacaoEm]);
   useEffect(() => {
     const t = setInterval(() => setTique((x) => x + 1), 30_000);
     return () => clearInterval(t);
@@ -449,7 +451,7 @@ export function Emitir({ situacao, situacaoErro, onTentarSituacao }: {
 
       <CaixaDoTopo topo={topo} refTopo={refTopo} />
       {topo && !topo.formulario ? null : (
-        <fieldset disabled={travada} aria-disabled={travada} className="min-w-0 space-y-4">
+        <div className="min-w-0 space-y-4">
           {travada && (
             <p role="status" className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
               Para mudar a venda, primeiro toque em Tentar de novo.
@@ -457,6 +459,7 @@ export function Emitir({ situacao, situacaoErro, onTentarSituacao }: {
           )}
           <div className="grid min-w-0 gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,24rem)]">
             {/* ------------------------------------------------------------------------------------------- produtos */}
+            <fieldset disabled={travada} aria-disabled={travada} className="min-w-0">
             <Panel title="Produtos" className="min-w-0">
               <div
                 className="space-y-2"
@@ -611,9 +614,11 @@ export function Emitir({ situacao, situacaoErro, onTentarSituacao }: {
                 )}
               </div>
             </Panel>
+            </fieldset>
 
             {/* --------------------------------------------------------------------------------------------- pagamento */}
             <div className="min-w-0 space-y-4">
+              <fieldset disabled={travada} aria-disabled={travada} className="min-w-0 space-y-4">
               <Panel title="Pagamento" className="min-w-0">
                 <div ref={refPagamento} className="space-y-3">
                   <p className="text-xs text-muted-foreground">Cobre aqui só o valor do cupom. A taxa de serviço ainda não entra no cupom.</p>
@@ -699,8 +704,9 @@ export function Emitir({ situacao, situacaoErro, onTentarSituacao }: {
                   {(docTocado || mostrarErros) && erroDoc && <p id="cupom-doc-erro" className="text-sm text-destructive">{erroDoc}</p>}
                 </div>
               </Panel>
+              </fieldset>
 
-              {/* computador: o bloco do botão no fim da coluna da direita */}
+              {/* computador: o bloco do botão no fim da coluna da direita (fora do fieldset: com a venda travada ele reabre o "não sei se saiu") */}
               <div className="hidden space-y-2 md:block">
                 <p className="text-right text-sm">Total <span className="text-xl font-bold">{reais(total)}</span></p>
                 {pg.troco > 0n && <p className="text-right text-sm">Troco {reais(pg.troco)}</p>}
@@ -711,7 +717,7 @@ export function Emitir({ situacao, situacaoErro, onTentarSituacao }: {
               </div>
             </div>
           </div>
-        </fieldset>
+        </div>
       )}
 
       {/* celular: a barra fixa embaixo (fora do fieldset: com a venda travada ela reabre o "não sei se saiu") */}
@@ -737,7 +743,13 @@ export function Emitir({ situacao, situacaoErro, onTentarSituacao }: {
         resumo={resumo}
         onEmitir={() => void enviar()}
         onTentarDeNovo={() => void enviar(corpoEnviado.current ?? undefined)}
-        onVerEmitidos={() => { setConferir((c) => ({ ...c, aberto: false })); router.push('/cupom?aba=emitidos'); }}
+        onVerEmitidos={() => {
+          // no 409 NFCE_CHAVE_REUSADA o servidor já tem um cupom com esta chave: a venda é abandonada (sem isso, só recarregando);
+          // no "não sei se saiu" a venda continua travada (a aba Emitir fica montada) para o "Tentar de novo" na volta
+          if (conferir.fase.fase === 'erro' && conferir.fase.verEmitidos) zerarVenda();
+          setConferir((c) => ({ ...c, aberto: false, fase: c.fase.fase === 'incerta' ? c.fase : { fase: 'conferir' } }));
+          router.push('/cupom?aba=emitidos');
+        }}
         onFechar={() => setConferir((c) => ({ ...c, aberto: false, fase: c.fase.fase === 'incerta' ? c.fase : { fase: 'conferir' } }))}
         onFechado={() => {
           const visivel = refBotaoFixo.current && refBotaoFixo.current.offsetParent !== null ? refBotaoFixo.current : refBotao.current;
