@@ -698,7 +698,8 @@ export function montarPrismaCupom(o: { cnpjEmpresa?: string } = {}): {
     if (tipo === 'desfazer') {
       if (c.situacao !== 'cancelado') throw erroRegra(`Só o cupom cancelado desfaz a venda no estoque (este está ${c.situacao}).`);
       est.vendas.desfazer.push(id);
-      Object.assign(c, { venda_desfeita_em: c.venda_desfeita_em ?? new Date(), venda_erro: null });
+      // migração 20261119120100_nfce_gatilho: o cupom sem `lanca_venda` nunca lançou venda, então não ganha `venda_desfeita_em`
+      if (c.lanca_venda) Object.assign(c, { venda_desfeita_em: c.venda_desfeita_em ?? new Date(), venda_erro: null });
       return 1;
     }
     if (c.ambiente !== 'producao') throw erroRegra('Cupom de homologação (modo de teste) não lança venda no estoque.');
