@@ -19,6 +19,7 @@ import { IaChaveController } from '../../modules/leitura-pdf/ia/ia-chave.control
 import { LeituraPdfController } from '../../modules/leitura-pdf/leitura-pdf.controller';
 import { NotasController } from '../../modules/notas/notas.controller';
 import { NotasSefazController } from '../../modules/notas-sefaz/notas-sefaz.controller';
+import { PontoController } from '../../modules/ponto/ponto.controller';
 import { UsuariosController } from '../../modules/usuarios/usuarios.controller';
 import { VendasController } from '../../modules/vendas/vendas.controller';
 
@@ -39,6 +40,7 @@ const CONTROLLERS = [
   LeituraPdfController,
   NotasController,
   NotasSefazController,
+  PontoController,
   UsuariosController,
   VendasController,
 ];
@@ -150,6 +152,19 @@ describe('proteção das rotas (substitui as políticas RLS do Supabase)', () =>
     ]);
   });
 
+  // O ponto: a loja só bate (com o token do terminal e o PIN); cadastros, ajustes, cálculo e exportação são do admin.
+  it('do ponto, a loja só alcança o terminal', () => {
+    const ponto = todas.filter((r) => r.rota.includes('/ponto'));
+    expect(ponto.filter((r) => r.marca === 'staff').map((r) => r.rota)).toEqual([
+      'GET /v1/ponto/terminal',
+      'POST /v1/ponto/terminal/identificar',
+      'POST /v1/ponto/terminal/marcar',
+      'POST /v1/ponto/terminal/justificar',
+    ]);
+    expect(ponto.filter((r) => r.marca !== 'staff').every((r) => r.marca === 'admin')).toBe(true);
+    expect(ponto.length).toBe(27);
+  });
+
   it('só estas rotas são públicas', () => {
     expect(
       todas
@@ -182,6 +197,10 @@ describe('proteção das rotas (substitui as políticas RLS do Supabase)', () =>
         'GET /v1/listas-compra',
         'GET /v1/listas-compra/:id',
         'GET /v1/listas-compra/:id/itens',
+        'GET /v1/ponto/terminal',
+        'POST /v1/ponto/terminal/identificar',
+        'POST /v1/ponto/terminal/marcar',
+        'POST /v1/ponto/terminal/justificar',
       ].sort(),
     );
   });

@@ -7,10 +7,14 @@ const compat = new FlatCompat({ baseDirectory: dirname(fileURLToPath(import.meta
 const config = [
   ...compat.extends('next/core-web-vitals', 'next/typescript'),
   {
-    // Storage do navegador só em dois arquivos: a sessão (`authUser`, convenção do freela-web-v2) e o rascunho da contagem
-    // do inventário (chave `freela-rascunho-<id>`, igual ao protótipo).
+    // Storage do navegador só em três arquivos: a sessão (`authUser`, convenção do freela-web-v2), o rascunho da contagem
+    // do inventário (chave `freela-rascunho-<id>`, igual ao protótipo) e o token do terminal de ponto (`freela-ponto-terminal`).
     files: ['src/**/*.{ts,tsx}'],
-    ignores: ['src/modules/auth/infrastructure/auth.storage.ts', 'src/modules/inventario/infrastructure/rascunho.storage.ts'],
+    ignores: [
+      'src/modules/auth/infrastructure/auth.storage.ts',
+      'src/modules/inventario/infrastructure/rascunho.storage.ts',
+      'src/modules/ponto/infrastructure/terminal.storage.ts',
+    ],
     rules: {
       'no-restricted-globals': [
         'error',

@@ -37,8 +37,12 @@ contrato: `docs/api-contract.md`. Protótipo de referência em `.prototype/` (gi
   `api/src/modules/cupom-fiscal/totais.ts` e `web/src/lib/cupom.ts` existem em cópia (como `ficha.ts` e `fiscal.ts`) — mudar um = mudar o outro. Não mexer em `sefaz/eventos*.ts`, `assinatura-xml.ts` e `transporte-soap12.ts` por causa do cupom (só importar).
 - Frases da nota repetida: `api/src/common/fiscal/nota-repetida.ts` e `web/src/lib/nota-repetida.ts` existem em cópia — mudar uma = mudar a outra.
 - CNPJ e chave: `api/src/common/fiscal` e `web/src/lib/fiscal.ts` iguais (como a ficha); normalizar = maiúsculas + `[0-9A-Z]`, nunca `\D` (só a linha digitável do DDA).
-- Web: storage do navegador só em `modules/auth/infrastructure/auth.storage.ts` (sessão `authUser`) e `modules/inventario/infrastructure/rascunho.storage.ts`
-  (rascunho da contagem). Telas são `'use client'`; `@/lib/erp-api.ts` é o único lugar com chamadas HTTP.
+- Ponto (`api/src/modules/ponto`, rotas `/v1/ponto` em `docs/api-contract.md` §18, tela `web/src/app/(app)/ponto`): a loja só alcança as 4 rotas do terminal,
+  e elas exigem o cabeçalho `X-Ponto-Terminal` de um terminal ativo (liberado pelo admin no próprio computador da loja; banco guarda só o SHA-256) + PIN do colaborador.
+  Erro de PIN é 400 (nunca 401, que derruba a sessão). Batida nunca é apagada: corrigir = anular com motivo + manual com `substitui_id`. A hora da batida é a do servidor.
+  Exceção à "regra em SQL": o cálculo (horas, atraso, extras 50/100, noturno, abono) é a função pura `modules/ponto/calculo.ts` (testes em `__tests__/calculo.spec.ts`).
+- Web: storage do navegador só em `modules/auth/infrastructure/auth.storage.ts` (sessão `authUser`), `modules/inventario/infrastructure/rascunho.storage.ts`
+  (rascunho da contagem) e `modules/ponto/infrastructure/terminal.storage.ts` (token do terminal de ponto). Telas são `'use client'`; `@/lib/erp-api.ts` é o único lugar com chamadas HTTP.
 
 ## Regras de baixo consumo (máquina do dono: 7,6 GB, outros projetos rodando)
 

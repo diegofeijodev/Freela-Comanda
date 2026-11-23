@@ -894,3 +894,91 @@ export const excluirUsuario = (id: string) => del(`/v1/usuarios/${id}`);
 export const trocarMinhaSenha = (senha_atual: string, senha_nova: string) => post<{ ok: true }>('/v1/auth/trocar-senha', { senha_atual, senha_nova });
 export const existeAdmin = async () => (await get<{ existe: boolean }>('/v1/auth/existe-admin')).existe;
 export type { AuthUser };
+
+// ---------- ponto
+export type TipoMarcacao = 'entrada' | 'intervalo_inicio' | 'intervalo_fim' | 'saida';
+export type TipoFolga = 'folga' | 'feriado' | 'ferias' | 'atestado';
+export type TipoOcorrencia = 'falta' | 'atraso' | 'saida_antecipada';
+export type StatusJustificativa = 'pendente' | 'aceita' | 'recusada';
+export type PontoDiaEscala = { escala_id?: string; dia_semana: number; folga: boolean; entrada: string | null; saida: string | null; intervalo_min: number };
+export type PontoEscala = { id: string; nome: string; tolerancia_min: number; ativo: boolean; dias: PontoDiaEscala[]; _count?: { colaboradores: number } };
+export type PontoColaborador = { id: string; nome: string; cpf: string | null; cargo: string | null; admissao: string | null; escala_id: string | null; ativo: boolean; created_at: string };
+export type PontoFolga = { id: string; colaborador_id: string | null; data: string; tipo: TipoFolga; observacao: string | null; colaborador: { nome: string } | null };
+export type PontoMarcacao = {
+  id: string; colaborador_id: string; data: string; momento: string; tipo: TipoMarcacao; origem: 'terminal' | 'manual'; motivo: string | null;
+  anulada: boolean; anulada_motivo: string | null; anulada_em: string | null; substitui_id: string | null; terminal: { nome: string } | null; created_at: string;
+};
+export type PontoJustificativa = {
+  id: string; colaborador_id: string; data: string; tipo: TipoOcorrencia; texto: string; status: StatusJustificativa; abonar: boolean;
+  resposta: string | null; respondida_em: string | null; created_at: string; colaborador: { nome: string };
+};
+export type PontoTerminal = { id: string; nome: string; ativo: boolean; ultimo_uso: string | null; created_at: string };
+export type PontoOcorrencia = { tipo: TipoOcorrencia; minutos: number; justificativa: StatusJustificativa | null };
+export type PontoDia = {
+  data: string; dia_semana: number;
+  situacao: 'normal' | 'folga_escala' | TipoFolga | 'sem_escala' | 'antes_admissao' | 'futuro';
+  previsto: { entrada: string; saida: string; intervalo_min: number } | null;
+  marcacoes: { momento: string; tipo: TipoMarcacao }[];
+  esperado_min: number; trabalhado_min: number; atraso_min: number; saida_antecipada_min: number; falta: boolean; incompleto: boolean; em_andamento: boolean;
+  abonado_min: number; extra_50_min: number; extra_100_min: number; noturno_min: number; debito_min: number; saldo_min: number;
+  ocorrencias: PontoOcorrencia[];
+};
+export type PontoTotais = {
+  dias_previstos: number; dias_trabalhados: number; faltas: number; esperado_min: number; trabalhado_min: number; atraso_min: number; saida_antecipada_min: number;
+  abonado_min: number; extra_50_min: number; extra_100_min: number; noturno_min: number; debito_min: number; saldo_min: number; incompletos: number; pendencias: number;
+};
+export type PontoEspelho = {
+  colaborador: { id: string; nome: string; cpf: string | null; cargo: string | null; escala: string | null; ativo: boolean };
+  ini: string; fim: string; dias: PontoDia[]; totais: PontoTotais;
+};
+export type PontoSituacao = {
+  colaborador: { id: string; nome: string }; data: string;
+  previsto: { entrada: string; saida: string; intervalo_min: number } | null;
+  marcacoes: { tipo: TipoMarcacao; hora: string }[];
+  proximos: TipoMarcacao[];
+  pendencias: ({ data: string } & PontoOcorrencia)[];
+};
+
+// Terminal (computador da loja): o token vai no cabeçalho X-Ponto-Terminal.
+const comTerminal = (token: string) => ({ headers: { 'X-Ponto-Terminal': token } });
+export const pontoTerminalInicio = async (token: string) =>
+  (await api.get<{ terminal: string; agora: string; colaboradores: { id: string; nome: string }[] }>('/v1/ponto/terminal', comTerminal(token))).data;
+export const pontoIdentificar = async (token: string, colaborador_id: string, pin: string) =>
+  (await api.post<PontoSituacao>('/v1/ponto/terminal/identificar', { colaborador_id, pin }, comTerminal(token))).data;
+export const pontoMarcar = async (token: string, colaborador_id: string, pin: string, tipo: TipoMarcacao) =>
+  (await api.post<{ marcacao: { id: string; data: string; tipo: TipoMarcacao; hora: string }; ocorrencia: ({ data: string } & Omit<PontoOcorrencia, 'justificativa'>) | null; situacao: PontoSituacao }>(
+    '/v1/ponto/terminal/marcar', { colaborador_id, pin, tipo }, comTerminal(token))).data;
+export const pontoJustificar = async (token: string, j: { colaborador_id: string; pin: string; data: string; tipo: TipoOcorrencia; texto: string }) =>
+  (await api.post<PontoSituacao>('/v1/ponto/terminal/justificar', j, comTerminal(token))).data;
+
+// Admin
+export const pontoEspelho = (colaboradorId: string, mes: string) => get<PontoEspelho>(`/v1/ponto/espelho/${colaboradorId}`, { mes });
+export const pontoEspelhoGeral = (mes: string) => get<PontoEspelho[]>('/v1/ponto/espelho', { mes });
+export const pontoColaboradores = () => get<PontoColaborador[]>('/v1/ponto/colaboradores');
+export const pontoCriarColaborador = (c: Record<string, unknown>) => post<PontoColaborador>('/v1/ponto/colaboradores', c);
+export const pontoAtualizarColaborador = (id: string, c: Record<string, unknown>) => patch<PontoColaborador>(`/v1/ponto/colaboradores/${id}`, c);
+export const pontoExcluirColaborador = (id: string) => del(`/v1/ponto/colaboradores/${id}`);
+export const pontoEscalas = () => get<PontoEscala[]>('/v1/ponto/escalas');
+export const pontoSalvarEscala = (e: { id?: string; nome: string; tolerancia_min: number; ativo: boolean; dias: Omit<PontoDiaEscala, 'escala_id'>[] }) => {
+  const { id, ...corpo } = e;
+  return id ? put<PontoEscala>(`/v1/ponto/escalas/${id}`, corpo) : post<PontoEscala>('/v1/ponto/escalas', corpo);
+};
+export const pontoExcluirEscala = (id: string) => del(`/v1/ponto/escalas/${id}`);
+export const pontoFolgas = (mes: string) => get<PontoFolga[]>('/v1/ponto/folgas', { mes });
+export const pontoCriarFolga = (f: { colaborador_id: string | null; data: string; ate?: string; tipo: TipoFolga; observacao?: string }) =>
+  post<{ criadas: number; ja_existiam: number }>('/v1/ponto/folgas', f);
+export const pontoExcluirFolga = (id: string) => del(`/v1/ponto/folgas/${id}`);
+export const pontoMarcacoes = (colaborador_id: string, mes: string) => get<PontoMarcacao[]>('/v1/ponto/marcacoes', { colaborador_id, mes });
+export const pontoMarcacaoManual = (m: { colaborador_id: string; data: string; hora: string; dia_seguinte: boolean; tipo: TipoMarcacao; motivo: string }) =>
+  post<PontoMarcacao>('/v1/ponto/marcacoes', m);
+export const pontoCorrigirMarcacao = (id: string, m: { hora: string; dia_seguinte: boolean; tipo: TipoMarcacao; motivo: string }) =>
+  post<PontoMarcacao>(`/v1/ponto/marcacoes/${id}/corrigir`, m);
+export const pontoAnularMarcacao = (id: string, motivo: string) => post<PontoMarcacao>(`/v1/ponto/marcacoes/${id}/anular`, { motivo });
+export const pontoJustificativas = (status?: StatusJustificativa) => get<PontoJustificativa[]>('/v1/ponto/justificativas', status ? { status } : undefined);
+export const pontoJustificarAdmin = (j: { colaborador_id: string; data: string; tipo: TipoOcorrencia; texto: string; abonar: boolean }) =>
+  post<PontoJustificativa>('/v1/ponto/justificativas', j);
+export const pontoResponderJustificativa = (id: string, r: { aceita: boolean; abonar?: boolean; resposta?: string }) =>
+  post<PontoJustificativa>(`/v1/ponto/justificativas/${id}/responder`, r);
+export const pontoTerminais = () => get<PontoTerminal[]>('/v1/ponto/terminais');
+export const pontoCriarTerminal = (nome: string) => post<PontoTerminal & { token: string }>('/v1/ponto/terminais', { nome });
+export const pontoRevogarTerminal = (id: string) => del(`/v1/ponto/terminais/${id}`);

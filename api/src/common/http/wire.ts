@@ -12,6 +12,7 @@ export const DATE_ONLY_KEYS = new Set([
   'pago_em',
   'data_anterior',
   'data_ultimo_inventario',
+  'admissao', // ponto_colaboradores
 ]);
 
 /** Colunas `time` (sem fuso): o Prisma devolve 1970-01-01THH:MM:SSZ; o protótipo recebia "HH:MM:SS". */

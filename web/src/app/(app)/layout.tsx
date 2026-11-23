@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import {
   BarChart3, BookOpen, ClipboardCheck, Boxes, Target, ShoppingCart, Upload, Settings, Users, LayoutDashboard, LogOut, FileInput, Wallet, Calculator, Landmark, KeyRound,
-  Receipt,
+  Receipt, Clock,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useMe, useSair } from '@/lib/auth';
@@ -25,6 +25,7 @@ const MENU = [
   { to: '/notas', label: 'Entrada de Notas', icon: FileInput, loja: false },
   { to: '/contas', label: 'Contas a Pagar', icon: Wallet, loja: false },
   { to: '/caixa', label: 'Conciliação de Caixa', icon: Landmark, loja: false },
+  { to: '/ponto', label: 'Ponto', icon: Clock, loja: true },
   { to: '/dre', label: 'DRE', icon: Calculator, loja: false },
   { to: '/importar', label: 'Importar Dados', icon: Upload, loja: false },
   { to: '/configuracoes', label: 'Configurações', icon: Settings, loja: false },
