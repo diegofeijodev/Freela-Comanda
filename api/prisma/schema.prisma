@@ -937,3 +937,116 @@ model caixa_fechamentos {
   observacao         String?
   created_at         DateTime @default(now()) @db.Timestamptz(6)
 }
+
+// ---------- Ponto (registro de jornada; não existe no Lovable). Índices parciais/únicos por expressão ficam no SQL da migração.
+
+model ponto_escalas {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  nome           String
+  tolerancia_min Int      @default(10)
+  ativo          Boolean  @default(true)
+  created_at     DateTime @default(now()) @db.Timestamptz(6)
+
+  dias          ponto_escala_dias[]
+  colaboradores ponto_colaboradores[]
+}
+
+model ponto_escala_dias {
+  escala_id     String  @db.Uuid
+  dia_semana    Int     @db.SmallInt
+  folga         Boolean @default(false)
+  entrada       String?
+  saida         String?
+  intervalo_min Int     @default(0)
+
+  escala ponto_escalas @relation(fields: [escala_id], references: [id], onDelete: Cascade)
+
+  @@id([escala_id, dia_semana])
+}
+
+model ponto_colaboradores {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  nome       String
+  cpf        String?
+  cargo      String?
+  admissao   DateTime? @db.Date
+  escala_id  String?   @db.Uuid
+  pin_hash   String
+  ativo      Boolean   @default(true)
+  created_at DateTime  @default(now()) @db.Timestamptz(6)
+
+  escala         ponto_escalas?         @relation(fields: [escala_id], references: [id], onDelete: SetNull)
+  folgas         ponto_folgas[]
+  marcacoes      ponto_marcacoes[]
+  justificativas ponto_justificativas[]
+}
+
+model ponto_folgas {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  colaborador_id String?  @db.Uuid
+  data           DateTime @db.Date
+  tipo           String
+  observacao     String?
+  created_at     DateTime @default(now()) @db.Timestamptz(6)
+
+  colaborador ponto_colaboradores? @relation(fields: [colaborador_id], references: [id], onDelete: Cascade)
+
+  @@index([data])
+}
+
+model ponto_terminais {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  nome       String
+  token_hash String    @unique
+  ativo      Boolean   @default(true)
+  ultimo_uso DateTime? @db.Timestamptz(6)
+  created_at DateTime  @default(now()) @db.Timestamptz(6)
+  criado_por String?   @db.Uuid
+
+  marcacoes ponto_marcacoes[]
+}
+
+model ponto_marcacoes {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  colaborador_id String    @db.Uuid
+  data           DateTime  @db.Date
+  momento        DateTime  @db.Timestamptz(6)
+  tipo           String
+  origem         String
+  terminal_id    String?   @db.Uuid
+  motivo         String?
+  anulada        Boolean   @default(false)
+  anulada_motivo String?
+  anulada_em     DateTime? @db.Timestamptz(6)
+  anulada_por    String?   @db.Uuid
+  substitui_id   String?   @db.Uuid
+  criado_por     String?   @db.Uuid
+  created_at     DateTime  @default(now()) @db.Timestamptz(6)
+
+  colaborador ponto_colaboradores @relation(fields: [colaborador_id], references: [id], onDelete: Cascade)
+  terminal    ponto_terminais?    @relation(fields: [terminal_id], references: [id], onDelete: SetNull)
+  substitui   ponto_marcacoes?    @relation("ponto_substituicao", fields: [substitui_id], references: [id], onDelete: SetNull)
+  substitutas ponto_marcacoes[]   @relation("ponto_substituicao")
+
+  @@index([colaborador_id, data])
+  @@index([colaborador_id, momento])
+}
+
+model ponto_justificativas {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  colaborador_id String    @db.Uuid
+  data           DateTime  @db.Date
+  tipo           String
+  texto          String
+  status         String    @default("pendente")
+  abonar         Boolean   @default(false)
+  resposta       String?
+  respondida_por String?   @db.Uuid
+  respondida_em  DateTime? @db.Timestamptz(6)
+  created_at     DateTime  @default(now()) @db.Timestamptz(6)
+
+  colaborador ponto_colaboradores @relation(fields: [colaborador_id], references: [id], onDelete: Cascade)
+
+  @@unique([colaborador_id, data, tipo])
+  @@index([status])
+}

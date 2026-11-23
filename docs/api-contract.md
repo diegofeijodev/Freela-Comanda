@@ -346,3 +346,39 @@ O cupom é **documento fiscal** depois de autorizado: o banco o trava (gatilhos 
 O número é da nota para sempre (539 e SP sem inutilização): o `numeros-nao-usados.csv` do zip do mês traz cada número que não virou cupom, com o motivo, e a faixa pulada à mão em Configurações numa linha só (`serie;42 a 999;pulado à mão em DD/MM por <nome>`, no mês do pulo; voltar o número tira a faixa).
 A venda no estoque nasce do cupom (`nfce_lancar_venda`/`nfce_desfazer_venda`, só com `cupom_lanca_venda = true` e em produção); em homologação a venda nunca baixa estoque.
 **Porta interna** (sem rota): `SEFAZ_NFCE` (`modules/sefaz/nfce.port.ts`: autorizar, consultar, status e o registro do evento de cancelamento), sempre com o envelope SOAP `sem_prefixo`; só o certificado em `CERTIFICADO_DIGITAL` assina.
+
+## §18 Ponto (registro de jornada; terminal na loja, o resto admin)
+
+Batida só no **computador da loja**: o admin libera o navegador em Ponto → Terminais (`POST /v1/ponto/terminais` devolve o `token` UMA vez; o banco guarda só o SHA-256) e a tela grava o token em `freela-ponto-terminal` (`web/src/modules/ponto/infrastructure/terminal.storage.ts`). As rotas do terminal exigem login (`@Staff`), o cabeçalho `X-Ponto-Terminal: <token>` de um terminal ativo e o PIN do colaborador (4–6 números, bcrypt). Revogar o terminal corta na hora.
+
+| Rota | Marca | O quê |
+|---|---|---|
+| `GET /v1/ponto/terminal` | staff + terminal | `{ terminal, agora, colaboradores: [{id, nome}] }` (só ativos) |
+| `POST /v1/ponto/terminal/identificar` | staff + terminal | `{ colaborador_id, pin }` → situação: `data` da jornada, `previsto`, `marcacoes [{tipo, hora}]`, `proximos` (tipos permitidos), `pendencias` (ocorrências dos últimos 45 dias sem justificativa ou recusadas) |
+| `POST /v1/ponto/terminal/marcar` | staff + terminal | `{ colaborador_id, pin, tipo }` → `{ marcacao, ocorrencia \| null, situacao }`. A hora é a do SERVIDOR |
+| `POST /v1/ponto/terminal/justificar` | staff + terminal | `{ colaborador_id, pin, data, tipo: falta\|atraso\|saida_antecipada, texto }` → situação (volta a `pendente`) |
+| `GET /v1/ponto/espelho?mes=AAAA-MM` | admin | resumo de todos (ativos ou com batida no mês): `[{ colaborador, ini, fim, dias, totais }]` |
+| `GET /v1/ponto/espelho/:colaboradorId?mes=` (ou `ini`/`fim`, até 62 dias) | admin | espelho dia a dia + totais |
+| `GET/POST /v1/ponto/colaboradores`, `PATCH/DELETE /v1/ponto/colaboradores/:id` | admin | cadastro (nome, cpf, cargo, admissao, escala_id, pin; nunca devolve o PIN). Excluir só sem batidas (409 `EM_USO`: desative) |
+| `GET/POST /v1/ponto/escalas`, `PUT/DELETE /v1/ponto/escalas/:id` | admin | `{ nome, tolerancia_min (0–60, padrão 10), ativo, dias: [{dia_semana 0–6, folga, entrada "HH:MM", saida, intervalo_min}] }` — dia ausente = folga; saída ≤ entrada = vira a noite |
+| `GET /v1/ponto/folgas?mes=`, `POST /v1/ponto/folgas`, `DELETE /v1/ponto/folgas/:id` | admin | `{ colaborador_id \| null (= todos, só feriado), data, ate?, tipo: folga\|feriado\|ferias\|atestado, observacao }` → `{ criadas, ja_existiam }` (até 60 dias) |
+| `GET /v1/ponto/marcacoes?colaborador_id=&mes=` | admin | todas, inclusive anuladas (auditoria) |
+| `POST /v1/ponto/marcacoes` | admin | batida manual `{ colaborador_id, data, hora, dia_seguinte?, tipo, motivo }` |
+| `POST /v1/ponto/marcacoes/:id/corrigir` | admin | `{ hora, dia_seguinte?, tipo, motivo }`: anula a original ("Corrigida: …") e cria a manual com `substitui_id` |
+| `POST /v1/ponto/marcacoes/:id/anular` | admin | `{ motivo }` |
+| `GET /v1/ponto/justificativas?status=` | admin | pendente \| aceita \| recusada (até 500) |
+| `POST /v1/ponto/justificativas` | admin | lança já aceita `{ colaborador_id, data, tipo, texto, abonar }` |
+| `POST /v1/ponto/justificativas/:id/responder` | admin | `{ aceita, abonar?, resposta? }` |
+| `GET/POST /v1/ponto/terminais`, `DELETE /v1/ponto/terminais/:id` | admin | liberar (devolve `token` uma vez) e revogar (`ativo = false`) |
+
+Cálculo (`api/src/modules/ponto/calculo.ts`, puro e testado): esperado = saída − entrada − intervalo; trabalhado = pares de batidas em ordem; tolerância diária (CLT art. 58 §1º) no saldo e nas ocorrências; folga/feriado/férias/atestado = esperado 0 e o trabalhado vira extra 100%; saldo positivo em dia normal = extra 50%; noturno = minutos entre 22h e 5h; justificativa aceita com abono devolve o tempo da ocorrência. Batidas válidas alternam entrada→saída (`proximos`); o dia da jornada de quem vira a noite é o dia em que o turno começou (última batida há < 16 h deixando o dia aberto).
+
+| HTTP | `code` | Quando |
+|---|---|---|
+| 403 | `TERMINAL_NAO_AUTORIZADO` | sem cabeçalho, token desconhecido ou terminal revogado ("Este computador não está liberado para bater ponto. …") |
+| 400 | `PIN_INCORRETO` | PIN errado ou colaborador inativo (400, não 401: o 401 derrubaria a sessão da loja) |
+| 429 | `PIN_BLOQUEADO` | 5 PINs errados seguidos: 5 min de espera (além do throttle de 30/min nas rotas do terminal) |
+| 400 | `REGRA` | batida fora da ordem ("A próxima marcação é …"), justificar dia futuro ou com mais de 45 dias, marcação manual no futuro, dia repetido na escala, folga sem colaborador que não é feriado |
+| 409 | `REPETIDA` · `JA_ACEITA` · `ANULADA` · `EM_USO` · `DUPLICADO` | duas batidas no mesmo minuto · justificativa já aceita · marcação já anulada · escala com pessoas / colaborador com batidas · CPF repetido |
+
+Exportação no web: Excel (`web/src/lib/ponto.ts`, aba Resumo + uma por colaborador) e PDF pela impressão do navegador (botão "PDF", como fichas e listas).
