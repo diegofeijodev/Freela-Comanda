@@ -902,7 +902,7 @@ export type TipoOcorrencia = 'falta' | 'atraso' | 'saida_antecipada';
 export type StatusJustificativa = 'pendente' | 'aceita' | 'recusada';
 export type PontoDiaEscala = { escala_id?: string; dia_semana: number; folga: boolean; entrada: string | null; saida: string | null; intervalo_min: number };
 export type PontoEscala = { id: string; nome: string; tolerancia_min: number; ativo: boolean; dias: PontoDiaEscala[]; _count?: { colaboradores: number } };
-export type PontoColaborador = { id: string; nome: string; cpf: string | null; cargo: string | null; admissao: string | null; escala_id: string | null; ativo: boolean; created_at: string };
+export type PontoColaborador = { id: string; nome: string; cpf: string | null; cargo: string | null; admissao: string | null; escala_id: string | null; empresa_id: string | null; ativo: boolean; created_at: string };
 export type PontoFolga = { id: string; colaborador_id: string | null; data: string; tipo: TipoFolga; observacao: string | null; colaborador: { nome: string } | null };
 export type PontoMarcacao = {
   id: string; colaborador_id: string; data: string; momento: string; tipo: TipoMarcacao; origem: 'terminal' | 'manual'; motivo: string | null;
@@ -929,6 +929,7 @@ export type PontoTotais = {
 };
 export type PontoEspelho = {
   colaborador: { id: string; nome: string; cpf: string | null; cargo: string | null; escala: string | null; ativo: boolean };
+  empresa: { razao_social: string; nome_fantasia: string | null; cnpj: string; endereco: string } | null;
   ini: string; fim: string; dias: PontoDia[]; totais: PontoTotais;
 };
 export type PontoSituacao = {
@@ -982,3 +983,19 @@ export const pontoResponderJustificativa = (id: string, r: { aceita: boolean; ab
 export const pontoTerminais = () => get<PontoTerminal[]>('/v1/ponto/terminais');
 export const pontoCriarTerminal = (nome: string) => post<PontoTerminal & { token: string }>('/v1/ponto/terminais', { nome });
 export const pontoRevogarTerminal = (id: string) => del(`/v1/ponto/terminais/${id}`);
+
+// ---------- empresas (admin)
+export type RegimeTributario = 'mei' | 'simples' | 'simples_excesso' | 'presumido' | 'real';
+export type Empresa = {
+  id: string; razao_social: string; nome_fantasia: string | null; cnpj: string; inscricao_estadual: string | null; inscricao_municipal: string | null;
+  regime_tributario: RegimeTributario | null; cnae: string | null; data_abertura: string | null;
+  cep: string | null; logradouro: string | null; numero: string | null; complemento: string | null; bairro: string | null; cidade: string | null; uf: string | null; cod_municipio: string | null;
+  telefone: string | null; celular: string | null; email: string | null; site: string | null;
+  responsavel_nome: string | null; responsavel_cpf: string | null; contador_nome: string | null; contador_email: string | null; contador_telefone: string | null;
+  observacoes: string | null; principal: boolean; ativo: boolean; created_at: string; updated_at: string; _count?: { colaboradores: number };
+};
+export type EmpresaForm = Omit<Empresa, 'id' | 'principal' | 'created_at' | 'updated_at' | '_count'>;
+export const listarEmpresas = () => get<Empresa[]>('/v1/empresas');
+export const salvarEmpresa = (id: string | null, e: EmpresaForm) => (id ? put<Empresa>(`/v1/empresas/${id}`, e) : post<Empresa>('/v1/empresas', e));
+export const tornarEmpresaPrincipal = (id: string) => post<Empresa>(`/v1/empresas/${id}/principal`);
+export const excluirEmpresa = (id: string) => del(`/v1/empresas/${id}`);

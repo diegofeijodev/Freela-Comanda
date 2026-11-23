@@ -77,12 +77,12 @@ export function linhasDias(e: PontoEspelho): (string | number)[][] {
     ]);
 }
 
-export const CABECALHO_RESUMO = ["Colaborador", "CPF", "Cargo", "Escala", "Dias previstos", "Dias trabalhados", "Faltas", "Esperado", "Trabalhado", "Extra 50%", "Extra 100%", "Noturno", "Atrasos", "Saídas antecipadas", "Abonado", "Débito", "Saldo"];
+export const CABECALHO_RESUMO = ["Colaborador", "Empresa", "CPF", "Cargo", "Escala", "Dias previstos", "Dias trabalhados", "Faltas", "Esperado", "Trabalhado", "Extra 50%", "Extra 100%", "Noturno", "Atrasos", "Saídas antecipadas", "Abonado", "Débito", "Saldo"];
 
 export function linhaResumo(e: PontoEspelho): (string | number)[] {
   const t: PontoTotais = e.totais;
   return [
-    e.colaborador.nome, e.colaborador.cpf ?? "", e.colaborador.cargo ?? "", e.colaborador.escala ?? "",
+    e.colaborador.nome, e.empresa?.razao_social ?? "", e.colaborador.cpf ?? "", e.colaborador.cargo ?? "", e.colaborador.escala ?? "",
     t.dias_previstos, t.dias_trabalhados, t.faltas, horas(t.esperado_min), horas(t.trabalhado_min), horas(t.extra_50_min), horas(t.extra_100_min),
     horas(t.noturno_min), horas(t.atraso_min), horas(t.saida_antecipada_min), horas(t.abonado_min), horas(t.debito_min), horas(t.saldo_min),
   ];
@@ -105,6 +105,7 @@ export function montarPlanilha(espelhos: PontoEspelho[], mes: string): XLSX.Work
   XLSX.utils.book_append_sheet(wb, resumo, "Resumo");
   for (const e of espelhos) {
     const ws = XLSX.utils.aoa_to_sheet([
+      ...(e.empresa ? [[`Empregador: ${e.empresa.razao_social}`, `CNPJ: ${e.empresa.cnpj}`, e.empresa.endereco]] : []),
       [e.colaborador.nome],
       [`CPF: ${e.colaborador.cpf ?? "—"}`, `Cargo: ${e.colaborador.cargo ?? "—"}`, `Escala: ${e.colaborador.escala ?? "—"}`],
       [`Período: ${dataBr(e.ini)} a ${dataBr(e.fim)}`],
@@ -112,8 +113,8 @@ export function montarPlanilha(espelhos: PontoEspelho[], mes: string): XLSX.Work
       CABECALHO_DIAS,
       ...linhasDias(e),
       [],
-      CABECALHO_RESUMO.slice(4),
-      linhaResumo(e).slice(4),
+      CABECALHO_RESUMO.slice(5),
+      linhaResumo(e).slice(5),
     ]);
     XLSX.utils.book_append_sheet(wb, ws, nomeAba(e.colaborador.nome, usados));
   }

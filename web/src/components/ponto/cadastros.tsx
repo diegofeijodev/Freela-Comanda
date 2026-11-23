@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Trash2 } from "lucide-react";
 import {
+  listarEmpresas, type Empresa,
   pontoAtualizarColaborador, pontoColaboradores, pontoCriarColaborador, pontoCriarFolga, pontoEscalas, pontoExcluirColaborador, pontoExcluirEscala,
   pontoExcluirFolga, pontoFolgas, pontoSalvarEscala, type PontoColaborador, type PontoDiaEscala, type PontoEscala, type TipoFolga,
 } from "@/lib/erp-api";
@@ -23,20 +24,22 @@ const dataBr = (s: string | null) => (s ? s.split("-").reverse().join("/") : "�
 const soPin = (s: string) => s.replace(/\D/g, "").slice(0, 6);
 
 // ---------------------------------------------------------------- colaboradores
-type FormColab = { nome: string; cpf: string; cargo: string; admissao: string; escala_id: string; pin: string };
-const vazio: FormColab = { nome: "", cpf: "", cargo: "", admissao: "", escala_id: "", pin: "" };
+type FormColab = { nome: string; cpf: string; cargo: string; admissao: string; escala_id: string; empresa_id: string; pin: string };
+const vazio: FormColab = { nome: "", cpf: "", cargo: "", admissao: "", escala_id: "", empresa_id: "", pin: "" };
 
 export function ColaboradoresPonto() {
   const { data, refetch } = useQuery({ queryKey: ["ponto-colaboradores"], queryFn: pontoColaboradores });
   const { data: escalas } = useQuery({ queryKey: ["ponto-escalas"], queryFn: pontoEscalas });
+  const { data: empresas } = useQuery({ queryKey: ["empresas"], queryFn: listarEmpresas });
   const [f, setF] = useState<FormColab>(vazio);
+  const nomeEmpresa = (id: string | null) => { const e = empresas?.find((x) => x.id === id); return e ? (e.nome_fantasia || e.razao_social) : null; };
   const [editar, setEditar] = useState<PontoColaborador | null>(null);
   const nomeEscala = (id: string | null) => escalas?.find((e) => e.id === id)?.nome;
 
   async function criar(e: React.FormEvent) {
     e.preventDefault();
     try {
-      await pontoCriarColaborador({ ...f, cpf: f.cpf || null, cargo: f.cargo || null, admissao: f.admissao || null, escala_id: f.escala_id || null });
+      await pontoCriarColaborador({ ...f, cpf: f.cpf || null, cargo: f.cargo || null, admissao: f.admissao || null, escala_id: f.escala_id || null, empresa_id: f.empresa_id || null });
       toast.success("Colaborador cadastrado"); setF(vazio); refetch();
     } catch (error) { toast.error(errMsg(error)); }
   }
@@ -63,14 +66,20 @@ export function ColaboradoresPonto() {
             </select>
           </div>
           <div><Label>PIN (4 a 6 números)</Label><Input inputMode="numeric" value={f.pin} onChange={(e) => setF({ ...f, pin: soPin(e.target.value) })} required minLength={4} /></div>
-          <div className="flex items-end lg:col-span-7"><Button type="submit">Cadastrar</Button></div>
+          <div className="lg:col-span-2"><Label>Empresa (empregadora)</Label>
+            <select className={sel} value={f.empresa_id} onChange={(e) => setF({ ...f, empresa_id: e.target.value })}>
+              <option value="">— a principal —</option>
+              {(empresas ?? []).filter((e) => e.ativo).map((e) => <option key={e.id} value={e.id}>{e.nome_fantasia || e.razao_social}</option>)}
+            </select>
+          </div>
+          <div className="flex items-end lg:col-span-5"><Button type="submit">Cadastrar</Button></div>
         </form>
         <p className="mt-2 text-xs text-muted-foreground">O PIN é o que o colaborador digita no computador da loja para bater o ponto. Ninguém consegue ver o PIN depois — só trocar.</p>
       </Panel>
 
       <Panel title={`Colaboradores · ${data?.length ?? 0}`}>
         <div className="overflow-x-auto"><table className="w-full text-sm">
-          <thead><tr className="text-left text-xs text-muted-foreground"><th className="py-1">Nome</th><th>CPF</th><th>Cargo</th><th>Admissão</th><th>Escala</th><th>Situação</th><th /></tr></thead>
+          <thead><tr className="text-left text-xs text-muted-foreground"><th className="py-1">Nome</th><th>CPF</th><th>Cargo</th><th>Admissão</th><th>Escala</th><th>Empresa</th><th>Situação</th><th /></tr></thead>
           <tbody>
             {(data ?? []).map((c) => (
               <tr key={c.id} className={cn("border-t", !c.ativo && "text-muted-foreground")}>
@@ -79,6 +88,7 @@ export function ColaboradoresPonto() {
                 <td>{c.cargo ?? "—"}</td>
                 <td>{dataBr(c.admissao)}</td>
                 <td>{nomeEscala(c.escala_id) ?? <span className="text-warning">sem escala</span>}</td>
+                <td className="text-xs">{nomeEmpresa(c.empresa_id) ?? <span className="text-muted-foreground">principal</span>}</td>
                 <td>{c.ativo ? <Tag tone="ok">Ativo</Tag> : <Tag>Inativo</Tag>}</td>
                 <td className="whitespace-nowrap text-right">
                   <Button size="sm" variant="outline" onClick={() => setEditar(c)}>Editar</Button>{" "}
@@ -87,22 +97,22 @@ export function ColaboradoresPonto() {
                 </td>
               </tr>
             ))}
-            {data?.length === 0 && <tr><td colSpan={7} className="py-6 text-center text-muted-foreground">Nenhum colaborador.</td></tr>}
+            {data?.length === 0 && <tr><td colSpan={8} className="py-6 text-center text-muted-foreground">Nenhum colaborador.</td></tr>}
           </tbody>
         </table></div>
       </Panel>
 
-      {editar && <EditarColaborador c={editar} escalas={escalas ?? []} onFechar={() => setEditar(null)} onSalvo={() => { setEditar(null); refetch(); }} />}
+      {editar && <EditarColaborador c={editar} escalas={escalas ?? []} empresas={empresas ?? []} onFechar={() => setEditar(null)} onSalvo={() => { setEditar(null); refetch(); }} />}
     </div>
   );
 }
 
-function EditarColaborador({ c, escalas, onFechar, onSalvo }: { c: PontoColaborador; escalas: PontoEscala[]; onFechar: () => void; onSalvo: () => void }) {
-  const [f, setF] = useState<FormColab>({ nome: c.nome, cpf: c.cpf ?? "", cargo: c.cargo ?? "", admissao: c.admissao ?? "", escala_id: c.escala_id ?? "", pin: "" });
+function EditarColaborador({ c, escalas, empresas, onFechar, onSalvo }: { c: PontoColaborador; escalas: PontoEscala[]; empresas: Empresa[]; onFechar: () => void; onSalvo: () => void }) {
+  const [f, setF] = useState<FormColab>({ nome: c.nome, cpf: c.cpf ?? "", cargo: c.cargo ?? "", admissao: c.admissao ?? "", escala_id: c.escala_id ?? "", empresa_id: c.empresa_id ?? "", pin: "" });
   async function salvar() {
     try {
       await pontoAtualizarColaborador(c.id, {
-        nome: f.nome, cpf: f.cpf || null, cargo: f.cargo || null, admissao: f.admissao || null, escala_id: f.escala_id || null, ...(f.pin ? { pin: f.pin } : {}),
+        nome: f.nome, cpf: f.cpf || null, cargo: f.cargo || null, admissao: f.admissao || null, escala_id: f.escala_id || null, empresa_id: f.empresa_id || null, ...(f.pin ? { pin: f.pin } : {}),
       });
       toast.success(f.pin ? "Salvo (PIN trocado)" : "Salvo"); onSalvo();
     } catch (error) { toast.error(errMsg(error)); }
@@ -120,6 +130,12 @@ function EditarColaborador({ c, escalas, onFechar, onSalvo }: { c: PontoColabora
             <select className={sel} value={f.escala_id} onChange={(e) => setF({ ...f, escala_id: e.target.value })}>
               <option value="">— sem escala —</option>
               {escalas.map((e) => <option key={e.id} value={e.id}>{e.nome}{e.ativo ? "" : " (inativa)"}</option>)}
+            </select>
+          </div>
+          <div className="sm:col-span-2"><Label>Empresa (empregadora)</Label>
+            <select className={sel} value={f.empresa_id} onChange={(e) => setF({ ...f, empresa_id: e.target.value })}>
+              <option value="">— a principal —</option>
+              {empresas.map((e) => <option key={e.id} value={e.id}>{e.nome_fantasia || e.razao_social}{e.ativo ? "" : " (inativa)"}</option>)}
             </select>
           </div>
           <div className="sm:col-span-2"><Label>Novo PIN (deixe vazio para manter)</Label><Input inputMode="numeric" value={f.pin} onChange={(e) => setF({ ...f, pin: soPin(e.target.value) })} /></div>

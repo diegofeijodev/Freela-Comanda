@@ -12,6 +12,7 @@ import { CardapioController } from '../../modules/cardapio/cardapio.controller';
 import { ComprasController } from '../../modules/compras/compras.controller';
 import { ContasController } from '../../modules/contas/contas.controller';
 import { CupomFiscalController } from '../../modules/cupom-fiscal/cupom-fiscal.controller';
+import { EmpresasController } from '../../modules/empresas/empresas.controller';
 import { EstoqueController } from '../../modules/estoque/estoque.controller';
 import { ImportacoesController } from '../../modules/importacoes/importacoes.controller';
 import { InventariosController } from '../../modules/inventarios/inventarios.controller';
@@ -33,6 +34,7 @@ const CONTROLLERS = [
   ComprasController,
   ContasController,
   CupomFiscalController,
+  EmpresasController,
   EstoqueController,
   ImportacoesController,
   InventariosController,
@@ -163,6 +165,17 @@ describe('proteção das rotas (substitui as políticas RLS do Supabase)', () =>
     ]);
     expect(ponto.filter((r) => r.marca !== 'staff').every((r) => r.marca === 'admin')).toBe(true);
     expect(ponto.length).toBe(27);
+  });
+
+  it('o cadastro de empresas é só do admin', () => {
+    expect(todas.filter((r) => r.rota.includes('/empresas'))).toEqual([
+      { rota: 'GET /v1/empresas', marca: 'admin' },
+      { rota: 'GET /v1/empresas/:id', marca: 'admin' },
+      { rota: 'POST /v1/empresas', marca: 'admin' },
+      { rota: 'PUT /v1/empresas/:id', marca: 'admin' },
+      { rota: 'POST /v1/empresas/:id/principal', marca: 'admin' },
+      { rota: 'DELETE /v1/empresas/:id', marca: 'admin' },
+    ]);
   });
 
   it('só estas rotas são públicas', () => {

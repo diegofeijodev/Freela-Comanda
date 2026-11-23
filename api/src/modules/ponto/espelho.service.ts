@@ -1,6 +1,8 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../common/database/prisma.service';
+import { formatarCnpj } from '../../common/fiscal/cnpj';
 import { dateToString, dayToDb, todaySp } from '../../common/time/dates';
+import { enderecoEmUmaLinha } from '../empresas/normaliza-empresa';
 import {
   calcularDia,
   diasEntre,
@@ -16,6 +18,8 @@ import {
 
 export interface Espelho {
   colaborador: { id: string; nome: string; cpf: string | null; cargo: string | null; escala: string | null; ativo: boolean };
+  /** Empregador (cadastro de empresas): a do colaborador ou, sem ela, a principal. Sai no cabeçalho do PDF e do Excel. */
+  empresa: { razao_social: string; nome_fantasia: string | null; cnpj: string; endereco: string } | null;
   ini: string;
   fim: string;
   dias: DiaCalculado[];
@@ -30,9 +34,10 @@ export class EspelhoService {
   async espelho(colaboradorId: string, ini: string, fim: string, agora = new Date()): Promise<Espelho> {
     const c = await this.prisma.ponto_colaboradores.findUnique({
       where: { id: colaboradorId },
-      include: { escala: { include: { dias: true } } },
+      include: { escala: { include: { dias: true } }, empresa: true },
     });
     if (!c) throw new NotFoundException({ code: 'NOT_FOUND', message: 'Colaborador não encontrado' });
+    const empresa = c.empresa ?? (await this.prisma.empresas.findFirst({ where: { principal: true } }));
     const [folgas, marcacoes, justificativas] = await Promise.all([
       this.prisma.ponto_folgas.findMany({
         where: { data: { gte: dayToDb(ini), lte: dayToDb(fim) }, OR: [{ colaborador_id: colaboradorId }, { colaborador_id: null }] },
@@ -79,6 +84,9 @@ export class EspelhoService {
 
     return {
       colaborador: { id: c.id, nome: c.nome, cpf: c.cpf, cargo: c.cargo, escala: c.escala?.nome ?? null, ativo: c.ativo },
+      empresa: empresa
+        ? { razao_social: empresa.razao_social, nome_fantasia: empresa.nome_fantasia, cnpj: formatarCnpj(empresa.cnpj), endereco: enderecoEmUmaLinha(empresa) }
+        : null,
       ini,
       fim,
       dias,

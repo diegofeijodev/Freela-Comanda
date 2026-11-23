@@ -41,6 +41,8 @@ contrato: `docs/api-contract.md`. Protótipo de referência em `.prototype/` (gi
   e elas exigem o cabeçalho `X-Ponto-Terminal` de um terminal ativo (liberado pelo admin no próprio computador da loja; banco guarda só o SHA-256) + PIN do colaborador.
   Erro de PIN é 400 (nunca 401, que derruba a sessão). Batida nunca é apagada: corrigir = anular com motivo + manual com `substitui_id`. A hora da batida é a do servidor.
   Exceção à "regra em SQL": o cálculo (horas, atraso, extras 50/100, noturno, abono) é a função pura `modules/ponto/calculo.ts` (testes em `__tests__/calculo.spec.ts`).
+- Empresas (`api/src/modules/empresas`, rotas `/v1/empresas` em `docs/api-contract.md` §19, tela `web/src/app/(app)/empresas`, só admin): no máximo uma `principal`,
+  que espelha razão social, fantasia, CNPJ e endereço em `configuracoes` (o resto do sistema continua lendo de lá; com principal, Configurações mostra esses campos só para leitura).
 - Web: storage do navegador só em `modules/auth/infrastructure/auth.storage.ts` (sessão `authUser`), `modules/inventario/infrastructure/rascunho.storage.ts`
   (rascunho da contagem) e `modules/ponto/infrastructure/terminal.storage.ts` (token do terminal de ponto). Telas são `'use client'`; `@/lib/erp-api.ts` é o único lugar com chamadas HTTP.
 

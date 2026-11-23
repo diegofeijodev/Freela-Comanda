@@ -129,6 +129,12 @@ function Folha({ espelho: e, onDia }: { espelho: PontoEspelho; onDia?: (d: Ponto
   return (
     <div className="space-y-4">
       <div className="hidden print:block">
+        {e.empresa && (
+          <div className="mb-2 border-b pb-1 text-xs">
+            <b>{e.empresa.razao_social}</b>{e.empresa.nome_fantasia ? ` (${e.empresa.nome_fantasia})` : ""} · CNPJ {e.empresa.cnpj}
+            {e.empresa.endereco && <div>{e.empresa.endereco}</div>}
+          </div>
+        )}
         <h2 className="text-lg font-bold">Espelho de ponto — {e.colaborador.nome}</h2>
         <div className="text-xs">CPF: {e.colaborador.cpf ?? "—"} · Cargo: {e.colaborador.cargo ?? "—"} · Escala: {e.colaborador.escala ?? "—"} · Período: {dataBr(e.ini)} a {dataBr(e.fim)}</div>
       </div>
