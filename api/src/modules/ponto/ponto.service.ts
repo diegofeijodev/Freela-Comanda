@@ -27,6 +27,7 @@ const COLAB_SELECT = {
   cargo: true,
   admissao: true,
   escala_id: true,
+  empresa_id: true,
   ativo: true,
   created_at: true,
 } satisfies Prisma.ponto_colaboradoresSelect;
@@ -104,6 +105,7 @@ export class PontoService {
 
   async criarColaborador(dto: NovoColaboradorDto) {
     if (dto.escala_id) await this.escalaExiste(dto.escala_id);
+    if (dto.empresa_id) await this.empresaExiste(dto.empresa_id);
     try {
       return await this.prisma.ponto_colaboradores.create({
         data: {
@@ -112,6 +114,7 @@ export class PontoService {
           cargo: dto.cargo?.trim() || null,
           admissao: dto.admissao ? dayToDb(dto.admissao) : null,
           escala_id: dto.escala_id ?? null,
+          empresa_id: dto.empresa_id ?? null,
           pin_hash: await bcrypt.hash(dto.pin, 10),
         },
         select: COLAB_SELECT,
@@ -124,12 +127,14 @@ export class PontoService {
   async atualizarColaborador(id: string, dto: AtualizarColaboradorDto) {
     await this.colaboradorExiste(id);
     if (dto.escala_id) await this.escalaExiste(dto.escala_id);
+    if (dto.empresa_id) await this.empresaExiste(dto.empresa_id);
     const data: Prisma.ponto_colaboradoresUncheckedUpdateInput = {};
     if (dto.nome !== undefined) data.nome = dto.nome.trim();
     if (dto.cpf !== undefined) data.cpf = soDigitos(dto.cpf);
     if (dto.cargo !== undefined) data.cargo = dto.cargo?.trim() || null;
     if (dto.admissao !== undefined) data.admissao = dto.admissao ? dayToDb(dto.admissao) : null;
     if (dto.escala_id !== undefined) data.escala_id = dto.escala_id;
+    if (dto.empresa_id !== undefined) data.empresa_id = dto.empresa_id;
     if (dto.ativo !== undefined) data.ativo = dto.ativo;
     if (dto.pin) data.pin_hash = await bcrypt.hash(dto.pin, 10);
     try {
@@ -151,6 +156,11 @@ export class PontoService {
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002')
       return new ConflictException({ code: 'DUPLICADO', message: 'Já existe colaborador com este CPF' });
     return e;
+  }
+
+  private async empresaExiste(id: string) {
+    const e = await this.prisma.empresas.findUnique({ where: { id }, select: { id: true } });
+    if (!e) throw new NotFoundException({ code: 'NOT_FOUND', message: 'Empresa não encontrada' });
   }
 
   private async colaboradorExiste(id: string) {

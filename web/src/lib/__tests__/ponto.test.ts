@@ -10,7 +10,8 @@ const dia = (p: Partial<PontoDia>): PontoDia => ({
 });
 const totais = { dias_previstos: 1, dias_trabalhados: 1, faltas: 0, esperado_min: 480, trabalhado_min: 500, atraso_min: 0, saida_antecipada_min: 0, abonado_min: 0, extra_50_min: 20, extra_100_min: 0, noturno_min: 240, debito_min: 0, saldo_min: 20, incompletos: 0, pendencias: 0 };
 const espelho = (nome: string): PontoEspelho => ({
-  colaborador: { id: nome, nome, cpf: null, cargo: "Garçom", escala: "Noite", ativo: true }, ini: "2026-11-01", fim: "2026-11-30",
+  colaborador: { id: nome, nome, cpf: null, cargo: "Garçom", escala: "Noite", ativo: true },
+  empresa: { razao_social: "Chopp & Espeto Ltda", nome_fantasia: null, cnpj: "11.222.333/0001-81", endereco: "Valinhos/SP" }, ini: "2026-11-01", fim: "2026-11-30",
   dias: [dia({ marcacoes: [{ momento: "2026-11-21T21:00:00.000Z", tipo: "entrada" }, { momento: "2026-11-22T05:20:00.000Z", tipo: "saida" }], trabalhado_min: 500 })],
   totais,
 });
@@ -45,6 +46,9 @@ describe("ponto (web)", () => {
     const resumo = XLSX.utils.sheet_to_json<string[]>(wb.Sheets.Resumo!, { header: 1 });
     expect(resumo[0]).toEqual(["Ponto — 11/2026"]);
     expect(resumo[3]).toEqual(linhaResumo(espelho("Ana")));
-    expect(linhaResumo(espelho("Ana")).slice(7, 12)).toEqual(["8:00", "8:20", "0:20", "0:00", "4:00"]);
+    const aba = XLSX.utils.sheet_to_json<string[]>(wb.Sheets.Ana!, { header: 1 });
+    expect(aba[0]).toEqual(["Empregador: Chopp & Espeto Ltda", "CNPJ: 11.222.333/0001-81", "Valinhos/SP"]);
+    expect(linhaResumo(espelho("Ana"))[1]).toBe("Chopp & Espeto Ltda");
+    expect(linhaResumo(espelho("Ana")).slice(8, 13)).toEqual(["8:00", "8:20", "0:20", "0:00", "4:00"]);
   });
 });

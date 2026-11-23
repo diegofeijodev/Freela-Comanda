@@ -45,6 +45,7 @@ export class NovoColaboradorDto {
   @IsOptional() @IsString() @MaxLength(80) cargo?: string | null;
   @IsOptional() @IsDayString() admissao?: string | null;
   @IsOptional() @IsUUID('all') escala_id?: string | null;
+  @IsOptional() @IsUUID('all') empresa_id?: string | null;
   @Matches(PIN, { message: MSG_PIN }) pin!: string;
 }
 
@@ -54,6 +55,7 @@ export class AtualizarColaboradorDto {
   @IsOptional() @IsString() @MaxLength(80) cargo?: string | null;
   @IsOptional() @IsDayString() admissao?: string | null;
   @IsOptional() @IsUUID('all') escala_id?: string | null;
+  @IsOptional() @IsUUID('all') empresa_id?: string | null;
   @IsOptional() @Matches(PIN, { message: MSG_PIN }) pin?: string;
   @IsOptional() @IsBoolean() ativo?: boolean;
 }

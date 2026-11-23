@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import {
   BarChart3, BookOpen, ClipboardCheck, Boxes, Target, ShoppingCart, Upload, Settings, Users, LayoutDashboard, LogOut, FileInput, Wallet, Calculator, Landmark, KeyRound,
-  Receipt, Clock,
+  Receipt, Clock, Building2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useMe, useSair } from '@/lib/auth';
@@ -28,6 +28,7 @@ const MENU = [
   { to: '/ponto', label: 'Ponto', icon: Clock, loja: true },
   { to: '/dre', label: 'DRE', icon: Calculator, loja: false },
   { to: '/importar', label: 'Importar Dados', icon: Upload, loja: false },
+  { to: '/empresas', label: 'Empresas', icon: Building2, loja: false },
   { to: '/configuracoes', label: 'Configurações', icon: Settings, loja: false },
   { to: '/usuarios', label: 'Usuários', icon: Users, loja: false },
 ] as const;

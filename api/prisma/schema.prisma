@@ -971,11 +971,13 @@ model ponto_colaboradores {
   cargo      String?
   admissao   DateTime? @db.Date
   escala_id  String?   @db.Uuid
+  empresa_id String?   @db.Uuid
   pin_hash   String
   ativo      Boolean   @default(true)
   created_at DateTime  @default(now()) @db.Timestamptz(6)
 
   escala         ponto_escalas?         @relation(fields: [escala_id], references: [id], onDelete: SetNull)
+  empresa        empresas?              @relation(fields: [empresa_id], references: [id], onDelete: SetNull)
   folgas         ponto_folgas[]
   marcacoes      ponto_marcacoes[]
   justificativas ponto_justificativas[]
@@ -1049,4 +1051,41 @@ model ponto_justificativas {
 
   @@unique([colaborador_id, data, tipo])
   @@index([status])
+}
+
+/// Cadastro de empresas (não existe no Lovable). No máximo uma `principal` (índice parcial na migração), espelhada em `configuracoes`.
+model empresas {
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  razao_social        String
+  nome_fantasia       String?
+  cnpj                String    @unique(map: "empresas_cnpj_key")
+  inscricao_estadual  String?
+  inscricao_municipal String?
+  regime_tributario   String?
+  cnae                String?
+  data_abertura       DateTime? @db.Date
+  cep                 String?
+  logradouro          String?
+  numero              String?
+  complemento         String?
+  bairro              String?
+  cidade              String?
+  uf                  String?   @db.Char(2)
+  cod_municipio       String?   @db.Char(7)
+  telefone            String?
+  celular             String?
+  email               String?
+  site                String?
+  responsavel_nome    String?
+  responsavel_cpf     String?
+  contador_nome       String?
+  contador_email      String?
+  contador_telefone   String?
+  observacoes         String?
+  principal           Boolean   @default(false)
+  ativo               Boolean   @default(true)
+  created_at          DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime  @default(now()) @db.Timestamptz(6)
+
+  colaboradores ponto_colaboradores[]
 }

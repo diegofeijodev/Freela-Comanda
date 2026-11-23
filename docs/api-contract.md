@@ -382,3 +382,24 @@ Cálculo (`api/src/modules/ponto/calculo.ts`, puro e testado): esperado = saída
 | 409 | `REPETIDA` · `JA_ACEITA` · `ANULADA` · `EM_USO` · `DUPLICADO` | duas batidas no mesmo minuto · justificativa já aceita · marcação já anulada · escala com pessoas / colaborador com batidas · CPF repetido |
 
 Exportação no web: Excel (`web/src/lib/ponto.ts`, aba Resumo + uma por colaborador) e PDF pela impressão do navegador (botão "PDF", como fichas e listas).
+
+## §19 Empresas (admin)
+
+Cadastro completo das empresas. **No máximo uma `principal`** (índice parcial `empresas_uma_principal`): a primeira cadastrada já nasce principal, e a principal espelha `razao_social`, `nome_fantasia`, `cnpj` e `endereco` (em uma linha) em `configuracoes`, de onde o resto do sistema (telas, SEFAZ, cupom fiscal) continua lendo. Com principal cadastrada, a tela de Configurações mostra esses campos só para leitura e não os regrava. Trocar o CNPJ por aqui tem o mesmo efeito de trocar em Configurações (o cupom calcula `ligada_cnpj === cnpj` na leitura).
+
+| Rota | O quê |
+|---|---|
+| `GET /v1/empresas` | lista (principal primeiro), com `_count.colaboradores` |
+| `GET /v1/empresas/:id` | uma empresa |
+| `POST /v1/empresas` · `PUT /v1/empresas/:id` | formulário inteiro: `razao_social`*, `cnpj`* (numérico ou alfanumérico, DV conferido), `nome_fantasia`, `inscricao_estadual`, `inscricao_municipal`, `regime_tributario` (`mei`\|`simples`\|`simples_excesso`\|`presumido`\|`real`), `cnae`, `data_abertura`, `cep` (8 números), `logradouro`, `numero`, `complemento`, `bairro`, `cidade`, `uf`, `cod_municipio` (IBGE, 7), `telefone`, `celular`, `email`, `site`, `responsavel_nome`, `responsavel_cpf` (DV conferido), `contador_nome`, `contador_email`, `contador_telefone`, `observacoes`, `ativo`. Vazio vira `null`; no fio, CNPJ/CEP/CPF saem só com os caracteres |
+| `POST /v1/empresas/:id/principal` | torna principal (a anterior deixa de ser) e espelha em `configuracoes` |
+| `DELETE /v1/empresas/:id` | exclui (não a principal; não com colaboradores do ponto) |
+
+| HTTP | `code` | Quando |
+|---|---|---|
+| 400 | `VALIDATION_ERROR` | CNPJ, CEP, código IBGE, CPF do responsável, UF, regime ou e-mail inválidos |
+| 409 | `DUPLICADO` | CNPJ já cadastrado |
+| 409 | `PRINCIPAL` | excluir ou desativar a principal |
+| 409 | `INATIVA` · `EM_USO` | tornar principal uma inativa · excluir empresa com colaboradores |
+
+O colaborador do ponto tem `empresa_id` opcional (o empregador). O espelho (`GET /v1/ponto/espelho…`) traz `empresa` (a do colaborador ou, sem ela, a principal), que sai no cabeçalho do PDF e do Excel.

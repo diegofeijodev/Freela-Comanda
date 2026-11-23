@@ -2,11 +2,12 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Suspense, useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { Trash2 } from "lucide-react";
 import {
-  criarFornecedor, criarSubgrupo, excluirFornecedor, excluirSubgrupo, listarFornecedores, listarSazonalidade, listarSubgrupos, salvarConfig, salvarSazonalidade,
+  criarFornecedor, criarSubgrupo, listarEmpresas, excluirFornecedor, excluirSubgrupo, listarFornecedores, listarSazonalidade, listarSubgrupos, salvarConfig, salvarSazonalidade,
   type Config as ConfigRow,
 } from "@/lib/erp-api";
 import { PageHeader, Panel } from "@/components/ui-kit";
@@ -82,6 +83,8 @@ function Config() {
   }, [params]);
   const queryClient = useQueryClient();
   const { data: cfg, refetch } = useQuery({ queryKey: ["config"], queryFn: getConfig });
+  const { data: empresas } = useQuery({ queryKey: ["empresas"], queryFn: listarEmpresas, enabled: me?.perfil === "admin" });
+  const temPrincipal = !!empresas?.some((e) => e.principal);
   const { data: saz, refetch: rS } = useQuery({ queryKey: ["sazonalidade"], queryFn: listarSazonalidade });
   const { data: forn, refetch: rF } = useQuery({ queryKey: ["fornecedores"], queryFn: listarFornecedores });
   const { data: subs, refetch: rSub } = useQuery({ queryKey: ["subgrupos"], queryFn: listarSubgrupos });
@@ -100,7 +103,8 @@ function Config() {
   }, [cfg]);
 
   async function salvar() {
-    const patch: Record<string, unknown> = { ...empresa, dia_inventario: dia, loja_pode_abrir: lojaAbre };
+    // Com empresa principal cadastrada, razão social/CNPJ/endereço vêm de Empresas: não regrava daqui.
+    const patch: Record<string, unknown> = { ...(temPrincipal ? {} : empresa), dia_inventario: dia, loja_pode_abrir: lojaAbre };
     for (const [k] of CAMPOS) { const v = parseNum(f[k]); if (v == null) return toast.error("Valor inválido"); patch[k] = v; }
     try {
       await salvarConfig(patch as Partial<ConfigRow>);
@@ -142,12 +146,17 @@ function Config() {
         <TabsContent value="geral" className="space-y-4">
       <div className="flex justify-end"><Button onClick={salvar}>Salvar</Button></div>
       <Panel title="Empresa">
-        <div className="grid gap-3 sm:grid-cols-2">
+        {temPrincipal && (
+          <p className="mb-3 text-sm text-muted-foreground">
+            Estes dados vêm da empresa principal do cadastro de <Link href="/empresas" className="text-primary underline">Empresas</Link>. Para mudar, edite lá.
+          </p>
+        )}
+        <fieldset disabled={temPrincipal} className="grid gap-3 sm:grid-cols-2">
           <div><Label className="text-xs text-muted-foreground">Razão social</Label><Input value={empresa.razao_social} onChange={(e) => setEmpresa({ ...empresa, razao_social: e.target.value })} /></div>
           <div><Label className="text-xs text-muted-foreground">Nome fantasia</Label><Input value={empresa.nome_fantasia} onChange={(e) => setEmpresa({ ...empresa, nome_fantasia: e.target.value })} /></div>
           <div><Label htmlFor="empresa-cnpj" className="text-xs text-muted-foreground">CNPJ</Label><Input id="empresa-cnpj" autoCapitalize="characters" autoComplete="off" spellCheck={false} className="uppercase" placeholder="00.000.000/0000-00" value={empresa.cnpj} onChange={(e) => setEmpresa({ ...empresa, cnpj: e.target.value.toUpperCase() })} onBlur={() => setEmpresa((x) => ({ ...x, cnpj: formatarCnpj(x.cnpj) }))} /></div>
           <div><Label className="text-xs text-muted-foreground">Endereço completo</Label><Input value={empresa.endereco} onChange={(e) => setEmpresa({ ...empresa, endereco: e.target.value })} /></div>
-        </div>
+        </fieldset>
       </Panel>
       {me?.perfil === "admin" && <IaChavePanel />}
       {me?.perfil === "admin" && (

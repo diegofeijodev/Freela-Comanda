@@ -25,3 +25,6 @@ primeira caixa vazia. Verificação SEMPRE por `scripts/run-capped.sh` (máquina
   (token + PIN), batidas com justificativa de atraso/saída antecipada/falta, cadastro de colaboradores, escalas, folgas/feriados, ajustes e
   correções auditadas, cálculo (extras 50/100, noturno, abono) e exportação Excel/PDF. jest 66/2059, vitest 16/298, tsc e eslint limpos;
   conferido no navegador (loja bloqueada sem liberação, liberação, PIN, batida, justificativa, espelho, ajuste, Excel e PDF).
+- 23/11: cadastro de **Empresas** (migração `20261124120000_empresas`, módulo `api/src/modules/empresas`, tela `/empresas`, admin): dados completos
+  (CNPJ, inscrições, regime, endereço com IBGE, contatos, responsável, contador); a principal espelha em `configuracoes`; colaborador do ponto ganha
+  empresa empregadora (sai no PDF/Excel). jest 67/2064, vitest 16/298, tsc e eslint limpos; conferido no navegador.

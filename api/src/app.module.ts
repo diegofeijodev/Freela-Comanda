@@ -14,6 +14,7 @@ import { CardapioModule } from './modules/cardapio/cardapio.module';
 import { ComprasModule } from './modules/compras/compras.module';
 import { ContasModule } from './modules/contas/contas.module';
 import { CupomFiscalModule } from './modules/cupom-fiscal/cupom-fiscal.module';
+import { EmpresasModule } from './modules/empresas/empresas.module';
 import { EstoqueModule } from './modules/estoque/estoque.module';
 import { ImportacoesModule } from './modules/importacoes/importacoes.module';
 import { InventariosModule } from './modules/inventarios/inventarios.module';
@@ -48,6 +49,7 @@ import { VendasModule } from './modules/vendas/vendas.module';
     CaixaModule,
     ImportacoesModule,
     PontoModule,
+    EmpresasModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },
