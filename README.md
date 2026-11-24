@@ -27,10 +27,12 @@ Num banco vazio, a tela de entrada oferece **"Primeiro acesso? Criar conta de ad
 Na máquina do dono, sempre pelo teto de memória (`scripts/run-capped.sh`, ver `CLAUDE.md`):
 
 - API: `npx jest --runInBand <arquivos>` (6 suítes), `npm run typecheck`, `npx eslint "src/**/*.ts"`,
-  smoke `bash scripts/smoke-capped.sh` (banco descartável, 165 checagens: permissões admin × loja, inventário cego de ponta a ponta,
-  lista de compras, nota fiscal, contas/DRE/caixa, importações, usuários, PDF sem chave).
+  smoke `bash scripts/smoke-capped.sh` (banco descartável, 732 checagens em 24/11: permissões admin × loja, inventário cego de ponta a ponta,
+  lista de compras, nota fiscal, contas/DRE/caixa, importações, usuários, PDF sem chave, certificado, SEFAZ, cupom, importar vendas e, no fim, o
+  roteiro ponta a ponta E1–E9, a Cana e o multiempresa; as 2 que falham em novembro, "DRE de novembro" e "mês de 30 dias", são antigas, de data).
 - Web: `yarn test` (7 arquivos, as regras puras do protótipo), `yarn typecheck`, `yarn lint`,
-  `bash scripts/browser-check.sh` (Playwright headless, 68 checagens: admin no desktop e loja no celular pelos formulários, nota por XML, inventário cego, caixa; capturas em `.cache/telas`).
+  `bash scripts/browser-check.sh` (Playwright headless, 68 checagens: admin no desktop e loja no celular pelos formulários, nota por XML, inventário cego, caixa; capturas em `.cache/telas`);
+  grupos à parte: `browser-check-importar-vendas.mjs` e `browser-check-cana.mjs` (39 checagens), com `CHECK_SCRIPT` e `BC_ROTAS` (CLAUDE.md).
 
 ## Diferenças em relação ao Lovable (de propósito)
 
