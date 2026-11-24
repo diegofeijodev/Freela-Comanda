@@ -37,8 +37,8 @@ const HOJE = diaSp(0);
 // O cardápio do seed não tem caldo: 2 produtos e as vendas da semana entram pelo banco (a importação já tem o seu grupo).
 sql(`insert into itens_cardapio (nome, categoria, grupo) values ('Caldo de cana 300 ml','Bebidas','Bebidas'), ('Frozen de cana 400 ml','Bebidas','Bebidas')`);
 sql(`insert into vendas (pedido, data, produto_relatorio, item_cardapio_id, quantidade, valor_total)
-     select 'BC-K1', '${diaSp(-4)}', 'CALDO DE CANA 300', id, 100, 800 from itens_cardapio where nome = 'Caldo de cana 300 ml'
-     union all select 'BC-K2', '${diaSp(-4)}', 'FROZEN 400', id, 40, 600 from itens_cardapio where nome = 'Frozen de cana 400 ml'`);
+     select 'BC-K1', '${diaSp(-4)}'::date, 'CALDO DE CANA 300', id, 100, 800 from itens_cardapio where nome = 'Caldo de cana 300 ml'
+     union all select 'BC-K2', '${diaSp(-4)}'::date, 'FROZEN 400', id, 40, 600 from itens_cardapio where nome = 'Frozen de cana 400 ml'`);
 
 const browser = await chromium.launch({ headless: true, args: ['--disable-dev-shm-usage', '--no-sandbox'] });
 
@@ -63,7 +63,8 @@ async function sessao(email, viewport = { width: 1366, height: 900 }) {
   await page.waitForURL('**/painel', { timeout: 120_000, waitUntil: 'commit' });
   return { ctx, page, erros };
 }
-const ve = async (page, texto, timeout = 30_000) => page.getByText(texto, { exact: false }).first().waitFor({ timeout }).then(() => true, () => false);
+// só o que está à vista (a 1366 px a versão de celular de uma tabela existe, oculta)
+const ve = async (page, texto, timeout = 30_000) => page.getByText(texto, { exact: false }).locator('visible=true').first().waitFor({ timeout }).then(() => true, () => false);
 const foto = (page, nome) => page.screenshot({ path: join(SHOTS, `${nome}.png`), fullPage: true });
 const semRolagemLateral = (page) => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
 
@@ -157,6 +158,7 @@ sql("update users set modulos = array_append(modulos, 'cana') where email = 'loj
   const alto = await page.getByRole('button', { name: /^Recebi cana/ }).boundingBox();
   check('15: botão grande (72 px)', !!alto && alto.height >= 72, JSON.stringify(alto));
   await page.getByRole('button', { name: /^Recebi cana/ }).click();
+  await page.getByLabel('Quantas dúzias chegaram?').waitFor();
   check('16: só Hoje e Ontem, sem campo de data', (await page.getByRole('radio').count()) === 2 && (await page.locator('input[type=date]').count()) === 0);
   await page.getByLabel('Quantas dúzias chegaram?').fill('12');
   check('15: o botão diz o que vai ser gravado', (await page.getByRole('button', { name: 'Lançar 12 dúzias recebidas hoje' }).count()) === 1);
