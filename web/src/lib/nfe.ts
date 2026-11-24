@@ -50,13 +50,15 @@ export function formaDoTPag(tPag: string | null | undefined, temDuplicatas: bool
 
 const n = (s: string | null | undefined) => (s ? Number(s) || 0 : 0);
 
+/** As três buscas por nome local (qualquer namespace) do XML fiscal; também usadas pela leitura dos XML de venda (`nfe-vendas.ts`). */
+export const all = (el: Element | Document, tag: string) => Array.from(el.getElementsByTagNameNS("*", tag));
+export const one = (el: Element | Document, tag: string) => all(el, tag)[0] ?? null;
+export const txt = (el: Element | Document | null, tag: string) => (el ? one(el, tag)?.textContent?.trim() ?? null : null);
+
 /** Lê o XML da NF-e (modelo 55) ou NFC-e (65) */
 export function parseNFeXML(xml: string): NotaLida {
   const doc = new DOMParser().parseFromString(xml, "text/xml");
   if (doc.getElementsByTagName("parsererror").length) throw new Error("Arquivo XML inválido");
-  const all = (el: Element | Document, tag: string) => Array.from(el.getElementsByTagNameNS("*", tag));
-  const one = (el: Element | Document, tag: string) => all(el, tag)[0] ?? null;
-  const txt = (el: Element | Document | null, tag: string) => (el ? one(el, tag)?.textContent?.trim() ?? null : null);
 
   const inf = one(doc, "infNFe");
   if (!inf) throw new Error("Este XML não é uma nota fiscal eletrônica");

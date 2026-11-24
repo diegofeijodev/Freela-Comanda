@@ -59,12 +59,14 @@ export type EscolhasPrevia = {
 
 /** Passo 3 (UX 2.6/2.7): "Confira antes de importar". */
 export function PreviaImportacao({
-  previa, carregando, erro, onTentar, sistema, formato, arquivo, cardapio, escolhas, onEscolhas, importando, erroImportar, avisoTopo,
+  previa, carregando, erro, acaoErro, onTentar, sistema, formato, arquivo, cardapio, escolhas, onEscolhas, importando, erroImportar, avisoTopo,
   onImportar, onVoltar, textoVoltar, onSubstituirDialogo, dialogoAberto, onFecharDialogo,
 }: {
   previa: PreviaVendas | null;
   carregando: boolean;
   erro: string | null;
+  /** Botão que resolve o erro (ex.: "Ir para Empresas" no LOJA_SEM_CNPJ). */
+  acaoErro?: ReactNode;
   onTentar(): void;
   sistema: string;
   formato: "planilha" | "xml" | "pdf";
@@ -96,7 +98,7 @@ export function PreviaImportacao({
       <section aria-labelledby="titulo-previa" className="space-y-3">
         {cabecalho}
         {erro ? (
-          <Aviso tom="vermelho" titulo={erro} acao={<Button variant="outline" className="h-11" onClick={onTentar}>Tentar de novo</Button>} />
+          <Aviso tom="vermelho" titulo={erro} acao={acaoErro ?? <Button variant="outline" className="h-11" onClick={onTentar}>Tentar de novo</Button>} />
         ) : (
           <div aria-live="polite" className="space-y-2">
             <p className="flex items-center gap-2 text-sm"><Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden /> Conferindo com as vendas que já estão no Comanda…</p>

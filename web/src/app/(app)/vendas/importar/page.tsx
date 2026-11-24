@@ -4,11 +4,13 @@ import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { CheckCircle2, CircleAlert, FileSpreadsheet, Upload } from "lucide-react";
+import { CheckCircle2, CircleAlert, FileCode2, FileSpreadsheet, Upload } from "lucide-react";
 import {
   confirmarImportarVendas, importacoesVendasRecentes, listarCardapio, listarOrigensVendas, previaImportarVendas, statusDoErro,
-  type CorpoImportarVendas, type FormatoVendas, type PreviaVendas, type ResultadoImportarVendas,
+  type CorpoImportarVendas, type DocumentoVendaXml, type FormatoVendas, type PreviaVendas, type ResultadoImportarVendas,
 } from "@/lib/erp-api";
+import { lerXmlVenda, MOTIVO_XML } from "@/lib/nfe-vendas";
+import { lerZip, ZipErro } from "@/lib/zip-leitura";
 import { errCode, errMsg } from "@/lib/db";
 import { useMe } from "@/lib/auth";
 import { lerTabelaDeBuffer, type Celula } from "@/lib/parse";
@@ -24,14 +26,24 @@ import { PreviaImportacao, type EscolhasPrevia } from "@/components/importar-ven
 import { Resultado } from "@/components/importar-vendas/resultado";
 import { cn } from "@/lib/utils";
 
-type Passo = "arquivo" | "colunas" | "previa" | "resultado";
-const NOME_PASSO: Record<Passo, string> = { arquivo: "Arquivo", colunas: "Colunas", previa: "Conferir e importar", resultado: "Conferir e importar" };
-const NUMERO_PASSO: Record<Passo, number> = { arquivo: 1, colunas: 2, previa: 3, resultado: 3 };
+type Passo = "arquivo" | "colunas" | "lendo" | "previa" | "resultado";
+const NOME_PASSO: Record<Passo, string> = { arquivo: "Arquivo", colunas: "Colunas", lendo: "Lendo os arquivos", previa: "Conferir e importar", resultado: "Conferir e importar" };
+const NUMERO_PASSO: Record<Passo, number> = { arquivo: 1, colunas: 2, lendo: 2, previa: 3, resultado: 3 };
+type EnvioXml = {
+  arquivos_lidos: number;
+  documentos: DocumentoVendaXml[];
+  cancelamentos: { arquivo: string; chave: string; dh_evento: string | null }[];
+  ignorados: { arquivo: string; motivo: string }[];
+};
 
 const TIPOS: { formato: FormatoVendas; titulo: string; texto: string; icone: typeof FileSpreadsheet; botao: string; accept: string; ajuda: string }[] = [
   {
     formato: "planilha", titulo: "Planilha", texto: "CSV ou Excel, de qualquer sistema", icone: FileSpreadsheet, botao: "Escolher a planilha",
     accept: ".csv,.xlsx,.xls,.txt", ajuda: "CSV separado por ponto e vírgula, vírgula ou tabulação, ou Excel.",
+  },
+  {
+    formato: "xml", titulo: "XML", texto: "cupons fiscais: vários arquivos ou o .zip do mês", icone: FileCode2, botao: "Escolher os arquivos XML ou o .zip",
+    accept: ".xml,.zip,text/xml,application/zip", ajuda: "Pode escolher vários .xml de uma vez, ou o .zip que o sistema gera para o contador.",
   },
 ];
 
@@ -59,11 +71,16 @@ export default function ImportarVendasPage() {
   const [sumiram, setSumiram] = useState<Partial<Record<CampoVenda, string>>>({});
   const [sep, setSep] = useState<Separador>("virgula");
   const [lembrar, setLembrar] = useState(true);
+  // xml
+  const [xml, setXml] = useState<EnvioXml | null>(null);
+  const [leitura, setLeitura] = useState<{ lidos: number; total: number } | null>(null);
+  const pararLeitura = useRef(false);
   // prévia e importar
   const [escolhas, setEscolhas] = useState<EscolhasPrevia>(ESCOLHAS_INICIAIS);
   const [previa, setPrevia] = useState<PreviaVendas | null>(null);
   const [carregandoPrevia, setCarregandoPrevia] = useState(false);
   const [erroPrevia, setErroPrevia] = useState<string | null>(null);
+  const [erroPreviaCodigo, setErroPreviaCodigo] = useState<string | null>(null);
   const [erroColunas, setErroColunas] = useState<string | null>(null);
   const [chave, setChave] = useState("");
   const [importando, setImportando] = useState(false);
@@ -105,15 +122,18 @@ export default function ImportarVendasPage() {
   /** O corpo da prévia (o confirmar manda o mesmo + chave, caixa e de-para). */
   const corpo = useMemo<CorpoImportarVendas | null>(() => {
     if (!arquivo || !sistema) return null;
-    const base = { origem_id: sistema === PADRAO ? null : sistema, arquivo: arquivo.nome, arquivo_sha256: arquivo.sha256 };
+    const base = { origem_id: sistema === PADRAO ? null : sistema, arquivo: arquivo.nome, ...(arquivo.sha256 ? { arquivo_sha256: arquivo.sha256 } : {}) };
     if (formato === "planilha" && planilha) {
       return {
         ...base, formato, modo: escolhas.modo, linhas_brutas: planilha.linhas, primeira_linha: planilha.primeiraLinha,
         ...(sistema === PADRAO ? {} : { mapeamento: mapa, separador_decimal: sep }),
       };
     }
+    if (formato === "xml" && xml) {
+      return { ...base, formato, modo: "acrescentar", ...xml, cnpjs_incluidos: escolhas.cnpjsIncluidos, nfe_incluidas: escolhas.nfeIncluidas };
+    }
     return null;
-  }, [arquivo, sistema, formato, planilha, escolhas.modo, mapa, sep]);
+  }, [arquivo, sistema, formato, planilha, xml, escolhas.modo, escolhas.cnpjsIncluidos, escolhas.nfeIncluidas, mapa, sep]);
 
   // a prévia se refaz sozinha (500 ms depois da última mudança; o pedido anterior é cancelado: UX 7.25)
   useEffect(() => {
@@ -122,6 +142,7 @@ export default function ImportarVendasPage() {
     const t = setTimeout(async () => {
       setCarregandoPrevia(true);
       setErroPrevia(null);
+      setErroPreviaCodigo(null);
       try {
         const p = await previaImportarVendas(corpo, ctl.signal);
         if (ctl.signal.aborted) return;
@@ -137,7 +158,10 @@ export default function ImportarVendasPage() {
         if (errCode(e) === "MAPEAMENTO_INCOMPLETO" && formato === "planilha") {
           setErroColunas(errMsg(e));
           setPasso("colunas");
-        } else setErroPrevia(errMsg(e));
+        } else {
+          setErroPrevia(errMsg(e));
+          setErroPreviaCodigo(errCode(e));
+        }
       } finally {
         if (!ctl.signal.aborted) setCarregandoPrevia(false);
       }
@@ -147,11 +171,60 @@ export default function ImportarVendasPage() {
 
   function recomecar(manterSistema = true) {
     setPasso("arquivo");
-    setArquivo(null); setTabela(null); setMapa({}); setSugeridos(new Set()); setSumiram({});
+    setArquivo(null); setTabela(null); setMapa({}); setSugeridos(new Set()); setSumiram({}); setXml(null); setLeitura(null);
     setPrevia(null); setErroPrevia(null); setErroColunas(null); setResultado(null); setErroImportar(null); setAvisoTopo(null);
     setEscolhas(ESCOLHAS_INICIAIS); setErroArquivo(null);
     if (!manterSistema) setSistema(null);
     if (inputArquivo.current) inputArquivo.current.value = "";
+  }
+
+  /** XML (UX 2.4): lê no aparelho, um por um, com o andamento; o .zip é aberto aqui mesmo. Nada some calado. */
+  async function lerXmls(files: File[]) {
+    pararLeitura.current = false;
+    const textos: { nome: string; texto: string }[] = [];
+    const ignorados: EnvioXml["ignorados"] = [];
+    const dec = new TextDecoder("utf-8");
+    let sha: string | undefined;
+    try {
+      for (const f of files) {
+        const buf = await f.arrayBuffer();
+        if (/\.zip$/i.test(f.name)) {
+          if (files.length === 1) sha = await sha256Hex(buf);
+          const z = await lerZip(buf);
+          for (const a of z.arquivos) {
+            if (/\.xml$/i.test(a.nome)) textos.push({ nome: a.nome, texto: dec.decode(a.dados) });
+            else ignorados.push({ arquivo: a.nome, motivo: MOTIVO_XML.naoXml });
+          }
+          for (const g of z.grandes) ignorados.push({ arquivo: g, motivo: "arquivo grande demais (mais de 1 MB)" });
+        } else if (/\.xml$/i.test(f.name) || f.type.includes("xml")) {
+          textos.push({ nome: f.name, texto: dec.decode(buf) });
+        } else ignorados.push({ arquivo: f.name, motivo: MOTIVO_XML.naoXml });
+      }
+    } catch (e) {
+      setErroArquivo(e instanceof ZipErro ? e.message : "Não consigo abrir este .zip. Exporte os XML sem senha, ou descompacte e escolha os .xml soltos.");
+      return;
+    }
+    if (!textos.length && !ignorados.length) {
+      setErroArquivo("Este arquivo não é XML. Escolha os XML dos cupons ou o .zip do mês, ou troque o tipo acima.");
+      return;
+    }
+    setPasso("lendo");
+    setLeitura({ lidos: 0, total: textos.length });
+    const env: EnvioXml = { arquivos_lidos: 0, documentos: [], cancelamentos: [], ignorados };
+    for (let i = 0; i < textos.length; i++) {
+      if (pararLeitura.current) { recomecar(); return; }
+      const r = lerXmlVenda(textos[i]!.nome, textos[i]!.texto);
+      if (r.tipo === "documento") env.documentos.push(r.documento);
+      else if (r.tipo === "cancelamento") env.cancelamentos.push(r.cancelamento);
+      else env.ignorados.push(r.ignorado);
+      if (i % 50 === 49) { setLeitura({ lidos: i + 1, total: textos.length }); await new Promise((ok) => setTimeout(ok, 0)); }
+    }
+    env.arquivos_lidos = env.documentos.length + env.cancelamentos.length + env.ignorados.length;
+    setXml(env);
+    setArquivo({ nome: files.length === 1 ? files[0]!.name : `${files.length} arquivos XML`, sha256: sha ?? "" });
+    setEscolhas(ESCOLHAS_INICIAIS);
+    setPrevia(null);
+    setPasso("previa");
   }
 
   async function escolherArquivo(file: File) {
@@ -292,7 +365,13 @@ export default function ImportarVendasPage() {
           </section>
           <div className="fixed inset-x-0 bottom-0 z-20 border-t bg-background p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:static md:border-0 md:p-0">
             <input ref={inputArquivo} id="arquivo-vendas" type="file" accept={tipo.accept} className="sr-only" disabled={!sistema}
-              onChange={(e) => { const f = e.target.files?.[0]; if (f) void escolherArquivo(f); }} />
+              multiple={formato === "xml"}
+              onChange={(e) => {
+                const fs = Array.from(e.target.files ?? []);
+                if (!fs.length) return;
+                if (formato === "xml") void lerXmls(fs);
+                else void escolherArquivo(fs[0]!);
+              }} />
             <Button className="h-11 w-full md:w-auto" disabled={!sistema} onClick={() => inputArquivo.current?.click()}>
               <Upload className="h-4 w-4" aria-hidden /> {tipo.botao}
             </Button>
@@ -307,7 +386,18 @@ export default function ImportarVendasPage() {
         </div>
       )}
 
-      {passo !== "arquivo" && passo !== "resultado" && (
+      {passo === "lendo" && leitura && (
+        <section aria-labelledby="titulo-lendo" className="space-y-3">
+          <h2 id="titulo-lendo" className="text-lg font-semibold">Lendo os arquivos</h2>
+          <p>Lendo {leitura.lidos.toLocaleString("pt-BR")} de {leitura.total.toLocaleString("pt-BR")} arquivos…</p>
+          <Progress value={leitura.total ? (leitura.lidos / leitura.total) * 100 : 100} aria-label="Andamento da leitura" />
+          <p className="sr-only" aria-live="polite">{leitura.total && leitura.lidos >= leitura.total / 2 ? "Metade dos arquivos lida." : ""}</p>
+          <p className="text-sm text-muted-foreground">A leitura acontece neste aparelho. Não feche a tela.</p>
+          <Button variant="outline" className="h-11" onClick={() => { pararLeitura.current = true; }}>Parar a leitura</Button>
+        </section>
+      )}
+
+      {passo !== "arquivo" && passo !== "resultado" && passo !== "lendo" && (
         <Button variant="ghost" className="h-11" onClick={() => (passo === "previa" && formato === "planilha" && sistema !== PADRAO ? setPasso("colunas") : recomecar())}>
           ← Voltar
         </Button>
@@ -337,6 +427,7 @@ export default function ImportarVendasPage() {
           previa={previa}
           carregando={carregandoPrevia}
           erro={erroPrevia}
+          acaoErro={erroPreviaCodigo === "LOJA_SEM_CNPJ" ? <Button asChild className="h-11"><Link href="/empresas">Ir para Empresas</Link></Button> : undefined}
           onTentar={() => setTentarPrevia((x) => x + 1)}
           sistema={nomeSistema}
           formato={formato}
