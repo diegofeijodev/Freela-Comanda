@@ -110,14 +110,16 @@ Empresas não separa vendas nem estoque. Se a cana for de outra loja, as vendas 
 5. **Confirmar** grava tudo numa transação e mostra o resultado, com o link "Ver vendas do período".
 6. A tela **Importar Dados** continua para insumos e fichas. O botão "Vendas" de lá vira um link para a tela nova. A rota antiga da API fica,
    com o comportamento ajustado (A.3, R3).
+7. O painel **"De-para do relatório de vendas"** continua em Importar Dados (é onde se corrige o de-para depois; o `browser-check.mjs` confere esse
+   título lá). A prévia nova só mostra os produtos **novos** do arquivo, com a escolha do item antes de gravar (*minha*).
 
 ### A.2 Abordagens
 
 | Abordagem | Troca | Decisão |
 |---|---|---|
-| **A1. Estender a tela de hoje:** o navegador lê tudo e manda linhas prontas para `POST /v1/importacoes/vendas` | Pouca mudança. Mas a prévia não sabe o que já existe no banco, o que "Substituir" vai apagar nem o que veio de outra fonte. XML repetido ou cancelado depois não tem onde ser lembrado. | Descartada |
-| **A2. Ler no navegador, conferir no servidor sem gravar, confirmar numa transação** | Segue a decisão 7 do port (XML e planilha lidos no navegador, como a Entrada de Notas) e a regra "a leitura nunca grava". A prévia é calculada pelo **servidor**, que compara com o banco. O mesmo corpo vai duas vezes (prévia e confirmar, ~1 MB para um mês de cupons). Estado guardado só onde o pedido obriga: o mapeamento por sistema e o registro dos documentos fiscais por chave. | **Recomendada** (*minha*) |
-| **A3. Enviar os arquivos ao servidor, gravar um "lote em prévia" e confirmar depois** | Um leitor só (no servidor, testado no jest) e prévia que sobrevive a fechar a aba. Mas quebra "a leitura nunca grava", pede 2 tabelas de lote e limpeza de prévias abandonadas, esbarra no multipart (4 arquivos) e pede um leitor de zip no servidor. | Descartada |
+| **Opção 1. Estender a tela de hoje:** o navegador lê tudo e manda linhas prontas para `POST /v1/importacoes/vendas` | Pouca mudança. Mas a prévia não sabe o que já existe no banco, o que "Substituir" vai apagar nem o que veio de outra fonte. XML repetido ou cancelado depois não tem onde ser lembrado. | Descartada |
+| **Opção 2. Ler no navegador, conferir no servidor sem gravar, confirmar numa transação** | Segue a decisão 7 do port (XML e planilha lidos no navegador, como a Entrada de Notas) e a regra "a leitura nunca grava". A prévia é calculada pelo **servidor**, que compara com o banco. O mesmo corpo vai duas vezes (prévia e confirmar, ~1 MB para um mês de cupons). Estado guardado só onde o pedido obriga: o mapeamento por sistema e o registro dos documentos fiscais por chave. | **Recomendada** (*minha*) |
+| **Opção 3. Enviar os arquivos ao servidor, gravar um "lote em prévia" e confirmar depois** | Um leitor só (no servidor, testado no jest) e prévia que sobrevive a fechar a aba. Mas quebra "a leitura nunca grava", pede 2 tabelas de lote e limpeza de prévias abandonadas, esbarra no multipart (4 arquivos) e pede um leitor de zip no servidor. | Descartada |
 
 **Por que o XML de venda fica no navegador** (*minha*), apesar de o servidor já ter o `xml-leitura.ts`:
 
@@ -152,15 +154,22 @@ nunca é apagado, ganha `situacao = 'cancelada'`, `cancelado_em` e a importaçã
 
 **Teto do zip** (*minha*): até 5.000 arquivos, 1 MB por XML descompactado e 100 MB no total. Pasta e arquivo que não é `.xml` são pulados e contados. Zip64 ou com senha = "Não consigo abrir este .zip. Exporte os XML sem senha.".
 
-**Leitor:** `web/src/lib/nfe-vendas.ts`, novo. O `nfe.ts` da Entrada de Notas não muda.
+**Leitor:** `web/src/lib/nfe-vendas.ts`, novo.
+
+- **Reaproveita** de `web/src/lib/nfe.ts` as três buscas por nome local (`all`, `one`, `txt`, hoje funções internas de `parseNFeXML`). Elas passam a
+  ser exportadas, sem mudar o comportamento. A chave usa `normalizarChave`/`chaveValida` de `web/src/lib/fiscal.ts`.
+- **Não reaproveita** o `parseNFeXML`, que fica igual para a Entrada de Notas. Ele lê o emitente como **fornecedor** e não olha protocolo,
+  ambiente, modelo, `tpNF`, `finNFe`, CFOP nem `vDesc`. Estender a função mexeria na tela de notas por causa das vendas.
 
 | O XML é… | O que acontece |
 |---|---|
-| `nfeProc` com `protNFe/cStat` 100 ou 150, `tpAmb` 1, `tpNF` 1 (saída), `finNFe` 1, emitente = CNPJ da loja | **venda** (um documento) |
+| `nfeProc` **modelo 65** (NFC-e) com `protNFe/cStat` 100 ou 150, `tpAmb` 1, `tpNF` 1, `finNFe` 1, emitente = CNPJ da loja | **venda** (um documento). A NFC-e só existe para venda a consumidor final |
+| `nfeProc` **modelo 55** (NF-e) com as mesmas condições | aparece na prévia num grupo à parte, **desmarcado**, com os CFOPs dos itens. NF-e de saída da loja pode ser remessa, transferência ou bonificação, que inflariam o faturamento e dariam baixa. Só entra se quem importa marcar (*minha*). Classificar sozinho pelo CFOP fica para quando houver arquivo real (*não confirmado*) |
 | `procEventoNFe` com `tpEvento` 110111 e `retEvento/cStat` 135, 136 ou 155 | **cancelamento** da chave |
 | `procEventoNFe` com `tpEvento` 110112 (cancelamento por substituição, NFC-e) | **cancelamento**, *não confirmado*: conferir com XML real antes de valer |
 | `NFe` sem `protNFe` (contingência ainda não autorizada, rascunho) | ignorado: "sem autorização da SEFAZ" |
-| `cStat` 110, 301–306 (denegada) ou 101/151 no próprio protocolo | ignorado ("denegada") ou tratado como cancelamento (101/151) |
+| `cStat` 110 ou 301–306 no protocolo (denegada) | ignorado ("denegada"), como em `notas-sefaz/classificacao.ts` |
+| `cStat` 101/151 no próprio protocolo da nota | tratado como cancelamento, *não confirmado*: não sei se algum PDV exporta assim; conferir com XML real |
 | `tpAmb` 2 | ignorado: "modo de teste (homologação)" |
 | emitente ≠ CNPJ da loja | ignorado: "emitida por outro CNPJ (<CNPJ>). Se for uma compra, use Entrada de Notas." CNPJ cadastrado em **Empresas** (não principal) aparece com a caixa "incluir" **desmarcada** (pergunta 12) |
 | `tpNF` 0 (entrada) ou `finNFe` 4 (devolução) | ignorado, com o motivo |
@@ -218,7 +227,9 @@ nunca é apagado, ganha `situacao = 'cancelada'`, `cancelado_em` e a importaçã
   | frete | frete, entrega, taxa de entrega |
 
 - **Obrigatórios:** data, produto, quantidade e valor total. **Pedido** pode faltar: aí cada dia vira um pedido `<prefixo>DIA <aaaa-mm-dd>`, com o
-  aviso "Sem número de pedido: 'Pedidos' e 'Ticket médio' contam 1 por dia".
+  aviso "Sem número de pedido: 'Pedidos' e 'Ticket médio' contam 1 por dia". A mesma regra vale para o PDF (A.6).
+  **Limite:** um 2º arquivo do mesmo sistema e do mesmo dia (ex.: almoço e jantar em relatórios separados) colide em `DIA <data>` + produto e
+  aparece como "já existente". A prévia explica: "importe um relatório do dia inteiro, ou use Substituir para trocar o dia" (risco 10).
 - **Aplicação no servidor** (`api/src/modules/importacoes/planilha.ts#aplicarMapeamento`, pura). O navegador manda as linhas cruas + o mapeamento;
   o servidor converte e a prévia mostra a conversão do servidor:
   - datas `dd/mm/aaaa`, `aaaa-mm-dd` e `dd/mm/aaaa hh:mm[:ss]` (a hora vai para `hora`);
@@ -472,9 +483,9 @@ Tudo vem **em branco**. A tela sugere os produtos cujo nome tem "cana", "caldo",
 
 | Abordagem | Troca | Decisão |
 |---|---|---|
-| **B1. Reaproveitar o estoque:** "Cana (DZ)" e "Caldo (L)" viram insumos, recebimento por nota/lista, produção como movimentação nova, caldo baixado pela ficha, contagem no inventário | Um saldo só e custo no CMV. Mas: o inventário é **um por vez e com todos os insumos** (uma contagem semanal de cana obrigaria um inventário inteiro ou um "inventário parcial" novo); `movimentacoes_tipo_check` não tem produção e teria de mudar, junto com `v_saldo_teorico`, `v_cmv_periodo` e `recalcular_baixas` (risco no CMV do restaurante todo); `v_cmv_periodo` só conta `entrada_compra` como entrada, e o caldo produzido sairia com CMV errado; o rendimento do frozen ficaria escondido dentro das fichas. | Descartada |
-| **B2. Módulo próprio `cana`:** tabelas `cana_*`, só lê `vendas` e `itens_cardapio`, não toca em `movimentacoes`, inventário nem CMV | Risco zero no estoque e no CMV de hoje. Telas do jeito do pedido (dúzias e litros). Contagem semanal independente do inventário. Fatores à vista. Contra: a cana vive fora do estoque geral. Se ela também entrar por nota na Entrada de Notas, o custo vai para o estoque e as contas como hoje, e a dúzia é lançada de novo na aba Cana. | **Recomendada** (*minha*) |
-| **B3. Módulo próprio + ponte com a Entrada de Notas** (nota com o insumo "Cana" vira recebimento sozinha) | Evita lançar duas vezes, mas depende de unidade e fator da nota (FEIXE? UN?) e de a cana vir com nota | Depois, se a resposta 8 for "sim, vem com nota" |
+| **Opção 1. Reaproveitar o estoque:** "Cana (DZ)" e "Caldo (L)" viram insumos, recebimento por nota/lista, produção como movimentação nova, caldo baixado pela ficha, contagem no inventário | Um saldo só e custo no CMV. Mas: o inventário é **um por vez e com todos os insumos** (uma contagem semanal de cana obrigaria um inventário inteiro ou um "inventário parcial" novo); `movimentacoes_tipo_check` não tem produção e teria de mudar, junto com `v_saldo_teorico`, `v_cmv_periodo` e `recalcular_baixas` (risco no CMV do restaurante todo); `v_cmv_periodo` só conta `entrada_compra` como entrada, e o caldo produzido sairia com CMV errado; o rendimento do frozen ficaria escondido dentro das fichas. | Descartada |
+| **Opção 2. Módulo próprio `cana`:** tabelas `cana_*`, só lê `vendas` e `itens_cardapio`, não toca em `movimentacoes`, inventário nem CMV | Risco zero no estoque e no CMV de hoje. Telas do jeito do pedido (dúzias e litros). Contagem semanal independente do inventário. Fatores à vista. Contra: a cana vive fora do estoque geral. Se ela também entrar por nota na Entrada de Notas, o custo vai para o estoque e as contas como hoje, e a dúzia é lançada de novo na aba Cana. | **Recomendada** (*minha*) |
+| **Opção 3. Módulo próprio + ponte com a Entrada de Notas** (nota com o insumo "Cana" vira recebimento sozinha) | Evita lançar duas vezes, mas depende de unidade e fator da nota (FEIXE? UN?) e de a cana vir com nota | Depois, se a resposta 8 for "sim, vem com nota" |
 
 **A conta da semana em TypeScript puro** (`api/src/modules/cana/apuracao.ts`, testada sem banco) é a **segunda exceção** à regra "regras em SQL",
 depois do `ponto/calculo.ts`. Motivos:
@@ -735,12 +746,14 @@ Contagem de hoje, feita por `grep` nos arquivos em 24/11 (o README ainda diz 165
 - **E6.** De-para tardio:
   - importar venda com produto sem item → 0 baixas;
   - `PUT /v1/de-para` para um item **com** ficha → baixas criadas (contar `movimentacoes`).
-- **E7.** Empresas:
-  - criar a principal → `configuracoes.cnpj` e `razao_social` iguais;
-  - criar a 2ª e marcá-la principal → o espelho troca e a 1ª deixa de ser principal;
-  - CNPJ inválido → 400; CNPJ repetido → 409;
+- **E7.** Empresas (conferido em `empresas.service.ts`):
+  - a 1ª empresa ativa nasce principal → `configuracoes.cnpj` e `razao_social` iguais aos dela;
+  - criar a 2ª e chamar `POST /v1/empresas/:id/principal` → o espelho troca e a 1ª deixa de ser principal;
+  - CNPJ repetido → 409 `DUPLICADO`; desativar ou excluir a principal → 409 `PRINCIPAL`; excluir empresa com colaborador → 409 `EM_USO`;
+  - CNPJ inválido → 400 (o `CHECK` da migração e a normalização; a frase exata, *a conferir* no DTO);
   - loja → 403 em todas as rotas de `/v1/empresas`.
-- **E8.** Empresas → Ponto: colaborador com `empresa_id` → o espelho do mês traz o empregador.
+- **E8.** Empresas → Ponto (conferido em `ponto/espelho.service.ts`): o espelho traz a empresa do colaborador e, sem ela, a principal.
+  Checar os dois casos.
 - **E9.** Ponto:
   - admin libera um terminal;
   - loja **sem** `X-Ponto-Terminal` → recusada;
@@ -834,6 +847,9 @@ Contagem de hoje, feita por `grep` nos arquivos em 24/11 (o README ainda diz 165
 8. **`DecompressionStream('deflate-raw')` ausente no navegador** (*não confirmado*): saída pelos .xml soltos.
 9. **Prévia e confirmar com dados diferentes** (outra importação no meio). O confirmar refaz todas as conferências dentro da transação e devolve
    os números reais, que podem diferir da prévia. A tela mostra os do confirmar.
+10. **Pedido sintético `DIA <data>` colidindo** (planilha ou PDF sem número de pedido): dois relatórios parciais do mesmo sistema no mesmo dia
+    (almoço e jantar) dão a mesma chave; o 2º aparece como "já existente" e não entra. A prévia explica e sugere o relatório do dia inteiro ou
+    "Substituir" o dia. Gerar o pedido com o hash do arquivo evitaria a colisão, mas deixaria o mesmo relatório reexportado entrar em dobro.
 
 ## Perguntas ao Diego (curtas; a minha recomendação em cada uma)
 
@@ -855,7 +871,7 @@ Contagem de hoje, feita por `grep` nos arquivos em 24/11 (o README ainda diz 165
 10. **Esse outro sistema é o mesmo caixa cujas planilhas já importamos, ou outro canal** (iFood, delivery, outra loja)? Recomendo: do mesmo
     caixa, só **uma** forma de importar por período.
 11. **Relatório em PDF sem número de pedido e sem data por venda pode entrar como "1 pedido por dia"?** Recomendo sim, com aviso; melhor ainda,
-    relatório por dia.
+    um relatório do dia inteiro (dois relatórios parciais do mesmo dia colidem, risco 10).
 12. **XML emitido por outro CNPJ cadastrado em Empresas entra como venda desta loja?** Recomendo: não por padrão, e a prévia mostra com a caixa
     "incluir" desmarcada.
 13. **Quer no DRE uma linha "Conferência: vendas importadas × caixa do mês"?** Recomendo sim, depois destas entregas.
@@ -894,7 +910,7 @@ Contagem de hoje, feita por `grep` nos arquivos em 24/11 (o README ainda diz 165
 
 ### Parte A — Importar vendas (pode ir ao ar sozinha)
 
-**A1. Migração `vendas_importacao` + Substituir por origem (R3/R4)**
+**Tarefa A1. Migração `vendas_importacao` + Substituir por origem (R3/R4)**
 
 - **Arquivos:**
   - `api/prisma/migrations/2026112xxxxxxx_vendas_importacao/migration.sql` (A.7, com aspas);
@@ -908,13 +924,13 @@ Contagem de hoje, feita por `grep` nos arquivos em 24/11 (o README ainda diz 165
   - smoke: as checagens de hoje do "Substituir no dia do cupom" continuam verdes + V7.
 - **Pronto quando:** a migração aplica num banco com os dados de hoje sem mudar nenhuma linha; o smoke de hoje passa.
 
-**A2. Regras puras da planilha e da prévia (API)**
+**Tarefa A2. Regras puras da planilha e da prévia (API)**
 
 - **Arquivos:** `api/src/modules/importacoes/planilha.ts`, `previa.ts`, `documentos.ts` (só a conferência de chave e CNPJ) e `__tests__/*.spec.ts`.
 - **Testes:** A.10 (planilha, documentos, prévia) — todos sem banco.
 - **Pronto quando:** cada regra R1–R7 tem pelo menos um teste com o número esperado escrito.
 
-**A3. Rotas de origens, prévia e confirmar (planilha e PDF já conferido)**
+**Tarefa A3. Rotas de origens, prévia e confirmar (planilha e PDF já conferido)**
 
 - **Arquivos:**
   - `importacoes.controller.ts` (rotas estáticas antes das `:id`);
@@ -927,7 +943,7 @@ Contagem de hoje, feita por `grep` nos arquivos em 24/11 (o README ainda diz 165
   - smoke V1–V4.
 - **Pronto quando:** a prévia não grava (V1) e o duplo confirmar não duplica (V2).
 
-**A4. Tela `/vendas/importar` — planilha**
+**Tarefa A4. Tela `/vendas/importar` — planilha**
 
 - **Arquivos:**
   - `web/src/app/(app)/vendas/importar/page.tsx`;
@@ -944,10 +960,12 @@ Contagem de hoje, feita por `grep` nos arquivos em 24/11 (o README ainda diz 165
   - no celular de 360 px, sem rolagem lateral;
   - o mapeamento lembrado volta na 2ª importação.
 
-**A5. XML no navegador + registro de documentos e cancelamento (API)**
+**Tarefa A5. XML no navegador + registro de documentos e cancelamento (API)**
 
 - **Arquivos:**
+  - `web/src/lib/nfe.ts` (só exportar as buscas `all`/`one`/`txt`; o `nfe.test.ts` de hoje continua verde);
   - `web/src/lib/nfe-vendas.ts` e `web/src/lib/zip-leitura.ts`, com as fixtures em `web/src/lib/__tests__/fixtures`;
+  - o grupo "Notas fiscais (modelo 55)" desmarcado na prévia, com os CFOPs;
   - aba XML na tela;
   - `api/src/modules/importacoes/documentos.ts` (completo);
   - a função SQL `vendas_documento_cancelar` e o gatilho `vendas_documentos_imutavel` (na migração da A1 se ainda não foi ao ar; senão, migração nova).
@@ -958,7 +976,7 @@ Contagem de hoje, feita por `grep` nos arquivos em 24/11 (o README ainda diz 165
   - browser-check XML.
 - **Pronto quando:** a tabela de A.4 está coberta linha a linha por teste; tipo desconhecido aparece na prévia como "ignorado: <motivo>".
 
-**A6. PDF por IA**
+**Tarefa A6. PDF por IA**
 
 - **Arquivos:**
   - `leitura-pdf/schemas.ts` (`SCHEMA_RELATORIO_VENDAS`, `INSTRUCOES_RELATORIO_VENDAS`);
@@ -972,26 +990,27 @@ Contagem de hoje, feita por `grep` nos arquivos em 24/11 (o README ainda diz 165
   - browser-check (PDF sem chave).
 - **Pronto quando:** nada é gravado pela leitura e a tela mostra "soma × total impresso".
 
-**A7. Documentação e pendências do dono**
+**Tarefa A7. Documentação e pendências do dono**
 
 - **Arquivos:** `CLAUDE.md`, `README.md` ("teste real: um dia de XML e uma planilha do outro sistema; PDF real pela IA"), `docs/api-contract.md`.
+- **Testes:** nenhum (só documentação).
 - **Pronto quando:** as perguntas 9–12 respondidas estão anotadas no desenho; o item da "Importar Dados" diz onde as vendas foram parar.
 
 ### Parte B — Cana (começa só depois da resposta 1; vai ao ar sozinha)
 
-**B1. Migração `cana`**
+**Tarefa B1. Migração `cana`**
 
 - **Arquivos:** `api/prisma/migrations/2026112xxxxxxx_cana/migration.sql` (B.5, com aspas, gatilho de imutável), `schema.prisma`, `esquema.ts`.
 - **Testes:** `esquema.spec.ts`; smoke K3 (o banco recusa DELETE e UPDATE fora da anulação).
 - **Pronto quando:** a migração aplica sem tocar em tabela existente.
 
-**B2. Conta da semana, pura**
+**Tarefa B2. Conta da semana, pura**
 
 - **Arquivos:** `api/src/modules/cana/apuracao.ts`, `__tests__/apuracao.spec.ts`.
 - **Testes:** B.8 (o exemplo de B.3 número a número, nulos, bordas, avisos).
 - **Pronto quando:** cada número devolve também os seus componentes (para a tela escrever a conta) e nenhum divide por zero.
 
-**B3. API da cana**
+**Tarefa B3. API da cana**
 
 - **Arquivos:**
   - `api/src/modules/cana/{cana.module,cana.controller,cana.service}.ts` e `dto/`;
@@ -1005,7 +1024,7 @@ Contagem de hoje, feita por `grep` nos arquivos em 24/11 (o README ainda diz 165
   - smoke K1, K2, K4, K5, K6.
 - **Pronto quando:** a loja não alcança nada além das 2 rotas e a apuração de K4 bate com B.3.
 
-**B4. Tela `/cana`**
+**Tarefa B4. Tela `/cana`**
 
 - **Arquivos:** `web/src/app/(app)/cana/page.tsx` (+ componentes das 3 abas e da visão da loja), `web/src/lib/cana.ts` (formatar as contas), `erp-api.ts`, `MENU`.
 - **Testes:** vitest `cana.test.ts`; browser-check C.4 (cana).
@@ -1014,11 +1033,14 @@ Contagem de hoje, feita por `grep` nos arquivos em 24/11 (o README ainda diz 165
   - a loja no celular lança em uma tela e não vê nenhum número calculado;
   - os estados "sem contagem" e "uma contagem só" aparecem.
 
-**B5. Documentação**
+**Tarefa B5. Documentação**
 
-- **Arquivos:** `README.md` (pendência "primeira semana real da cana com o caderno da loja"), `CLAUDE.md`.
+- **Arquivos:** `README.md` (pendência "primeira semana real da cana com o caderno da loja"), `CLAUDE.md` (módulo `cana`, rotas, a exceção à
+  "regra em SQL", quem lança).
+- **Testes:** nenhum (só documentação).
+- **Pronto quando:** as respostas 1–8 estão anotadas no desenho e o README diz como conferir a primeira semana real.
 
-**B6. (Opcional) Fechar a semana**
+**Tarefa B6. (Opcional) Fechar a semana**
 
 - **Arquivos:** migração `cana_fechamentos`, rotas fechar/reabrir, `DATE_ONLY_KEYS` (`periodo_ini`, `periodo_fim`), a trava de anulação em semana fechada.
 - **Testes:** jest do serviço; smoke (fechar → mudar o ml de um produto → a semana fechada não muda; anular dentro → 409).
@@ -1026,19 +1048,26 @@ Contagem de hoje, feita por `grep` nos arquivos em 24/11 (o README ainda diz 165
 
 ### Parte C — Roteiro (independe de A e B)
 
-**C1. Checagens E1–E9 no smoke**
+**Tarefa C1. Checagens E1–E9 no smoke**
 
 - **Arquivos:** `api/scripts/smoke.sh` (blocos novos depois de "importações" e antes de "usuários"; Ponto e Empresas num bloco próprio).
-- **Pronto quando:** o smoke passa inteiro, pelo `smoke-capped.sh`.
+- **Testes:** as checagens E1–E9 são o próprio teste; cada uma é escrita primeiro contra o código de hoje e precisa passar sem mudar código
+  (se alguma falhar, é bug a abrir, não checagem a ajustar).
+- **Pronto quando:** o smoke passa inteiro, pelo `smoke-capped.sh`, e o README passa a citar a contagem real de checagens.
 
-**C2. Linha "Conferência" no DRE** — só com o "sim" da pergunta 13.
+**Tarefa C2. Linha "Conferência" no DRE** (só com o "sim" da pergunta 13)
+
+- **Arquivos:** `web/src/app/(app)/dre/page.tsx` (a linha "Vendas importadas no mês: R$ X · Caixa: R$ Y · diferença R$ Z", lendo `GET /v1/vendas`
+  do mês, que já existe), `web/src/lib/dre.ts` (a diferença, pura).
+- **Testes:** vitest `dre.test.ts` (diferença com e sem vendas); browser-check (a linha aparece em `/dre`).
+- **Pronto quando:** a linha diz de onde vem cada número e nada muda no cálculo do DRE.
 
 ---
 
 ## Fora do escopo
 
 - Várias lojas na mesma instalação (vendas, estoque e inventário por empresa): é projeto próprio.
-- Custo da cana e do litro de caldo; ponte automática nota → recebimento de cana (B3 das abordagens).
+- Custo da cana e do litro de caldo; ponte automática nota → recebimento de cana (opção 3 de B.2).
 - Guardar os XML importados; importar devolução (`finNFe` 4) como venda negativa.
 - Foto de relatório de vendas (só PDF, por ora).
 - Importar pagamentos (formas de pagamento) dos XML para o caixa: o caixa continua lançado à mão.
