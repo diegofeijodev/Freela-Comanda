@@ -1073,3 +1073,52 @@ Contagem de hoje, feita por `grep` nos arquivos em 24/11 (o README ainda diz 165
 - Importar pagamentos (formas de pagamento) dos XML para o caixa: o caixa continua lançado à mão.
 - Corrigir o "CMV teórico" da tela Vendas, que usa o custo de **hoje** da ficha (herança do protótipo; `recalcular_baixas` também regrava as
   baixas antigas com o preço atual). Só registrado aqui.
+
+---
+
+## Decisões da implementação (Tarefa 0 e Parte A, 25/11/2026)
+
+Tomadas na implementação (ramo `feat/vendas-cana`), pelo mais seguro quando havia escolha. Cada uma dá para voltar atrás.
+
+**Pontos da UX (seção 7 de `2026-11-24-importar-vendas-e-cana-ux.md`) que tocam a Parte A**
+
+| Ponto | Decisão | Por quê |
+|---|---|---|
+| 7.1 contagens que fecham | aceito: `linhas.novas` explícito, identidade `lidas = novas + ja_existentes + com_problema + somadas_no_arquivo` no teste puro, `ja_existentes_valor_centavos` | o cartão escreve a conta |
+| 7.2 exemplo e nome da fonte | aceito: `ja_existentes_de_outra_fonte[].exemplo { pedido, data }`; `fonte` = nome para a tela + `tipo` (`padrao`, `cupom`, `sistema`, `xml`) | a frase da P4 |
+| 7.3 motivos com total | aceito: `motivos: [{ motivo, linhas }]` sobre todas as linhas (o tipo do motivo, sem o valor entre parênteses); `problemas` continua até 200 | P14/P15 |
+| 7.4 resposta do importar | aceito: `valor_centavos`, `periodo`, `apagadas_valor_centavos`, `canceladas { documentos, linhas, valor_centavos }`, `mapeamento_salvo`, `confirmada_em` | risco 9: a tela mostra os números do confirmar |
+| 7.5 409 com `importacao_id` | **R8 mudou:** a mesma chave com o mesmo corpo responde **200 com o resultado guardado** (`repetida: true`); o 409 `IMPORTACAO_JA_CONFIRMADA` fica só para a mesma chave com **outro** corpo. `importacoes` ganhou `corpo_sha256` e `resultado` (jsonb). O hash não inclui a chave nem a caixa da sobreposição. O filtro global de erro não mudou | o filtro só manda `{ code, message }`; assim o "Tentar de novo" mostra o resultado. Smoke V2 confere |
+| 7.6 conta dos arquivos XML | aceito: o navegador manda `arquivos_lidos` e os `ignorados` com o nome do arquivo; o servidor confere que `arquivos_lidos = documentos + cancelamentos + ignorados` (400 se não fecha) e classifica cada arquivo em exatamente um grupo (`fechaContagemXml`); `cancelamentos_de_importados` traz `ini`/`fim`; os ignorados vêm por motivo com os nomes | "nada some calado" |
+| 7.7 últimas importações | aceito: rota nova `GET /v1/importacoes/vendas/recentes` (sistema, formato, arquivo, vendas novas, quem) | a de hoje não tem sistema nem nome |
+| 7.8 Vendas pela URL | aceito: `/vendas?ini=&fim=` abre como "Personalizado" | "Ver vendas do período" |
+| 7.9 cabeçalho fora da 1ª linha | aceito: a 1ª linha (entre as 10 primeiras) com 3+ nomes conhecidos; `primeira_linha` vai ao servidor para as frases "Linha N". **Não feito:** a escolha "Trocar" o cabeçalho na tela | o mais comum fica coberto; trocar à mão é raro |
+| 7.10 rascunho | sem storage (como a UX propôs); aviso do navegador ao sair | o CLAUDE.md só libera 3 usos |
+| 7.11 parece de caldo | aceito: `parece_cana` por produto em `produtos_sem_de_para`, da função `pareceCana` (`importacoes/previa.ts`; a Parte B deve reusar) | uma lista só |
+| 7.12 P6 | aceito: `ja_existentes_pedido_dia` | o aviso só aparece no caso certo |
+| 7.25 prévia a cada escolha | a tela espera 500 ms e cancela o pedido anterior (`AbortController`); o throttler é 300/min | cabe |
+| 7.26 XML só com cancelamentos | aceito: `IMPORTACAO_VAZIA` só no confirmar e só quando não há venda nova **nem** cancelamento a aplicar; a prévia nunca dá 400 por vazio (devolve `novas = 0` e os motivos, a tela mostra P15/P16/P18) | o cancelamento que chega semanas depois tem de entrar |
+| 7.27 lista de sistemas | aceito: `GET /v1/importacoes/origens` devolve `{ origens: [... ultima_importacao_em, mapeamento], planilha_padrao: { ultima_importacao_em } }`, ativos e o último usado primeiro | a meta de 4 toques |
+| 7.13–7.24 | **Parte B, não feito.** Anotados para a Cana | — |
+
+**Outras decisões**
+
+- **"Ações não atômicas" (editar o sistema fora do confirmar):** trocar `prefixo_pedido` de um sistema que **já tem vendas** é recusado com 409 `ORIGEM_PREFIXO_EM_USO` (a chave R1 mudaria e o mesmo arquivo entraria de novo). Nome, separador, colunas e "parar de usar" seguem livres.
+- **Concorrência:** o confirmar começa com `pg_advisory_xact_lock(hashtext('importacao_vendas'))` e refaz todas as conferências dentro da transação (o `FOR UPDATE` não trava chave que ainda não existe). A rota antiga não pega a trava.
+- **NF-e (modelo 55):** o DTO ganhou `nfe_incluidas` (chaves marcadas na prévia); sem estar na lista, a NF-e fica de fora (`documentos.nfe_fora`, com os CFOPs). Idem `cnpjs_incluidos`, que só vale para CNPJ ativo de Empresas.
+- **Pedido do XML de outra empresa incluída** leva o CNPJ no fim (`NFC-e 1-12 98765432000110`): a mesma série-número de dois CNPJs não colide na chave R1. O da loja continua `NFC-e <série>-<número>` (o formato do cupom do Comanda).
+- **Números da planilha:** no modo vírgula, "12.90" e "1.234" (sem vírgula) são linha com problema; no modo ponto, "12,90" e "1,234". Valor negativo também. Nada de palpite. No Excel, o leitor novo usa o valor **tipado** (data e número), não o texto formatado da célula (`raw: false` dava `m/d/yy` e `1,234.56`); a tela manda o número com o separador escolhido.
+- **`preco_unitario`** da planilha sem a coluna = valor ÷ quantidade (4 casas); o da rota antiga continua 0.
+- **Dinheiro:** `Prisma.Decimal` em toda conta do servidor e centavos inteiros na resposta (a rota antiga continua com `parseNum`, como hoje).
+- **Onde ficou cada coisa:** o pipeline do servidor é um só (`importacoes-vendas.service.ts`), então o XML do servidor entrou junto da A3; a A5 é a leitura no navegador. A rota `POST /v1/importacoes/vendas/ler-pdf` ficou no `LeituraPdfController` (que já tem a leitura do multipart e a tradução dos erros da IA), sem exportar o serviço para outro módulo. A rota antiga **não** passou a usar o pipeline novo (só o `where` do Substituir mudou, R4): menos risco nas planilhas de hoje.
+- **XML no navegador:** a NFC-e de homologação vai ao servidor com `tp_amb 2` e é ignorada lá (o servidor confere); evento 110112 e `cStat` 101/151 no protocolo valem como cancelamento (*não confirmado*, conferir com XML real).
+- **Importar Dados:** o botão "Vendas" saiu (virou a linha com o link) e o aviso dos cupons de lá também (a prévia nova mostra a sobreposição com o cupom). O título "De-para do relatório de vendas" ficou (o browser-check confere) e ganhou a âncora `#ligacao-cardapio`.
+
+**Perguntas 9–12 ao Diego (aplicada a recomendação do próprio desenho; muda sem mexer no código, salvo onde dito)**
+
+- 9 (o que o outro sistema exporta): os três formatos estão prontos; a tela recomenda XML > planilha > PDF. Pendência do dono: mandar um arquivo real de cada (README).
+- 10 (mesmo caixa ou outro canal): a prévia avisa a sobreposição e exige a caixa (R5); recomendação: do mesmo caixa, uma forma de importar por período.
+- 11 (PDF sem pedido nem data por linha): entra como "1 pedido por dia" (`DIA <data>`), com a data escolhida na conferência e o aviso de vários dias.
+- 12 (XML de outro CNPJ de Empresas): fica de fora por padrão; a prévia mostra com a caixa "Incluir" desmarcada (`cnpjs_incluidos`).
+
+**Ambiente desta implementação (não muda o código):** o `node_modules` do worktree é atalho para o checkout principal, então o cliente Prisma novo foi gerado à parte (`api/.cache/prisma-client`, fora do git) e o jest/tsc/smoke usaram um `tsconfig` com `paths` para ele; o cliente compartilhado não foi tocado. O Postgres do projeto (rede `172.62.0.0/24`) estava inalcançável do host por causa do Cloudflare WARP (essa faixa é pública e vai pelo túnel); o smoke rodou numa cópia descartável apontada para um Postgres 16 na ponte padrão do Docker.

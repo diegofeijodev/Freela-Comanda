@@ -810,6 +810,126 @@ if [ -n "${API_LOG:-}" ]; then
   check "cupom: o CSC não aparece no log da API" 0 "$(grep -c "$CSC" "$API_LOG")"
   check "cupom: o CPF do consumidor não aparece no log da API" 0 "$(grep -c 52998224725 "$API_LOG")"
 fi
+# ---------- importar vendas de outros sistemas (desenho 24/11, Parte A; contrato §20): V1–V7. Nenhuma rede (a IA está sem chave).
+IV=/v1/importacoes
+SHA_A=$(printf 'a%.0s' $(seq 1 64))
+# V6 (parte): a loja não alcança nenhuma rota nova
+for r in "GET $IV/origens" "GET $IV/vendas/recentes"; do req ${r% *} "${r#* }" "$LOJA"; check "importar vendas: loja barrada em $r" 403 "$CODE"; done
+for r in "POST $IV/origens" "POST $IV/vendas/previa" "POST $IV/vendas/confirmar" "PUT $IV/origens/$ZERO"; do
+  req ${r% *} "${r#* }" "$LOJA" '{}'; check "importar vendas: loja barrada em $r" 403 "$CODE"
+done
+CODE=$(curl -s -o "$OUT" -w '%{http_code}' -H "authorization: Bearer $LOJA" -F "arquivo=@$PDF;type=application/pdf" "$BASE$IV/vendas/ler-pdf"); check "importar vendas: loja barrada no ler-pdf" 403 "$CODE"
+# sistemas de origem
+req POST $IV/origens "$ADM" '{"nome":"Smoke PDV","formato_padrao":"planilha"}'; check "origem: 201" 201 "$CODE"; ORIG_A=$(j .id)
+req POST $IV/origens "$ADM" '{"nome":"smoke  pdv","formato_padrao":"xml"}'; check "origem: nome repetido sem caixa: 409 ORIGEM_REPETIDA" "409 ORIGEM_REPETIDA" "$CODE $(j .error.code)"
+req POST $IV/origens "$ADM" '{"nome":"Smoke iFood","formato_padrao":"planilha","prefixo_pedido":"IF-"}'; ORIG_B=$(j .id)
+req POST $IV/origens "$ADM" '{"nome":"Smoke XML","formato_padrao":"xml"}'; ORIG_X=$(j .id)
+req PUT "$IV/origens/nao-e-uuid" "$ADM" '{"ativo":false}'; check "origem com id malformado: 404" 404 "$CODE"
+req GET $IV/origens "$ADM"; check "origens: as 3 criadas" 3 "$(j '.origens | length')"
+
+# V1: prévia de planilha de outro sistema (data com hora, 1.234,56, linha repetida, linha com problema): nada gravado
+PLAN_A="{\"formato\":\"planilha\",\"origem_id\":\"$ORIG_A\",\"arquivo\":\"pdv-setembro.csv\",\"arquivo_sha256\":\"$SHA_A\",\"modo\":\"acrescentar\",\"separador_decimal\":\"virgula\",\"salvar_mapeamento\":true,\"mapeamento\":{\"pedido\":\"Nº\",\"data\":\"Data\",\"produto\":\"Descrição\",\"quantidade\":\"Qtde\",\"valor_total\":\"Total\"},\"linhas_brutas\":[{\"Nº\":\"P1\",\"Data\":\"10/09/2026 19:30\",\"Descrição\":\"SMOKE ESPETO\",\"Qtde\":\"2\",\"Total\":\"1.234,56\"},{\"Nº\":\"P1\",\"Data\":\"10/09/2026\",\"Descrição\":\"SMOKE ESPETO\",\"Qtde\":\"1\",\"Total\":\"10,00\"},{\"Nº\":\"P2\",\"Data\":\"11/09/2026\",\"Descrição\":\"SMOKE CALDO NOVO\",\"Qtde\":\"1\",\"Total\":\"8,50\"},{\"Nº\":\"P3\",\"Data\":\"31/02/2026\",\"Descrição\":\"X\",\"Qtde\":\"1\",\"Total\":\"1\"}]}"
+ANTES="$(sql "select (select count(*) from vendas) || ' ' || (select count(*) from importacoes)")"
+req POST $IV/vendas/previa "$ADM" "$PLAN_A"; check "V1 prévia: 200" 200 "$CODE"
+check "V1 prévia: lidas/válidas/problema/já existentes/somadas/novas" "4 3 1 0 1 2" "$(j '.linhas | [.lidas, .validas, .com_problema, .ja_existentes, .somadas_no_arquivo, .novas] | map(tostring) | join(" ")')"
+check "V1 prévia: total em centavos (1.234,56 + 10,00 + 8,50)" 125306 "$(j .valor_centavos)"
+check "V1 prévia: período" "2026-09-10 2026-09-11" "$(j '.periodo | .ini + " " + .fim')"
+check "V1 prévia: o problema com a linha do arquivo" "5 data inválida (31/02/2026)" "$(j '.problemas[0] | (.linha|tostring) + " " + .motivo')"
+check "V1 prévia: produto novo sem de-para" "SMOKE CALDO NOVO" "$(j '[.produtos_sem_de_para[].produto_relatorio] | join(",")')"
+check "V1 prévia: nada gravado (vendas e importações iguais)" "$ANTES" "$(sql "select (select count(*) from vendas) || ' ' || (select count(*) from importacoes)")"
+req POST $IV/vendas/previa "$ADM" "$(echo "$PLAN_A" | jq -c '.mapeamento = {"data":"Data","produto":"Descrição"}')"
+check "V1 prévia: mapeamento incompleto" "400 MAPEAMENTO_INCOMPLETO Escolha a coluna de: quantidade, valor total." "$CODE $(j .error.code) $(j .error.message)"
+
+# V2: confirmar → vendas e baixas; o mesmo corpo de novo → 200 com o resultado guardado, sem venda a mais; outro corpo → 409
+CONF_A=$(echo "$PLAN_A" | jq -c '. + {chave_idempotencia:"00000000-0000-4000-8000-00000000c0a1"}')
+req POST $IV/vendas/confirmar "$ADM" "$CONF_A"; check "V2 confirmar: 201" 201 "$CODE"
+check "V2 confirmar: inseridas, valor, novos produtos, colunas lembradas" "2 125306 1 true" "$(j '[.inseridas, .valor_centavos, .novos_produtos, .mapeamento_salvo] | map(tostring) | join(" ")')"
+IMP_A=$(j .importacao_id)
+check "V2: as 2 vendas com a importação e o pedido do arquivo" "P1 3 1244.56|P2 1 8.5" "$(sql "select string_agg(pedido || ' ' || quantidade::float || ' ' || valor_total::float, '|' order by pedido) from vendas where importacao_id='$IMP_A'")"
+check "V2: a hora da data entrou" "19:30:00" "$(sql "select hora from vendas where importacao_id='$IMP_A' and pedido='P1'")"
+check "V2: a baixa pela ficha (SMOKE ESPETO → Smoke Espeto)" t "$(sql "select count(*) > 0 from movimentacoes m join vendas v on v.id = m.venda_id where v.importacao_id='$IMP_A' and v.pedido='P1'")"
+DEPOIS=$(sql "select count(*) from vendas")
+req POST $IV/vendas/confirmar "$ADM" "$CONF_A"; check "V2 de novo, mesmo corpo: 200 repetida" "200 true" "$CODE $(j .repetida)"
+check "V2 de novo: o resultado da 1ª vez" "$IMP_A" "$(j .importacao_id)"
+check "V2 de novo: nenhuma venda a mais" "$DEPOIS" "$(sql "select count(*) from vendas")"
+req POST $IV/vendas/confirmar "$ADM" "$(echo "$CONF_A" | jq -c '.arquivo = "outro.csv"')"; check "V2 mesma chave, outro corpo: 409" "409 IMPORTACAO_JA_CONFIRMADA" "$CODE $(j .error.code)"
+req POST $IV/vendas/previa "$ADM" "$PLAN_A"; check "V2 prévia de novo: já existentes e arquivo já importado" "2 0 true" "$(j '[.linhas.ja_existentes, .linhas.novas, (.arquivo_ja_importado != null)] | map(tostring) | join(" ")')"
+req GET $IV/origens "$ADM"; check "V2: colunas lembradas no sistema" "Nº" "$(echo "$BODY" | jq -r --arg o "$ORIG_A" '.origens[] | select(.id == $o) | .mapeamento.pedido')"
+req PUT "$IV/origens/$ORIG_A" "$ADM" '{"prefixo_pedido":"X-"}'; check "trocar as letras de sistema com vendas: 409" "409 ORIGEM_PREFIXO_EM_USO" "$CODE $(j .error.code)"
+req GET $IV/vendas/recentes "$ADM"; check "recentes: a importação do sistema, com o nome" "Smoke PDV 2" "$(j '.[0] | .origem_nome + " " + (.inseridas|tostring)')"
+
+# V3: em 17/11 já há vendas da planilha padrão (SUBST1) e do cupom do Comanda; outro sistema sem a caixa → 409; com a caixa → 201
+PLAN_B="{\"formato\":\"planilha\",\"origem_id\":\"$ORIG_B\",\"arquivo\":\"ifood-17-11.csv\",\"modo\":\"acrescentar\",\"mapeamento\":{\"pedido\":\"pedido\",\"data\":\"data\",\"produto\":\"produto\",\"quantidade\":\"qtd\",\"valor_total\":\"total\"},\"linhas_brutas\":[{\"pedido\":\"1\",\"data\":\"17/11/2026\",\"produto\":\"SMOKE ESPETO\",\"qtd\":\"1\",\"total\":\"15,00\"}]}"
+req POST $IV/vendas/previa "$ADM" "$PLAN_B"
+check "V3 prévia: sobreposição com a planilha padrão e o cupom" "Cupons do próprio Comanda,Planilha padrão do Comanda" "$(j '[.sobreposicao[].fonte] | sort | join(",")')"
+req POST $IV/vendas/confirmar "$ADM" "$(echo "$PLAN_B" | jq -c '. + {chave_idempotencia:"00000000-0000-4000-8000-00000000c0b1"}')"
+check "V3 sem a caixa: 409 IMPORTACAO_SOBREPOSICAO" "409 IMPORTACAO_SOBREPOSICAO" "$CODE $(j .error.code)"
+req POST $IV/vendas/confirmar "$ADM" "$(echo "$PLAN_B" | jq -c '. + {chave_idempotencia:"00000000-0000-4000-8000-00000000c0b1", confirmar_sobreposicao:true}')"
+check "V3 com a caixa: 201, 1 venda com as letras do sistema" "201 1 1" "$CODE $(j .inseridas) $(sql "select count(*) from vendas where pedido='IF-1'")"
+
+# V5: XML (o resumo que o navegador manda, montado aqui): venda, repetida, do próprio Comanda, outro CNPJ, cancelamento depois e antes
+LOJA_CNPJ=$(sql "select cnpj from configuracoes where id=1")
+chave_dv() { node -e 'const b=process.argv[1];let s=0,p=2;for(let i=b.length-1;i>=0;i--){s+=(b.charCodeAt(i)-48)*p;p=p===9?2:p+1}const r=s%11;process.stdout.write(b+(r<2?0:11-r))' "$1"; }
+K501=$(chave_dv "352611${LOJA_CNPJ}65002000000501112345678"); K502=$(chave_dv "352611${LOJA_CNPJ}65002000000502112345678")
+K503=$(chave_dv "3526111122233300018165002000000503112345678"); K504=$(chave_dv "352611${LOJA_CNPJ}65002000000504112345678")
+doc() { # doc CHAVE CNPJ NUMERO QTD VPROD
+  echo "{\"arquivo\":\"NFCe-$3.xml\",\"chave\":\"$1\",\"modelo\":65,\"serie\":2,\"numero\":$3,\"emitente_cnpj\":\"$2\",\"tp_amb\":1,\"dh_emi\":\"2026-11-17T12:00:00-03:00\",\"valor_total\":\"$5\",\"itens\":[{\"produto\":\"SMOKE ESPETO\",\"quantidade\":\"$4\",\"valor_unitario\":\"12.00\",\"valor_bruto\":\"$5\",\"desconto\":\"0\",\"outros\":\"0\",\"frete\":\"0\",\"cfop\":\"5102\"}]}"
+}
+CUPOM_DOC="{\"arquivo\":\"cupom-comanda.xml\",\"chave\":\"$CH\",\"modelo\":65,\"serie\":1,\"numero\":12,\"emitente_cnpj\":\"12345678000195\",\"tp_amb\":1,\"dh_emi\":\"2026-11-17T14:30:00-03:00\",\"valor_total\":\"32.00\",\"itens\":[{\"produto\":\"Smoke Espeto\",\"quantidade\":\"2\",\"valor_unitario\":\"12.00\",\"valor_bruto\":\"24.00\",\"desconto\":\"1.35\",\"outros\":\"0\",\"frete\":\"0\",\"cfop\":\"5102\"}]}"
+xml_corpo() { # xml_corpo '[docs]' '[cancelamentos]' '[ignorados]'
+  echo "{\"formato\":\"xml\",\"origem_id\":\"$ORIG_X\",\"arquivo\":\"xml-novembro.zip\",\"modo\":\"acrescentar\",\"arquivos_lidos\":$(( $(echo "$1" | jq length) + $(echo "$2" | jq length) + $(echo "$3" | jq length) )),\"documentos\":$1,\"cancelamentos\":$2,\"ignorados\":$3}"
+}
+DOCS="[$(doc "$K501" "$LOJA_CNPJ" 501 1 12.00),$(doc "$K502" "$LOJA_CNPJ" 502 2 24.00),$CUPOM_DOC,$(doc "$K503" 11222333000181 503 1 12.00)]"
+XML1=$(xml_corpo "$DOCS" '[]' '[{"arquivo":"inut.xml","motivo":"inutilização de numeração"}]')
+sql "update configuracoes set cnpj = '' where id = 1" >/dev/null
+req POST $IV/vendas/previa "$ADM" "$XML1"; check "V5 sem CNPJ da loja: 400 LOJA_SEM_CNPJ" "400 LOJA_SEM_CNPJ" "$CODE $(j .error.code)"
+sql "update configuracoes set cnpj = '$LOJA_CNPJ' where id = 1" >/dev/null
+req POST $IV/vendas/previa "$ADM" "$XML1"; check "V5 prévia: 200" 200 "$CODE"
+check "V5 prévia: lidos/novos/do Comanda/ignorados" "5 2 1 2" "$(j '.documentos | [.arquivos_lidos, .vendas_novas, .do_proprio_comanda, ([.ignorados[].arquivos | length] | add)] | map(tostring) | join(" ")')"
+check "V5 prévia: o outro CNPJ com o motivo" true "$(j '[.documentos.ignorados[].motivo] | any(startswith("emitido por outro CNPJ (11.222.333/0001-81)"))')"
+req POST $IV/vendas/confirmar "$ADM" "$(echo "$XML1" | jq -c '. + {chave_idempotencia:"00000000-0000-4000-8000-00000000c0c1", confirmar_sobreposicao:true}')"
+check "V5 confirmar: 201, 2 documentos e 2 vendas" "201 2 2" "$CODE $(j .documentos_novos) $(j .inseridas)"
+check "V5: as vendas com o pedido do documento e o documento ligado" "NFC-e 2-501|NFC-e 2-502" "$(sql "select string_agg(v.pedido, '|' order by v.pedido) from vendas v join vendas_documentos d on d.id = v.documento_id")"
+check "V5: o cupom do próprio Comanda não entrou de novo" "2" "$(sql "select count(*) from vendas where pedido = 'NFC-e 1-12'")"
+req POST $IV/vendas/previa "$ADM" "$XML1"; check "V5 a mesma chave de novo: já importados" "2 0" "$(j '.documentos | [.ja_importados, .vendas_novas] | map(tostring) | join(" ")')"
+req POST $IV/vendas/confirmar "$ADM" "$(echo "$XML1" | jq -c '. + {chave_idempotencia:"00000000-0000-4000-8000-00000000c0c2", confirmar_sobreposicao:true}')"
+check "V5 de novo: nada novo = 400 IMPORTACAO_VAZIA" "400 IMPORTACAO_VAZIA" "$CODE $(j .error.code)"
+BAIXAS_502=$(sql "select count(*) from movimentacoes m join vendas v on v.id = m.venda_id where v.pedido = 'NFC-e 2-502'")
+check "V5: a venda do 502 deu baixa" t "$( [ "$BAIXAS_502" -gt 0 ] && echo t || echo f)"
+CANC="[{\"arquivo\":\"canc-502.xml\",\"chave\":\"$K502\",\"dh_evento\":\"2026-11-18T10:00:00-03:00\"}]"
+XML2=$(xml_corpo '[]' "$CANC" '[]')
+req POST $IV/vendas/previa "$ADM" "$XML2"; check "V5 cancelamento depois: a prévia diz o que sai" "1 1 2400" "$(j '.documentos.cancelamentos_de_importados | [.documentos, .linhas, .valor_centavos] | map(tostring) | join(" ")')"
+MOV0=$(sql "select count(*) from movimentacoes")
+req POST $IV/vendas/confirmar "$ADM" "$(echo "$XML2" | jq -c '. + {chave_idempotencia:"00000000-0000-4000-8000-00000000c0c3"}')"
+check "V5 cancelamento: 201, 1 documento e 1 linha retirados" "201 1 1" "$CODE $(j .canceladas.documentos) $(j .canceladas.linhas)"
+check "V5 cancelamento: a venda saiu e as baixas dela também" "0 $((MOV0 - BAIXAS_502))" "$(sql "select count(*) from vendas where pedido = 'NFC-e 2-502'") $(sql "select count(*) from movimentacoes")"
+check "V5 cancelamento: o documento fica, cancelado" cancelada "$(sql "select situacao from vendas_documentos where chave = '$K502'")"
+req POST $IV/vendas/confirmar "$ADM" "$(xml_corpo '[]' "[{\"arquivo\":\"canc-504.xml\",\"chave\":\"$K504\",\"dh_evento\":null}]" '[]' | jq -c '. + {chave_idempotencia:"00000000-0000-4000-8000-00000000c0c4"}')"
+check "V5 cancelamento antes da venda: registra o documento cancelado" "201 cancelada" "$CODE $(sql "select situacao from vendas_documentos where chave = '$K504'")"
+req POST $IV/vendas/previa "$ADM" "$(xml_corpo "[$(doc "$K504" "$LOJA_CNPJ" 504 1 12.00)]" '[]' '[]')"
+check "V5 a venda que chega depois do cancelamento é ignorada" "1 0" "$(j '.documentos | [.ja_cancelados, .vendas_novas] | map(tostring) | join(" ")')"
+TORTA="${K501:0:43}$(( (${K501:43:1} + 1) % 10 ))"
+req POST $IV/vendas/previa "$ADM" "$(xml_corpo "[$(doc "$TORTA" "$LOJA_CNPJ" 501 1 12.00)]" '[]' '[]')"; check "V5 chave com DV errado: 400" "400 VALIDATION_ERROR" "$CODE $(j .error.code)"
+check "V5: o banco recusa apagar documento" 1 "$(docker exec erp-freela-postgres psql -U erpfreela -d "$PGDB" -tAc "delete from vendas_documentos where chave = '$K501'" >/dev/null 2>&1; echo $?)"
+check "V5: o documento continua lá" 1 "$(sql "select count(*) from vendas_documentos where chave = '$K501'")"
+
+# V4: Substituir do sistema B em 17/11 apaga só as dele; a planilha padrão (SUBST1), o XML (501) e o cupom ficam
+req POST $IV/vendas/confirmar "$ADM" "$(echo "$PLAN_B" | jq -c '.modo = "substituir" | .linhas_brutas[0].pedido = "2" | . + {chave_idempotencia:"00000000-0000-4000-8000-00000000c0b2", confirmar_sobreposicao:true}')"
+check "V4 Substituir do sistema: 201, apagou 1, entrou 1" "201 1 1" "$CODE $(j .apagadas) $(j .inseridas)"
+check "V4: a do sistema saiu e a nova entrou" "0 1" "$(sql "select count(*) from vendas where pedido='IF-1'") $(sql "select count(*) from vendas where pedido='IF-2'")"
+check "V4: planilha padrão, XML e cupom ficaram" "1 1 2" "$(sql "select count(*) from vendas where pedido='SUBST1'") $(sql "select count(*) from vendas where pedido='NFC-e 2-501'") $(sql "select count(*) from vendas where nfce_cupom_id='$CUP'")"
+
+# V7: o Substituir da rota antiga (planilha padrão) não apaga venda de XML nem de outro sistema
+req POST $IV/vendas "$ADM" '{"arquivo":"vendas-17-11.csv","modo":"substituir","linhas":[{"pedido":"SUBST2","data":"2026-11-17","produto_relatorio":"SMOKE ESPETO","quantidade":"1","valor_total":"12"}]}'
+check "V7 rota antiga Substituir: 201" 201 "$CODE"
+check "V7: a da planilha padrão saiu; XML, sistema e cupom ficaram" "0 1 1 1 2" "$(sql "select count(*) from vendas where pedido='SUBST1'") $(sql "select count(*) from vendas where pedido='SUBST2'") $(sql "select count(*) from vendas where pedido='NFC-e 2-501'") $(sql "select count(*) from vendas where pedido='IF-2'") $(sql "select count(*) from vendas where nfce_cupom_id='$CUP'")"
+
+# V6: o relatório em PDF sem chave de IA e um arquivo que não é PDF
+CODE=$(curl -s -o "$OUT" -w '%{http_code}' -H "authorization: Bearer $ADM" -F "arquivo=@$PDF;type=application/pdf" "$BASE$IV/vendas/ler-pdf"); BODY=$(cat "$OUT")
+check "V6 relatório em PDF sem chave de IA: a frase de hoje" "Leitura de PDF não configurada: cadastre a chave de uma IA em Configurações." "$(j .error.message)"
+CODE=$(curl -s -o "$OUT" -w '%{http_code}' -H "authorization: Bearer $ADM" -F "arquivo=@$TXT" "$BASE$IV/vendas/ler-pdf"); BODY=$(cat "$OUT")
+check "V6 arquivo que não é PDF: 400" "400 O arquivo não é um PDF." "$CODE $(j .error.message)"
+
 rm -f "$PDF" "$TXT" "$JPG" "$OUT"
 
 echo "smoke: $ok ok, $falhas falha(s)"

@@ -29,7 +29,7 @@ async function inflar(dados: Uint8Array): Promise<Uint8Array> {
   } catch {
     throw erro("sem_leitor");
   }
-  const saida = new Blob([dados]).stream().pipeThrough(ds);
+  const saida = new Blob([dados.slice()]).stream().pipeThrough(ds);
   return new Uint8Array(await new Response(saida).arrayBuffer());
 }
 

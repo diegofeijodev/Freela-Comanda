@@ -4,7 +4,18 @@ import { Prisma } from '@prisma/client';
 import { isDateString } from '../../common/time/dates';
 import { horaValida } from './regras';
 
-export const CAMPOS_VENDA = ['pedido', 'data', 'hora', 'produto', 'quantidade', 'valor_total', 'preco_unitario', 'desconto', 'taxa', 'frete'] as const;
+export const CAMPOS_VENDA = [
+  'pedido',
+  'data',
+  'hora',
+  'produto',
+  'quantidade',
+  'valor_total',
+  'preco_unitario',
+  'desconto',
+  'taxa',
+  'frete',
+] as const;
 export type CampoVenda = (typeof CAMPOS_VENDA)[number];
 /** Campo do Comanda → nome da coluna no arquivo. Campo ausente = "o arquivo não tem". */
 export type Mapeamento = Partial<Record<CampoVenda, string>>;
@@ -74,7 +85,9 @@ const PONTO_MILHAR = /^\d{1,3}(,\d{3})+\.\d+$/;
  * "12,90" e "1,234". Com o separador de milhar E o decimal ("1.234,56" / "1,234.56"), não há dúvida.
  */
 export function numeroDaCelula(v: unknown, sep: Separador): Prisma.Decimal | null {
-  let t = textoLimpo(v).replace(/^R\$\s*/i, '').replace(SO_ESPACO, '');
+  let t = textoLimpo(v)
+    .replace(/^R\$\s*/i, '')
+    .replace(SO_ESPACO, '');
   if (!t) return null;
   let neg = false;
   if (t.startsWith('-')) {
@@ -191,7 +204,8 @@ export function aplicarMapeamento(
 }
 
 /** Chave única de `vendas`. */
-export const chaveVenda = (v: { pedido: string; produto_relatorio: string; data: string }) => `${v.pedido}\u0000${v.produto_relatorio}\u0000${v.data}`;
+export const chaveVenda = (v: { pedido: string; produto_relatorio: string; data: string }) =>
+  `${v.pedido}\u0000${v.produto_relatorio}\u0000${v.data}`;
 
 /**
  * Soma as linhas repetidas de pedido + produto + data (a chave única de `vendas`), como `vendasDasLinhas`: hora e preço da 1ª linha.

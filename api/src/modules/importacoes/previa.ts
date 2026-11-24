@@ -61,11 +61,7 @@ export type Previa = {
 export const MAX_PROBLEMAS = 200;
 const MAX_AMOSTRA = 20;
 
-const semAcento = (s: string) =>
-  s
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase();
+const semAcento = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 
 /** Nome que parece de produto de caldo de cana (mesma lista da Configuração da Cana: cana, caldo, garapa, frozen). */
 export const pareceCana = (nome: string) => /\b(cana|caldo|garapa|frozen)\b/.test(semAcento(nome));
@@ -116,7 +112,9 @@ export function montarPrevia(e: { lidas: number; validas: readonly LinhaVenda[];
     else novas.push(v);
   }
   const datas = vendas.map((v) => v.data).sort();
-  const periodo = datas.length ? { ini: datas[0]!, fim: datas[datas.length - 1]!, dias: diasEntre(datas[0]!, datas[datas.length - 1]!) } : null;
+  const periodo = datas.length
+    ? { ini: datas[0]!, fim: datas[datas.length - 1]!, dias: diasEntre(datas[0]!, datas[datas.length - 1]!) }
+    : null;
   const soma = (vs: readonly LinhaVenda[]) => vs.reduce((s, v) => s.add(v.valor_total), new Prisma.Decimal(0));
 
   const motivos = new Map<string, number>();
@@ -155,7 +153,9 @@ export function montarPrevia(e: { lidas: number; validas: readonly LinhaVenda[];
     pedidos: new Set(novas.map((v) => v.pedido)).size,
     itens: novas.reduce((s, v) => s.add(v.quantidade), new Prisma.Decimal(0)).toNumber(),
     problemas: e.problemas.slice(0, MAX_PROBLEMAS),
-    motivos: [...motivos].map(([motivo, linhas]) => ({ motivo, linhas })).sort((a, b) => b.linhas - a.linhas || a.motivo.localeCompare(b.motivo)),
+    motivos: [...motivos]
+      .map(([motivo, linhas]) => ({ motivo, linhas }))
+      .sort((a, b) => b.linhas - a.linhas || a.motivo.localeCompare(b.motivo)),
     amostra: novas.slice(0, MAX_AMOSTRA).map((v) => ({
       pedido: v.pedido,
       data: v.data,
@@ -174,7 +174,12 @@ export function montarPrevia(e: { lidas: number; validas: readonly LinhaVenda[];
       }))
       .sort((a, b) => b.valor_centavos - a.valor_centavos || a.produto_relatorio.localeCompare(b.produto_relatorio)),
     ja_existentes_mesma_fonte: existentes.filter((x) => x.fonte.chave === f.propria.chave).length,
-    ja_existentes_de_outra_fonte: [...outra.values()].map((o) => ({ fonte: o.fonte.nome, tipo: o.fonte.tipo, linhas: o.linhas, exemplo: o.exemplo })),
+    ja_existentes_de_outra_fonte: [...outra.values()].map((o) => ({
+      fonte: o.fonte.nome,
+      tipo: o.fonte.tipo,
+      linhas: o.linhas,
+      exemplo: o.exemplo,
+    })),
     ja_existentes_pedido_dia: existentes.filter((x) => pedidoDia.test(x.pedido)).length,
     sobreposicao: f.porFonte
       .filter((p) => p.chave !== f.propria.chave && p.vendas > 0)

@@ -1,5 +1,14 @@
 import { Prisma } from '@prisma/client';
-import { agregarVendas, aplicarMapeamento, camposFaltando, centavos, dataDaCelula, MAPEAMENTO_PADRAO, numeroDaCelula, type Mapeamento } from '../planilha';
+import {
+  agregarVendas,
+  aplicarMapeamento,
+  camposFaltando,
+  centavos,
+  dataDaCelula,
+  MAPEAMENTO_PADRAO,
+  numeroDaCelula,
+  type Mapeamento,
+} from '../planilha';
 
 const D = (s: string) => new Prisma.Decimal(s);
 const txt = (d: Prisma.Decimal | null) => (d === null ? null : d.toString());
@@ -53,7 +62,14 @@ describe('datas da planilha', () => {
 });
 
 describe('mapeamento de colunas', () => {
-  const m: Mapeamento = { pedido: 'Nº Venda', data: 'Data', produto: 'Descrição', quantidade: 'Qtde', valor_total: 'Total', desconto: 'Desc' };
+  const m: Mapeamento = {
+    pedido: 'Nº Venda',
+    data: 'Data',
+    produto: 'Descrição',
+    quantidade: 'Qtde',
+    valor_total: 'Total',
+    desconto: 'Desc',
+  };
   const op = { hoje: '2026-11-24', prefixo: '' };
 
   it('campos obrigatórios faltando', () => {
@@ -73,7 +89,13 @@ describe('mapeamento de colunas', () => {
     expect(r.validas).toHaveLength(1);
     const v = r.validas[0]!;
     expect([v.linha, v.pedido, v.data, v.hora, v.produto_relatorio]).toEqual([2, '1001', '2026-11-20', '19:30:00', 'Caldo 300 ml']);
-    expect([txt(v.quantidade), txt(v.valor_total), txt(v.desconto), txt(v.taxa), v.preco_unitario]).toEqual(['2', '1234.5', '0.5', '0', null]);
+    expect([txt(v.quantidade), txt(v.valor_total), txt(v.desconto), txt(v.taxa), v.preco_unitario]).toEqual([
+      '2',
+      '1234.5',
+      '0.5',
+      '0',
+      null,
+    ]);
   });
 
   it('cada problema com o motivo e a linha', () => {

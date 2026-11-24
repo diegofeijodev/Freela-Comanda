@@ -98,7 +98,9 @@ export class FatosVendas {
   /** Empresas ativas (menos a da loja): CNPJ → nome para a tela. */
   async empresas(cnpjLoja: string) {
     const es = await this.db.empresas.findMany({ where: { ativo: true }, select: { cnpj: true, razao_social: true, nome_fantasia: true } });
-    return new Map(es.filter((e) => normalizarCnpj(e.cnpj) !== cnpjLoja).map((e) => [normalizarCnpj(e.cnpj), e.nome_fantasia || e.razao_social]));
+    return new Map(
+      es.filter((e) => normalizarCnpj(e.cnpj) !== cnpjLoja).map((e) => [normalizarCnpj(e.cnpj), e.nome_fantasia || e.razao_social]),
+    );
   }
 
   /** Situação das chaves já registradas em `vendas_documentos`; trava as linhas no confirmar (FOR UPDATE). */
@@ -130,6 +132,12 @@ export class FatosVendas {
              to_char(min(v.data), 'YYYY-MM-DD') AS ini, to_char(max(v.data), 'YYYY-MM-DD') AS fim
         FROM vendas_documentos d JOIN vendas v ON v.documento_id = d.id
        WHERE d.chave = ANY(${[...chaves]}::text[])`;
-    return { documentos: chaves.length, linhas: r?.linhas ?? 0, valor_centavos: Number(r?.valor_centavos ?? 0), ini: r?.ini ?? null, fim: r?.fim ?? null };
+    return {
+      documentos: chaves.length,
+      linhas: r?.linhas ?? 0,
+      valor_centavos: Number(r?.valor_centavos ?? 0),
+      ini: r?.ini ?? null,
+      fim: r?.fim ?? null,
+    };
   }
 }

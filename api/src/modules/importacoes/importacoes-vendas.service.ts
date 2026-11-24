@@ -14,7 +14,6 @@ import {
   aplicarMapeamento,
   CAMPOS_VENDA,
   camposFaltando,
-  centavos,
   dataDaCelula,
   MAPEAMENTO_PADRAO,
   NOME_DO_CAMPO,
@@ -33,7 +32,15 @@ const OPCOES_TX = { timeout: 300_000, maxWait: 10_000 } as const;
 /** Serializa as importações de vendas (prévia × confirmar, duplo clique, dois admins): `pg_advisory_xact_lock(hashtext(...))`. */
 const TRAVA = 'importacao_vendas';
 
-type Origem = { id: string; nome: string; formato_padrao: string; mapeamento: Prisma.JsonValue; separador_decimal: string; prefixo_pedido: string; ativo: boolean };
+type Origem = {
+  id: string;
+  nome: string;
+  formato_padrao: string;
+  mapeamento: Prisma.JsonValue;
+  separador_decimal: string;
+  prefixo_pedido: string;
+  ativo: boolean;
+};
 
 export type ResultadoImportacao = {
   importacao_id: string;
@@ -68,13 +75,7 @@ type Calculo = {
 };
 
 const erro400 = (code: string, message: string) => new BadRequestException({ code, message });
-const semAcento = (s: string) =>
-  s
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .replace(/\s+/g, ' ')
-    .trim();
+const semAcento = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
 
 /** Mapeamento vindo do corpo ou da origem: só campos conhecidos e nomes de coluna em texto. */
 function mapeamentoConferido(m: unknown): Mapeamento | null {
@@ -84,7 +85,8 @@ function mapeamentoConferido(m: unknown): Mapeamento | null {
   for (const [k, v] of Object.entries(m as Record<string, unknown>)) {
     if (!(CAMPOS_VENDA as readonly string[]).includes(k)) throw erro400('VALIDATION_ERROR', `Campo desconhecido no mapeamento: ${k}.`);
     if (v == null || v === '') continue;
-    if (typeof v !== 'string' || v.length > 200) throw erro400('VALIDATION_ERROR', `Coluna inválida para ${NOME_DO_CAMPO[k as keyof Mapeamento]}.`);
+    if (typeof v !== 'string' || v.length > 200)
+      throw erro400('VALIDATION_ERROR', `Coluna inválida para ${NOME_DO_CAMPO[k as keyof Mapeamento]}.`);
     out[k as keyof Mapeamento] = v;
   }
   return out;
@@ -107,7 +109,15 @@ function linhasDoPdf(linhas: Record<string, unknown>[], dataPadrao: string | und
       desconto: t(l.desconto),
     };
   });
-  const m: Mapeamento = { pedido: 'pedido', data: 'data', hora: 'hora', produto: 'produto_relatorio', quantidade: 'quantidade', valor_total: 'valor_total', desconto: 'desconto' };
+  const m: Mapeamento = {
+    pedido: 'pedido',
+    data: 'data',
+    hora: 'hora',
+    produto: 'produto_relatorio',
+    quantidade: 'quantidade',
+    valor_total: 'valor_total',
+    desconto: 'desconto',
+  };
   return aplicarMapeamento(brutas, m, 'ponto', { hoje, prefixo: '', primeiraLinha: 1 });
 }
 
@@ -154,7 +164,10 @@ export class ImportacoesVendasService {
     const todas = await db.vendas_origens.findMany({ select: { id: true, nome: true } });
     const igual = todas.find((o) => o.id !== exceto && semAcento(o.nome) === alvo);
     if (igual) {
-      throw new ConflictException({ code: 'ORIGEM_REPETIDA', message: `Já existe um sistema chamado “${igual.nome}”. Escolha ele na lista ou use outro nome.` });
+      throw new ConflictException({
+        code: 'ORIGEM_REPETIDA',
+        message: `Já existe um sistema chamado “${igual.nome}”. Escolha ele na lista ou use outro nome.`,
+      });
     }
   }
 
@@ -243,7 +256,8 @@ export class ImportacoesVendasService {
     if (dto.origem_id) {
       origem = (await f.origem(dto.origem_id)) as Origem | null;
       if (!origem) throw new NotFoundException({ code: 'ORIGEM_NAO_ENCONTRADA', message: 'Sistema de origem não encontrado.' });
-    } else if (formato !== 'planilha') throw erro400('VALIDATION_ERROR', 'A planilha padrão só aceita planilha. Escolha o sistema de onde vem o arquivo.');
+    } else if (formato !== 'planilha')
+      throw erro400('VALIDATION_ERROR', 'A planilha padrão só aceita planilha. Escolha o sistema de onde vem o arquivo.');
     if (formato === 'xml' && dto.modo === 'substituir') {
       throw erro400('VALIDATION_ERROR', 'Com XML, cupom repetido nunca entra duas vezes e cupom cancelado sai sozinho: não há Substituir.');
     }
@@ -261,9 +275,13 @@ export class ImportacoesVendasService {
       mapeamento = origem ? (mapeamentoConferido(dto.mapeamento) ?? mapeamentoConferido(origem.mapeamento)) : MAPEAMENTO_PADRAO;
       const faltam = camposFaltando(mapeamento);
       if (faltam.length) throw erro400('MAPEAMENTO_INCOMPLETO', `Escolha a coluna de: ${faltam.map((c) => NOME_DO_CAMPO[c]).join(', ')}.`);
-      separador = dto.separador_decimal ?? ((origem?.separador_decimal as Separador | undefined) ?? 'virgula');
+      separador = dto.separador_decimal ?? (origem?.separador_decimal as Separador | undefined) ?? 'virgula';
       lidas = dto.linhas_brutas.length;
-      ({ validas, problemas } = aplicarMapeamento(dto.linhas_brutas, mapeamento!, separador, { hoje, prefixo, primeiraLinha: dto.primeira_linha }));
+      ({ validas, problemas } = aplicarMapeamento(dto.linhas_brutas, mapeamento!, separador, {
+        hoje,
+        prefixo,
+        primeiraLinha: dto.primeira_linha,
+      }));
     } else if (formato === 'pdf') {
       if (!Array.isArray(dto.linhas)) throw erro400('VALIDATION_ERROR', 'Envie as linhas conferidas do relatório.');
       if (dto.data_padrao !== undefined && !isDateString(dto.data_padrao)) throw erro400('VALIDATION_ERROR', 'Data das vendas inválida.');
@@ -280,7 +298,11 @@ export class ImportacoesVendasService {
       const cnpjLoja = await f.cnpjLoja();
       if (!cnpjLoja) throw erro400('LOJA_SEM_CNPJ', 'Cadastre o CNPJ da empresa principal em Empresas antes de importar XML.');
       const chaves = [...new Set([...env.documentos.map((d) => d.chave), ...env.cancelamentos.map((c) => c.chave)])];
-      const [empresas, registrados, doComanda] = await Promise.all([f.empresas(cnpjLoja), f.registrados(chaves, travar), f.doComanda(chaves)]);
+      const [empresas, registrados, doComanda] = await Promise.all([
+        f.empresas(cnpjLoja),
+        f.registrados(chaves, travar),
+        f.doComanda(chaves),
+      ]);
       const cls = classificarXml(env, {
         cnpjLoja,
         empresas,
@@ -336,7 +358,11 @@ export class ImportacoesVendasService {
    * importação → colunas lembradas → de-para → documentos e cancelamentos (XML) → Substituir → vendas (o gatilho dá as baixas) → resultado.
    * A mesma `chave_idempotencia` com o mesmo corpo devolve o resultado guardado (`repetida`); com outro corpo, 409.
    */
-  async confirmar(dto: VendasConfirmarDto, user: AuthUser, hoje = todaySp()): Promise<{ resultado: ResultadoImportacao; repetida: boolean }> {
+  async confirmar(
+    dto: VendasConfirmarDto,
+    user: AuthUser,
+    hoje = todaySp(),
+  ): Promise<{ resultado: ResultadoImportacao; repetida: boolean }> {
     const corpo = hashDoCorpo(dto);
     try {
       return await this.prisma.$transaction((tx) => this.confirmarNaTransacao(tx, dto, user, hoje, corpo), OPCOES_TX);
@@ -396,14 +422,22 @@ export class ImportacoesVendasService {
     if (dto.formato === 'planilha' && c.origem && dto.salvar_mapeamento && c.mapeamento) {
       await tx.vendas_origens.update({
         where: { id: c.origem.id },
-        data: { mapeamento: c.mapeamento as Prisma.InputJsonObject, separador_decimal: c.separador, atualizado_por: user.id, atualizado_em: new Date() },
+        data: {
+          mapeamento: c.mapeamento as Prisma.InputJsonObject,
+          separador_decimal: c.separador,
+          atualizado_por: user.id,
+          atualizado_em: new Date(),
+        },
       });
       mapeamentoSalvo = true;
     }
 
     // de-para: os produtos novos entram (com o item escolhido na prévia, ou sem item); o de-para que já existe não muda
     const itemDe = new Map(c.dePara);
-    const novos = p.produtos_sem_de_para.map((x) => ({ produto_relatorio: x.produto_relatorio, item_cardapio_id: dePara.get(x.produto_relatorio) ?? null }));
+    const novos = p.produtos_sem_de_para.map((x) => ({
+      produto_relatorio: x.produto_relatorio,
+      item_cardapio_id: dePara.get(x.produto_relatorio) ?? null,
+    }));
     if (novos.length) {
       await tx.de_para_produtos.createMany({ data: novos, skipDuplicates: true });
       for (const n of novos) itemDe.set(n.produto_relatorio, n.item_cardapio_id);
@@ -432,7 +466,9 @@ export class ImportacoesVendasService {
     }
     const canceladas = { documentos: 0, linhas: 0, valor_centavos: p.documentos?.cancelamentos_de_importados.valor_centavos ?? 0 };
     for (const k of cancelamentos) {
-      const [r] = await tx.$queryRaw<{ n: number }[]>`SELECT vendas_documento_cancelar(${k.chave}, ${imp.id}::uuid, ${k.dh_evento}::timestamptz) AS n`;
+      const [r] = await tx.$queryRaw<
+        { n: number }[]
+      >`SELECT vendas_documento_cancelar(${k.chave}, ${imp.id}::uuid, ${k.dh_evento}::timestamptz) AS n`;
       if (k.importado) {
         canceladas.documentos++;
         canceladas.linhas += Number(r?.n ?? 0);
@@ -459,7 +495,8 @@ export class ImportacoesVendasService {
           hora: v.hora ? new Date(`1970-01-01T${v.hora}Z`) : null,
           produto_relatorio: v.produto_relatorio,
           item_cardapio_id: itemDe.get(v.produto_relatorio) ?? null,
-          preco_unitario: v.preco_unitario ?? (v.quantidade.isZero() ? new Prisma.Decimal(0) : v.valor_total.div(v.quantidade).toDecimalPlaces(4)),
+          preco_unitario:
+            v.preco_unitario ?? (v.quantidade.isZero() ? new Prisma.Decimal(0) : v.valor_total.div(v.quantidade).toDecimalPlaces(4)),
           quantidade: v.quantidade,
           desconto: v.desconto,
           taxa: v.taxa,
@@ -521,9 +558,9 @@ export class ImportacoesVendasService {
     const ids = [...new Set([...out.values()].filter((x): x is string => !!x))];
     if (ids.length) {
       const achados = await tx.itens_cardapio.findMany({ where: { id: { in: ids } }, select: { id: true } });
-      if (achados.length !== ids.length) throw erro400('VALIDATION_ERROR', 'Item do cardápio não encontrado. Atualize a tela e escolha de novo.');
+      if (achados.length !== ids.length)
+        throw erro400('VALIDATION_ERROR', 'Item do cardápio não encontrado. Atualize a tela e escolha de novo.');
     }
     return out;
   }
 }
-

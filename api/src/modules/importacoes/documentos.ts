@@ -50,7 +50,8 @@ function decimal(v: unknown, onde: string): Prisma.Decimal {
 }
 
 function dataHora(v: unknown, onde: string): Date {
-  if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?([+-]\d{2}:\d{2}|Z)$/.test(v)) throw new EnvioInvalido(`${onde}: data inválida.`);
+  if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?([+-]\d{2}:\d{2}|Z)$/.test(v))
+    throw new EnvioInvalido(`${onde}: data inválida.`);
   const d = new Date(v);
   if (Number.isNaN(d.getTime())) throw new EnvioInvalido(`${onde}: data inválida.`);
   return d;
@@ -220,21 +221,19 @@ export const pedidoDoDocumento = (d: Pick<DocumentoXml, 'modelo' | 'serie' | 'nu
 export function linhasDoDocumento(d: DocumentoXml, prefixo: string, sufixo = ''): LinhaVenda[] {
   const { data, hora } = dataHoraSp(d.dh_emi);
   const pedido = pedidoDoDocumento(d, prefixo, sufixo);
-  return d.itens.map(
-    (it, k): LinhaVenda => ({
-      linha: k + 1,
-      pedido,
-      data,
-      hora,
-      produto_relatorio: it.produto,
-      quantidade: it.quantidade,
-      valor_total: it.valor_bruto.sub(it.desconto),
-      preco_unitario: it.valor_unitario,
-      desconto: it.desconto,
-      taxa: it.outros,
-      frete: it.frete,
-    }),
-  );
+  return d.itens.map((it, k): LinhaVenda => ({
+    linha: k + 1,
+    pedido,
+    data,
+    hora,
+    produto_relatorio: it.produto,
+    quantidade: it.quantidade,
+    valor_total: it.valor_bruto.sub(it.desconto),
+    preco_unitario: it.valor_unitario,
+    desconto: it.desconto,
+    taxa: it.outros,
+    frete: it.frete,
+  }));
 }
 
 /** As vendas de um documento já somadas por produto. */
@@ -295,7 +294,12 @@ export function classificarXml(env: EnvioXml, f: FatosXml): ClassificacaoXml {
     else if (f.doComanda.has(d.chave)) c.do_proprio_comanda++;
     else if (d.emitente_cnpj !== f.cnpjLoja && !f.empresas.has(d.emitente_cnpj)) ignorar(motivoOutroCnpj(d.emitente_cnpj), d.arquivo);
     else if (d.emitente_cnpj !== f.cnpjLoja && !f.cnpjsIncluidos.has(d.emitente_cnpj)) {
-      const o = outros.get(d.emitente_cnpj) ?? { cnpj: d.emitente_cnpj, nome_em_empresas: f.empresas.get(d.emitente_cnpj)!, documentos: 0, incluido: false };
+      const o = outros.get(d.emitente_cnpj) ?? {
+        cnpj: d.emitente_cnpj,
+        nome_em_empresas: f.empresas.get(d.emitente_cnpj)!,
+        documentos: 0,
+        incluido: false,
+      };
       o.documentos++;
       outros.set(d.emitente_cnpj, o);
     } else if (d.modelo === 55 && !f.nfeIncluidas.has(d.chave)) {
@@ -312,7 +316,12 @@ export function classificarXml(env: EnvioXml, f: FatosXml): ClassificacaoXml {
     else if (canceladasNoEnvio.has(d.chave)) c.cancelados_no_envio++;
     else {
       if (d.emitente_cnpj !== f.cnpjLoja) {
-        const o = outros.get(d.emitente_cnpj) ?? { cnpj: d.emitente_cnpj, nome_em_empresas: f.empresas.get(d.emitente_cnpj)!, documentos: 0, incluido: true };
+        const o = outros.get(d.emitente_cnpj) ?? {
+          cnpj: d.emitente_cnpj,
+          nome_em_empresas: f.empresas.get(d.emitente_cnpj)!,
+          documentos: 0,
+          incluido: true,
+        };
         o.documentos++;
         outros.set(d.emitente_cnpj, o);
       }
@@ -342,4 +351,3 @@ export function fechaContagemXml(c: ContagemXml): boolean {
       ign
   );
 }
-

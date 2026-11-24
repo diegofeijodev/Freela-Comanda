@@ -33,7 +33,9 @@ function chave(cnpj: string, numero: number): string {
   return base + String(r < 2 ? 0 : 11 - r);
 }
 
-function montar(o: { porFonte?: unknown[]; existentes?: Map<string, unknown>; registrados?: Map<string, string>; guardada?: unknown } = {}) {
+function montar(
+  o: { porFonte?: unknown[]; existentes?: Map<string, unknown>; registrados?: Map<string, string>; guardada?: unknown } = {},
+) {
   const ordem: string[] = [];
   const marca =
     <T>(nome: string, r: T) =>
@@ -78,7 +80,13 @@ function montar(o: { porFonte?: unknown[]; existentes?: Map<string, unknown>; re
     empresas: jest.fn(async () => new Map()),
     registrados: jest.fn(async () => o.registrados ?? new Map()),
     doComanda: jest.fn(async () => new Set()),
-    vendasDosDocumentos: jest.fn(async (cs: string[]) => ({ documentos: cs.length, linhas: 3, valor_centavos: 8750, ini: '2026-11-05', fim: '2026-11-12' })),
+    vendasDosDocumentos: jest.fn(async (cs: string[]) => ({
+      documentos: cs.length,
+      linhas: 3,
+      valor_centavos: 8750,
+      ini: '2026-11-05',
+      fim: '2026-11-12',
+    })),
   };
   const prisma = {
     ...tx,
@@ -129,14 +137,25 @@ describe('prévia', () => {
   });
   it('origem inexistente = 404 ORIGEM_NAO_ENCONTRADA; planilha padrão só aceita planilha; XML não tem Substituir', async () => {
     const { svc } = montar();
-    expect(await erro(svc.previa(planilha({ origem_id: '44444444-4444-4444-8444-444444444444' }) as VendasImportacaoDto, '2026-11-24'))).toMatchObject({
+    expect(
+      await erro(svc.previa(planilha({ origem_id: '44444444-4444-4444-8444-444444444444' }) as VendasImportacaoDto, '2026-11-24')),
+    ).toMatchObject({
       status: 404,
       code: 'ORIGEM_NAO_ENCONTRADA',
     });
-    expect(await erro(svc.previa(planilha({ origem_id: null, formato: 'pdf', linhas: [] }) as VendasImportacaoDto, '2026-11-24'))).toMatchObject({
+    expect(
+      await erro(svc.previa(planilha({ origem_id: null, formato: 'pdf', linhas: [] }) as VendasImportacaoDto, '2026-11-24')),
+    ).toMatchObject({
       status: 400,
     });
-    expect(await erro(svc.previa({ ...planilha(), formato: 'xml', modo: 'substituir', documentos: [], arquivos_lidos: 0 } as VendasImportacaoDto, '2026-11-24'))).toMatchObject({
+    expect(
+      await erro(
+        svc.previa(
+          { ...planilha(), formato: 'xml', modo: 'substituir', documentos: [], arquivos_lidos: 0 } as VendasImportacaoDto,
+          '2026-11-24',
+        ),
+      ),
+    ).toMatchObject({
       status: 400,
     });
   });
@@ -146,7 +165,15 @@ describe('confirmar', () => {
   it('ordem da transação: trava → idempotência → importação → mapeamento → de-para → vendas → resultado', async () => {
     const { svc, ordem, tx } = montar();
     const r = await svc.confirmar(planilha({ salvar_mapeamento: true, mapeamento: ORIGEM.mapeamento }), ADMIN, '2026-11-24');
-    expect(ordem.filter((x) => x !== 'cardapio-ids')).toEqual(['trava', 'idempotencia', 'importacao', 'mapeamento', 'de-para', 'vendas', 'resultado']);
+    expect(ordem.filter((x) => x !== 'cardapio-ids')).toEqual([
+      'trava',
+      'idempotencia',
+      'importacao',
+      'mapeamento',
+      'de-para',
+      'vendas',
+      'resultado',
+    ]);
     expect(r.repetida).toBe(false);
     expect(r.resultado).toMatchObject({
       importacao_id: 'imp-1',
@@ -159,7 +186,13 @@ describe('confirmar', () => {
       mapeamento_salvo: true,
     });
     expect(tx.importacoes.create.mock.calls[0]![0]).toMatchObject({
-      data: { tipo: 'vendas', origem_id: ORIGEM.id, formato: 'planilha', chave_idempotencia: '33333333-3333-4333-8333-333333333333', usuario_id: 'u-1' },
+      data: {
+        tipo: 'vendas',
+        origem_id: ORIGEM.id,
+        formato: 'planilha',
+        chave_idempotencia: '33333333-3333-4333-8333-333333333333',
+        usuario_id: 'u-1',
+      },
     });
     const vendas = (tx.vendas.createMany.mock.calls[0]![0] as { data: Record<string, unknown>[] }).data;
     expect(vendas[0]).toMatchObject({ pedido: '1001', data: dayToDb('2026-11-20'), importacao_id: 'imp-1', documento_id: null });
@@ -167,10 +200,17 @@ describe('confirmar', () => {
   });
 
   it('Substituir por origem (R3) apaga só as vendas deste sistema no período, sem cupom e sem XML', async () => {
-    const { svc, tx } = montar({ porFonte: [{ chave: `sistema:${ORIGEM.id}`, nome: ORIGEM.nome, tipo: 'sistema', vendas: 4, valor_centavos: 9900 }] });
+    const { svc, tx } = montar({
+      porFonte: [{ chave: `sistema:${ORIGEM.id}`, nome: ORIGEM.nome, tipo: 'sistema', vendas: 4, valor_centavos: 9900 }],
+    });
     const r = await svc.confirmar(planilha({ modo: 'substituir' }), ADMIN, '2026-11-24');
     expect(tx.vendas.deleteMany).toHaveBeenCalledWith({
-      where: { nfce_cupom_id: null, documento_id: null, importacoes: { is: { origem_id: ORIGEM.id } }, data: { gte: dayToDb('2026-11-20'), lte: dayToDb('2026-11-21') } },
+      where: {
+        nfce_cupom_id: null,
+        documento_id: null,
+        importacoes: { is: { origem_id: ORIGEM.id } },
+        data: { gte: dayToDb('2026-11-20'), lte: dayToDb('2026-11-21') },
+      },
     });
     expect(r.resultado).toMatchObject({ apagadas: 4, apagadas_valor_centavos: 9900 });
   });
@@ -178,7 +218,11 @@ describe('confirmar', () => {
   it('Substituir da planilha padrão (R4) usa o mesmo filtro da rota antiga', async () => {
     const { svc, tx } = montar();
     await svc.confirmar(
-      planilha({ origem_id: null, modo: 'substituir', linhas_brutas: [{ pedido: 'P1', data: '2026-11-20', produto_relatorio: 'X', quantidade: '1', valor_total: '5' }] }),
+      planilha({
+        origem_id: null,
+        modo: 'substituir',
+        linhas_brutas: [{ pedido: 'P1', data: '2026-11-20', produto_relatorio: 'X', quantidade: '1', valor_total: '5' }],
+      }),
       ADMIN,
       '2026-11-24',
     );
@@ -216,19 +260,38 @@ describe('confirmar', () => {
 
     const outro = montar({ guardada });
     const linhas_brutas = [{ Nº: '9', Data: '20/11/2026', Descrição: 'X', Qtde: '1', Total: '1' }];
-    expect(await erro(outro.svc.confirmar(planilha({ linhas_brutas }), ADMIN, '2026-11-24'))).toMatchObject({ status: 409, code: 'IMPORTACAO_JA_CONFIRMADA' });
+    expect(await erro(outro.svc.confirmar(planilha({ linhas_brutas }), ADMIN, '2026-11-24'))).toMatchObject({
+      status: 409,
+      code: 'IMPORTACAO_JA_CONFIRMADA',
+    });
   });
 
   it('nada novo e nada a cancelar = 400 IMPORTACAO_VAZIA', async () => {
     const { svc } = montar();
-    const e = await erro(svc.confirmar(planilha({ linhas_brutas: [{ Nº: '1', Data: '31/02/2026', Descrição: 'X', Qtde: '1', Total: '1' }] }), ADMIN, '2026-11-24'));
-    expect(e).toMatchObject({ status: 400, code: 'IMPORTACAO_VAZIA', message: 'Nenhuma venda válida no arquivo. Confira as colunas de Data e Quantidade.' });
+    const e = await erro(
+      svc.confirmar(
+        planilha({ linhas_brutas: [{ Nº: '1', Data: '31/02/2026', Descrição: 'X', Qtde: '1', Total: '1' }] }),
+        ADMIN,
+        '2026-11-24',
+      ),
+    );
+    expect(e).toMatchObject({
+      status: 400,
+      code: 'IMPORTACAO_VAZIA',
+      message: 'Nenhuma venda válida no arquivo. Confira as colunas de Data e Quantidade.',
+    });
   });
 
   it('de-para novo: item do cardápio que não existe = 400', async () => {
     const { svc, tx } = montar();
     tx.itens_cardapio.findMany.mockResolvedValueOnce([]);
-    const e = await erro(svc.confirmar(planilha({ de_para_novos: [{ produto_relatorio: 'Caldo 300', item_cardapio_id: '55555555-5555-4555-8555-555555555555' }] }), ADMIN, '2026-11-24'));
+    const e = await erro(
+      svc.confirmar(
+        planilha({ de_para_novos: [{ produto_relatorio: 'Caldo 300', item_cardapio_id: '55555555-5555-4555-8555-555555555555' }] }),
+        ADMIN,
+        '2026-11-24',
+      ),
+    );
     expect(e).toMatchObject({ status: 400, code: 'VALIDATION_ERROR' });
   });
 });
@@ -256,13 +319,32 @@ describe('confirmar XML', () => {
     tp_amb: 1,
     dh_emi: '2026-11-20T14:30:00-03:00',
     valor_total: '22.65',
-    itens: [{ produto: 'CALDO 300ML', quantidade: '2', valor_unitario: '12.00', valor_bruto: '24.00', desconto: '1.35', outros: '0', frete: '0', cfop: '5102' }],
+    itens: [
+      {
+        produto: 'CALDO 300ML',
+        quantidade: '2',
+        valor_unitario: '12.00',
+        valor_bruto: '24.00',
+        desconto: '1.35',
+        outros: '0',
+        frete: '0',
+        cfop: '5102',
+      },
+    ],
   });
 
   it('documento novo: registra o documento antes das vendas e liga a venda ao documento', async () => {
     const { svc, ordem, tx } = montar();
     const r = await svc.confirmar(xml([doc(12)]), ADMIN, '2026-11-24');
-    expect(ordem.filter((x) => x !== 'cardapio-ids')).toEqual(['trava', 'idempotencia', 'importacao', 'de-para', 'documentos', 'vendas', 'resultado']);
+    expect(ordem.filter((x) => x !== 'cardapio-ids')).toEqual([
+      'trava',
+      'idempotencia',
+      'importacao',
+      'de-para',
+      'documentos',
+      'vendas',
+      'resultado',
+    ]);
     const v = (tx.vendas.createMany.mock.calls[0]![0] as { data: Record<string, unknown>[] }).data[0]!;
     expect(v).toMatchObject({ pedido: 'NFC-e 1-12', documento_id: 'doc-0', produto_relatorio: 'CALDO 300ML' });
     expect(String(v.valor_total)).toBe('22.65');
@@ -272,7 +354,11 @@ describe('confirmar XML', () => {
   it('só cancelamentos (de cupom já importado): não é IMPORTACAO_VAZIA; aplica vendas_documento_cancelar', async () => {
     const c = chave(LOJA, 20);
     const { svc, ordem, tx } = montar({ registrados: new Map([[c, 'autorizada']]) });
-    const r = await svc.confirmar(xml([], [{ arquivo: 'canc.xml', chave: c, dh_evento: '2026-11-21T10:00:00-03:00' }]), ADMIN, '2026-11-24');
+    const r = await svc.confirmar(
+      xml([], [{ arquivo: 'canc.xml', chave: c, dh_evento: '2026-11-21T10:00:00-03:00' }]),
+      ADMIN,
+      '2026-11-24',
+    );
     expect(ordem).toContain('cancelar');
     expect(tx.vendas.createMany).not.toHaveBeenCalled();
     expect(r.resultado).toMatchObject({ inseridas: 0, canceladas: { documentos: 1, linhas: 3, valor_centavos: 8750 } });

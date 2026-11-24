@@ -87,6 +87,15 @@ Na máquina do dono, sempre pelo teto de memória (`scripts/run-capped.sh`, ver 
   9. Reforma tributária: quais os códigos do Simples para 2027 (`cAtivSN`/`gTribSN`)? (hoje só o cadastro; nada sai no XML)
   Conferência no navegador antes de usar: abrir Cupom → Emitir com a emissão desligada e ler a faixa de aviso. A impressão do DANFE no papel de 80 mm só existe com um cupom autorizado: é passo do roteiro de homologação (`docs/deploy.md`).
 
+- **Importar vendas de outros sistemas (Vendas → Importar vendas):** testado só com arquivos fictícios (nenhum arquivo real do outro sistema passou por aqui). Roteiro do primeiro uso real, com **um dia** de vendas:
+  1. Mandar ao desenvolvedor um arquivo de exemplo de cada formato que o outro sistema exporta (o XML/.zip do contador, a planilha, o PDF do relatório) e dizer se esse sistema é o mesmo caixa das planilhas que já importamos ou outro canal (iFood, delivery, outra loja).
+  2. Em Empresas, conferir que a empresa principal tem o CNPJ certo (o XML só entra se o cupom for desse CNPJ).
+  3. Criar o sistema ("+ Novo sistema"), importar o arquivo de um dia e comparar o total da prévia com o total do relatório do sistema; confirmar.
+  4. Importar o mesmo arquivo de novo: tem de dizer "já foi importado" / "já estão no Comanda" e não somar nada.
+  5. PDF: a leitura pela IA só foi testada com leitor falso. Com a chave de IA salva, ler um relatório real de um dia e conferir linha a linha (a tela mostra "soma × total impresso").
+  6. XML: o cancelamento por substituição (evento 110112), a contingência e o .zip com pastas nunca foram vistos num arquivo real; se algum cupom aparecer como "ignorado", anotar o motivo e mandar o arquivo.
+  7. Se o navegador disser que não abre .zip, descompactar e escolher os .xml soltos (Ctrl+A na pasta).
+
 ## Migração dos dados (pendente)
 
 As tabelas são idênticas às do Supabase do Lovable, então trazer os dados de Valinhos (insumos, fichas, inventários, vendas, contas) é cópia

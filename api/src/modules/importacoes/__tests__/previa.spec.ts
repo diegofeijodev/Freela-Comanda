@@ -1,5 +1,14 @@
 import { aplicarMapeamento, chaveVenda, type Mapeamento } from '../planilha';
-import { fonteDaImportacao, montarPrevia, NOME_CUPOM, NOME_PADRAO, pareceCana, sugerirItemCardapio, type FatosPrevia, type Fonte } from '../previa';
+import {
+  fonteDaImportacao,
+  montarPrevia,
+  NOME_CUPOM,
+  NOME_PADRAO,
+  pareceCana,
+  sugerirItemCardapio,
+  type FatosPrevia,
+  type Fonte,
+} from '../previa';
 
 const M: Mapeamento = { pedido: 'p', data: 'd', produto: 'x', quantidade: 'q', valor_total: 't' };
 const PDV = { id: 'o-1', nome: 'PDV Valinhos' };
@@ -51,7 +60,9 @@ describe('prévia: as contagens fecham (lidas = novas + já existentes + com pro
   });
   it('R1: a já existente de outra fonte vem com o exemplo (pedido e data) e o nome da fonte', () => {
     expect(p.ja_existentes_mesma_fonte).toBe(1);
-    expect(p.ja_existentes_de_outra_fonte).toEqual([{ fonte: 'PDV Centro', tipo: 'sistema', linhas: 1, exemplo: { pedido: '1003', data: '2026-11-21' } }]);
+    expect(p.ja_existentes_de_outra_fonte).toEqual([
+      { fonte: 'PDV Centro', tipo: 'sistema', linhas: 1, exemplo: { pedido: '1003', data: '2026-11-21' } },
+    ]);
   });
   it('R6 e os motivos com o total de cada tipo (não só os 200 primeiros)', () => {
     expect(p.problemas).toEqual([
@@ -111,7 +122,10 @@ describe('prévia: avisos', () => {
 
   it('R7: arquivo já importado passa adiante (não barra)', () => {
     const em = '2026-11-20T21:10:00.000Z';
-    const p = montarPrevia(ler([{ p: '1', d: '20/11/2026', x: 'X', q: '1', t: '1' }]), fatos({ arquivoJaImportado: { em, por: 'Diego', vendas: 2301 } }));
+    const p = montarPrevia(
+      ler([{ p: '1', d: '20/11/2026', x: 'X', q: '1', t: '1' }]),
+      fatos({ arquivoJaImportado: { em, por: 'Diego', vendas: 2301 } }),
+    );
     expect(p.arquivo_ja_importado).toEqual({ em, por: 'Diego', vendas: 2301 });
   });
 
@@ -159,7 +173,12 @@ describe('prévia: produtos ainda não ligados ao cardápio', () => {
     ]);
   });
   it('parece de caldo: palavra inteira, sem caixa e sem acento', () => {
-    expect([pareceCana('Garapa 300'), pareceCana('FROZEN de cana'), pareceCana('Canapé'), pareceCana('Americana')]).toEqual([true, true, false, false]);
+    expect([pareceCana('Garapa 300'), pareceCana('FROZEN de cana'), pareceCana('Canapé'), pareceCana('Americana')]).toEqual([
+      true,
+      true,
+      false,
+      false,
+    ]);
   });
   it('sugestão por palavras em comum (≥ 50%)', () => {
     const c = [

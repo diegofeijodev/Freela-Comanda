@@ -163,7 +163,9 @@ describe('classificação dos arquivos (cada um em exatamente um grupo)', () => 
     const nfe = doc(24, { modelo: 55 });
     const r = classificarXml(envio([outra, nfe]), fatos({ cnpjsIncluidos: new Set([OUTRA_EMPRESA]), nfeIncluidas: new Set([nfe.chave]) }));
     expect(r.novos.map((d) => d.numero)).toEqual([25, 24]);
-    expect(r.contagem.outros_cnpjs).toEqual([{ cnpj: OUTRA_EMPRESA, nome_em_empresas: 'Cana Express Ltda', documentos: 1, incluido: true }]);
+    expect(r.contagem.outros_cnpjs).toEqual([
+      { cnpj: OUTRA_EMPRESA, nome_em_empresas: 'Cana Express Ltda', documentos: 1, incluido: true },
+    ]);
     expect(fechaContagemXml(r.contagem)).toBe(true);
   });
 
@@ -175,7 +177,10 @@ describe('classificação dos arquivos (cada um em exatamente um grupo)', () => 
 
   it('só cancelamentos (o .zip que chega semanas depois): nenhuma venda nova, cancelamento a aplicar', () => {
     const c20 = chave(LOJA, 65, 1, 20);
-    const r = classificarXml(envio([], [{ arquivo: 'canc.xml', chave: c20, dh_evento: null }]), fatos({ registrados: new Map([[c20, 'autorizada']]) }));
+    const r = classificarXml(
+      envio([], [{ arquivo: 'canc.xml', chave: c20, dh_evento: null }]),
+      fatos({ registrados: new Map([[c20, 'autorizada']]) }),
+    );
     expect(r.novos).toEqual([]);
     expect(r.cancelar).toEqual([{ chave: c20, dh_evento: null, importado: true }]);
     expect(fechaContagemXml(r.contagem)).toBe(true);
@@ -184,9 +189,21 @@ describe('classificação dos arquivos (cada um em exatamente um grupo)', () => 
 
 describe('as vendas de um documento (a mesma projeção do cupom do Comanda)', () => {
   it('pedido "NFC-e série-número" com as letras do sistema, data e hora em Brasília, valor = vProd − vDesc, produto repetido somado', () => {
-    const e = envio([doc(12, { dh_emi: '2026-11-21T01:30:00Z', itens: [item('CALDO  300ML'), item('CALDO 300ML'), item('PASTEL', { desconto: '0.00' })] })]);
+    const e = envio([
+      doc(12, { dh_emi: '2026-11-21T01:30:00Z', itens: [item('CALDO  300ML'), item('CALDO 300ML'), item('PASTEL', { desconto: '0.00' })] }),
+    ]);
     const v = vendasDoDocumento(e.documentos[0]!, 'PV-');
-    expect(v.map((x) => [x.pedido, x.data, x.hora, x.produto_relatorio, x.quantidade.toString(), x.valor_total.toString(), x.desconto.toString()])).toEqual([
+    expect(
+      v.map((x) => [
+        x.pedido,
+        x.data,
+        x.hora,
+        x.produto_relatorio,
+        x.quantidade.toString(),
+        x.valor_total.toString(),
+        x.desconto.toString(),
+      ]),
+    ).toEqual([
       ['PV-NFC-e 1-12', '2026-11-20', '22:30:00', 'CALDO 300ML', '4', '45.3', '2.7'],
       ['PV-NFC-e 1-12', '2026-11-20', '22:30:00', 'PASTEL', '2', '24', '0'],
     ]);
