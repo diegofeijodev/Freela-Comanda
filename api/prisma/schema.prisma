@@ -658,6 +658,7 @@ model itens_cardapio {
   vendas             vendas[]
   nfce_item          nfce_itens?
   nfce_cupom_itens   nfce_cupom_itens[]
+  cana_produto       cana_produtos?
 }
 
 model ficha_ingredientes {
@@ -1160,4 +1161,69 @@ model empresas {
 
   colaboradores ponto_colaboradores[]
   usuarios      users[]
+}
+
+/// Só nossa (Cana, migração `cana`): linha única (id = 1), nasce no primeiro "Salvar os números". Nulo = "não informado".
+model cana_parametros {
+  id                        Int       @id @default(1)
+  litros_por_duzia_esperado Decimal?  @db.Decimal(10, 3)
+  /// Litros de frozen que 1 litro de caldo rende (pergunta 3, resposta a).
+  rendimento_frozen         Decimal?  @db.Decimal(10, 4)
+  atualizado_por            String?   @db.Uuid
+  atualizado_por_nome       String?
+  atualizado_em             DateTime? @db.Timestamptz(6)
+}
+
+/// Só nossa: cada "Salvar os números" acrescenta uma linha (gatilho de imutável).
+model cana_parametros_historico {
+  id                        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  litros_por_duzia_esperado Decimal? @db.Decimal(10, 3)
+  rendimento_frozen         Decimal? @db.Decimal(10, 4)
+  alterado_por              String   @db.Uuid
+  alterado_por_nome         String
+  alterado_em               DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([alterado_em])
+}
+
+/// Só nossa: item do cardápio que leva caldo (ml de 1 unidade; no frozen, o tamanho do copo de frozen).
+model cana_produtos {
+  item_cardapio_id    String   @id @db.Uuid
+  ml_por_unidade      Decimal  @db.Decimal(10, 2)
+  frozen              Boolean  @default(false)
+  ativo               Boolean  @default(true)
+  atualizado_por      String?  @db.Uuid
+  atualizado_por_nome String?
+  atualizado_em       DateTime @default(now()) @db.Timestamptz(6)
+
+  item_cardapio itens_cardapio @relation(fields: [item_cardapio_id], references: [id], onDelete: Cascade)
+}
+
+/// Só nossa: livro só de acréscimo (gatilho `cana_lancamentos_imutavel`). Sem FK para users (os usuários moram só em `public`).
+/// O índice único parcial `cana_uma_contagem_por_dia` só existe na migração (o Prisma não escreve índice parcial).
+model cana_lancamentos {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// recebimento | producao | contagem
+  tipo               String
+  data               DateTime  @db.Date
+  duzias             Decimal?  @db.Decimal(10, 2)
+  litros_caldo       Decimal?  @db.Decimal(10, 3)
+  litros_frozen      Decimal?  @db.Decimal(10, 3)
+  fornecedor         String?
+  observacao         String?
+  substitui_id       String?   @unique @db.Uuid
+  chave_idempotencia String?   @unique @db.Uuid
+  lancado_por        String    @db.Uuid
+  lancado_por_nome   String
+  lancado_em         DateTime  @default(now()) @db.Timestamptz(6)
+  anulado_em         DateTime? @db.Timestamptz(6)
+  anulado_por        String?   @db.Uuid
+  anulado_por_nome   String?
+  anulado_motivo     String?
+
+  substitui       cana_lancamentos? @relation("cana_correcao", fields: [substitui_id], references: [id], onDelete: Restrict)
+  substituido_por cana_lancamentos? @relation("cana_correcao")
+
+  @@index([data])
+  @@index([lancado_por, lancado_em])
 }

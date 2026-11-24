@@ -37,7 +37,7 @@ describe('esquema.ts × migrações', () => {
   it('ordem de carga respeita toda chave estrangeira (mãe antes da filha)', () => {
     const ordem = TABELAS.map((t) => t.nome);
     const fks = [...sql.matchAll(/ALTER TABLE "([a-z_]+)" ADD CONSTRAINT "[a-z_]+" FOREIGN KEY \("[a-z_]+"\) REFERENCES "([a-z_]+)"/g)];
-    expect(fks).toHaveLength(37); // 32 + as 4 da migração vendas_importacao (24/11) + users.empresa_id (multiempresa, 26/11)
+    expect(fks).toHaveLength(39); // 32 + as 4 da migração vendas_importacao (24/11) + users.empresa_id (multiempresa, 26/11) + as 2 da cana (27/11)
     for (const [, filha, mae] of fks) {
       if (filha === mae) continue; // auto-referência (notas_entrada.repetida_de): sem ordem a respeitar
       if ((TABELAS_SO_NOSSAS as readonly string[]).includes(filha!)) continue; // tabela só nossa (SEFAZ): a carga não toca
@@ -137,6 +137,29 @@ describe('importar vendas (migração vendas_importacao)', () => {
     const fora = m.replace(/\$\$[\s\S]*?\$\$/g, '').replace(/^\s*--.*$/gm, '').replace(/^CREATE TRIGGER .*$/gm, '')
       .replace(/ON (DELETE|UPDATE) (RESTRICT|CASCADE|SET NULL)/g, '');
     expect(fora).not.toMatch(/\bDROP\b|\bDELETE\b|\bUPDATE\b|ALTER COLUMN|RENAME/i);
+  });
+});
+
+describe('controle da cana (migração cana)', () => {
+  const m = readFileSync(join(MIGR, '20261127120000_cana', 'migration.sql'), 'utf8');
+  it('as 4 tabelas novas em TABELAS_SO_NOSSAS e nenhuma coluna nova em tabela do Lovable', () => {
+    for (const t of ['cana_parametros', 'cana_parametros_historico', 'cana_produtos', 'cana_lancamentos']) expect(TABELAS_SO_NOSSAS).toContain(t);
+    expect(m).not.toMatch(/ADD COLUMN/i);
+  });
+  it('os 2 gatilhos de imutável estão em GATILHOS e a migração não usa sequence', () => {
+    expect(GATILHOS.map((g) => `${g.tabela}.${g.nome}`)).toEqual(
+      expect.arrayContaining(['cana_lancamentos.cana_lancamentos_imutavel', 'cana_parametros_historico.cana_parametros_historico_imutavel']),
+    );
+    expect(m).not.toMatch(/SERIAL|IDENTITY|nextval|CREATE SEQUENCE/i);
+  });
+  it('só acrescenta: fora do corpo das funções, nada de DROP, DELETE, UPDATE, INSERT, ALTER COLUMN nem RENAME', () => {
+    const fora = m.replace(/\$\$[\s\S]*?\$\$/g, '').replace(/^\s*--.*$/gm, '').replace(/^CREATE TRIGGER .*$/gm, '')
+      .replace(/ON (DELETE|UPDATE) (RESTRICT|CASCADE|SET NULL)/g, '');
+    expect(fora).not.toMatch(/\bDROP\b|\bDELETE\b|\bUPDATE\b|\bINSERT\b|ALTER COLUMN|RENAME/i);
+  });
+  it('multiempresa: nenhuma FK para users e nada qualificado com public. (a migração roda em cada schema de empresa)', () => {
+    expect(m).not.toMatch(/REFERENCES "?users"?/);
+    expect(m).not.toMatch(/\bpublic\./);
   });
 });
 

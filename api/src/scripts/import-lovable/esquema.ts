@@ -256,7 +256,7 @@ export const COLUNAS_USERS = ['id', 'email', 'nome', 'password_hash', 'perfil', 
  * `certificado_digital*` = certificado A1 (16/11); `sefaz_*` e `notas_sefaz` = busca de notas na SEFAZ (17/11); `nfce_*` = cupom fiscal
  * (19/11); `ponto_*` = ponto (23/11) e `empresas` = cadastro de empresas (24/11), as duas criadas SEM aspas (o teste aceita as duas formas).
  * `ponto_colaboradores.empresa_id` não vai para COLUNAS_SO_NOSSAS: a tabela inteira já é só nossa. `vendas_origens` e `vendas_documentos` =
- * importar vendas de outros sistemas (25/11).
+ * importar vendas de outros sistemas (25/11). `cana_*` = controle da cana (27/11; só lê vendas e itens_cardapio).
  */
 export const TABELAS_SO_NOSSAS = ['users', '_prisma_migrations', 'ia_chave', 'certificado_digital', 'certificado_digital_historico',
   'sefaz_distribuicao',
@@ -287,6 +287,10 @@ export const TABELAS_SO_NOSSAS = ['users', '_prisma_migrations', 'ia_chave', 'ce
   'empresas',
   'vendas_origens',
   'vendas_documentos',
+  'cana_parametros',
+  'cana_parametros_historico',
+  'cana_produtos',
+  'cana_lancamentos',
 ] as const;
 
 /** Colunas nossas em tabela do Lovable: ficam nulas na carga (que só insere `colunas`) e o importador as desconta ao conferir o banco. */
@@ -345,6 +349,16 @@ export const GATILHOS: readonly { tabela: string; nome: string; porque: string }
     tabela: 'vendas_documentos',
     nome: 'vendas_documentos_imutavel',
     porque: 'tabela só nossa (vendas importadas por XML), que a carga não toca: desligar e religar junto com os outros não muda nada',
+  },
+  {
+    tabela: 'cana_lancamentos',
+    nome: 'cana_lancamentos_imutavel',
+    porque: 'tabela só nossa (controle da cana), que a carga não toca: desligar e religar junto com os outros não muda nada',
+  },
+  {
+    tabela: 'cana_parametros_historico',
+    nome: 'cana_parametros_historico_imutavel',
+    porque: 'tabela só nossa (controle da cana), que a carga não toca: desligar e religar junto com os outros não muda nada',
   },
 ];
 
