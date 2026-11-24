@@ -40,9 +40,11 @@ for _ in $(seq 1 120); do curl -sf localhost:3097/health >/dev/null 2>&1 && brea
 for _ in $(seq 1 180); do curl -s -o /dev/null localhost:3026/auth && break; sleep 1; done
 # Aquece as rotas: no `next dev` a 1ª visita compila a rota e o Fast Refresh aborta a navegação que estava em curso (o login
 # parava em /auth com a sessão já gravada). Em produção tudo vem compilado e isso não acontece.
+# BC_ROTAS troca a lista (um grupo aquece só as rotas dele e cabe num teto menor).
 Z=00000000-0000-4000-8000-000000000000
-for r in / /auth /trocar-senha /painel /vendas /fichas /fichas/$Z /inventario /inventario/$Z /estoque /objetivo /compras /compras/$Z \
-  /notas /contas /caixa /dre /importar /configuracoes /usuarios /cupom /cupom/$Z /cupom/$Z/imprimir; do
+ROTAS=${BC_ROTAS:-"/ /auth /trocar-senha /painel /vendas /fichas /fichas/$Z /inventario /inventario/$Z /estoque /objetivo /compras /compras/$Z \
+  /notas /contas /caixa /dre /importar /configuracoes /usuarios /cupom /cupom/$Z /cupom/$Z/imprimir"}
+for r in $ROTAS; do
   curl -s -o /dev/null --max-time 180 "localhost:3026$r" || true
 done
 SHOTS="$SHOTS" BASE=http://localhost:3026 node "${CHECK_SCRIPT:-$WEB/scripts/browser-check.mjs}"

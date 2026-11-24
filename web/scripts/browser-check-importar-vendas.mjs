@@ -1,14 +1,16 @@
 // Grupo do browser-check: Importar vendas (`/vendas/importar`; desenho 24/11 C.4 e UX 5.2). Roda sozinho na pilha do browser-check.sh:
-//   CHECK_SCRIPT=scripts/browser-check-importar-vendas.mjs ../scripts/run-capped.sh 2400 bash scripts/browser-check.sh     (em web/)
+//   BC_ROTAS="/ /auth /painel /vendas /vendas/importar" CHECK_SCRIPT=scripts/browser-check-importar-vendas.mjs \
+//     ../scripts/run-capped.sh 2400 bash scripts/browser-check.sh     (em web/)
 // Admin a 1366 px: planilha CSV de outro sistema (vírgula e windows-1252) → colunas sugeridas → prévia (nada gravado) → sobreposição com
-// a caixa → importar → reimportar sem duplicar (e o Substituir bloqueado pela linha com problema); XML com cupom, cancelamento junto,
-// inutilização e o cancelamento que chega depois; PDF sem chave de IA (a frase do servidor) e PDF com a IA simulada (page.route, sem
+// a caixa → importar → reimportar sem duplicar (e o Substituir bloqueado pela linha com problema) → Substituir com arquivo limpo (diálogo);
+// XML num .zip deflate (o leitor do navegador) com cupom, cancelamento junto e inutilização, e o cancelamento que chega depois; PDF sem chave de IA (a frase do servidor) e PDF com a IA simulada (page.route, sem
 // rede) com a conferência. A 360 px: sem rolagem lateral. Nada em storage além de authUser. O banco confere cada passo.
 import { createRequire } from 'node:module';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
+import { deflateRawSync } from 'node:zlib';
 
 const require = createRequire(import.meta.url);
 const { chromium } = require('/home/doutor/coding/freela/freela-web-v2/node_modules/playwright');
@@ -52,6 +54,9 @@ const CSV = [
 ].join('\r\n');
 const csvPath = join(pasta, 'pdv-teste-vendas.csv');
 writeFileSync(csvPath, Buffer.from(CSV, 'latin1'));
+// Substituir com arquivo limpo: o BC-1 muda de valor e perde o caldo; o BC-2 fica igual
+const csvSubstPath = join(pasta, 'pdv-teste-vendas-corrigido.csv');
+writeFileSync(csvSubstPath, Buffer.from(['Nº Venda,Data,Descrição,Qtde,Vl. Total', `BC-1,${br(D1)},Pão de Alho especial,2,"30,00"`, `BC-2,${br(D2)},Espeto de Picanha,3,"66,00"`].join('\r\n'), 'latin1'));
 // para o celular: um pedido novo (há o que importar, então a barra fixa aparece)
 const csvNovoPath = join(pasta, 'pdv-teste-vendas-2.csv');
 writeFileSync(csvNovoPath, Buffer.from(['Nº Venda,Data,Descrição,Qtde,Vl. Total', `BC-9,${br(D2)},Espeto de Alcatra,1,"15,00"`].join('\r\n'), 'latin1'));
@@ -78,12 +83,34 @@ const arquivo = (nome, conteudo) => {
   writeFileSync(p, conteudo);
   return p;
 };
-const xmls = [
-  arquivo('NFCe-701.xml', nfce(701, 'CALDO DE CANA 500ML', '2.0000', '8.00', '16.00', '1.00', '15.00')),
-  arquivo('NFCe-702.xml', nfce(702, 'PASTEL DE CARNE', '1.0000', '9.00', '9.00', '0.00', '9.00')),
-  arquivo('canc-702.xml', cancelamento(702)),
-  arquivo('inut-703.xml', '<?xml version="1.0"?><procInutNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00"><inutNFe/></procInutNFe>'),
-];
+/** .zip mínimo com deflate (método 8), como o PDV gera para o contador: diretório central + fim (sem CRC; o leitor não confere). */
+function zipDeflate(entradas) {
+  const partes = [];
+  const dir = [];
+  let off = 0;
+  for (const [nomeTxt, texto] of entradas) {
+    const nome = Buffer.from(nomeTxt);
+    const cru = Buffer.from(texto);
+    const dados = deflateRawSync(cru);
+    const lh = Buffer.alloc(30);
+    lh.writeUInt32LE(0x04034b50, 0); lh.writeUInt16LE(8, 8); lh.writeUInt32LE(dados.length, 18); lh.writeUInt32LE(cru.length, 22); lh.writeUInt16LE(nome.length, 26);
+    partes.push(lh, nome, dados);
+    const ch = Buffer.alloc(46);
+    ch.writeUInt32LE(0x02014b50, 0); ch.writeUInt16LE(8, 10); ch.writeUInt32LE(dados.length, 20); ch.writeUInt32LE(cru.length, 24); ch.writeUInt16LE(nome.length, 28); ch.writeUInt32LE(off, 42);
+    dir.push(ch, nome);
+    off += 30 + nome.length + dados.length;
+  }
+  const tamDir = dir.reduce((s, x) => s + x.length, 0);
+  const fim = Buffer.alloc(22);
+  fim.writeUInt32LE(0x06054b50, 0); fim.writeUInt16LE(entradas.length, 8); fim.writeUInt16LE(entradas.length, 10); fim.writeUInt32LE(tamDir, 12); fim.writeUInt32LE(off, 16);
+  return Buffer.concat([...partes, ...dir, fim]);
+}
+const zipXml = arquivo('xml-do-mes.zip', zipDeflate([
+  ['2026/NFCe-701.xml', nfce(701, 'CALDO DE CANA 500ML', '2.0000', '8.00', '16.00', '1.00', '15.00')],
+  ['2026/NFCe-702.xml', nfce(702, 'PASTEL DE CARNE', '1.0000', '9.00', '9.00', '0.00', '9.00')],
+  ['2026/canc-702.xml', cancelamento(702)],
+  ['2026/inut-703.xml', '<?xml version="1.0"?><procInutNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00"><inutNFe/></procInutNFe>'],
+]));
 const cancDepois = arquivo('canc-701.xml', cancelamento(701));
 const pdfPath = arquivo('relatorio-vendas.pdf', '%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n');
 
@@ -224,16 +251,37 @@ async function prontaPrevia(page) {
   check('Substituir bloqueado: nada apagado nem gravado', contar('vendas') === vendasDepois, `${contar('vendas')} × ${vendasDepois}`);
   await foto(page, 'importar-5-substituir-bloqueado');
 
-  // 8. XML: 2 cupons, o cancelamento de um no mesmo envio e uma inutilização
+  // 7b. Substituir com arquivo limpo: o diálogo abre com o foco em "Voltar sem apagar"; "Apagar e importar" troca as vendas do sistema
+  await passo1(page, 'PDV Teste');
+  await page.setInputFiles('#arquivo-vendas', csvSubstPath);
+  await prontaPrevia(page);
+  await page.getByRole('radio', { name: /Trocar as vendas deste sistema no período/ }).click();
+  check('Substituir: aviso vermelho "Vai apagar vendas."', await ve(page, 'Vai apagar vendas.', 30_000));
+  await page.locator('#sobreposicao').click();
+  await page.waitForFunction(() => /Substituir 3 vendas e importar 2/.test(document.querySelector('section[aria-labelledby="titulo-previa"] .fixed button')?.textContent ?? ''));
+  check('Substituir: botão "Substituir 3 vendas e importar 2"', true);
+  await botaoFinal(page).click();
+  check('Substituir: diálogo "Apagar 3 vendas de PDV Teste?"', await ve(page, 'Apagar 3 vendas de PDV Teste?', 10_000));
+  check('Substituir: foco em "Voltar sem apagar"', (await page.evaluate(() => document.activeElement?.textContent?.trim())) === 'Voltar sem apagar');
+  await foto(page, 'importar-5b-substituir-dialogo');
+  check('Substituir: nada apagado antes de confirmar', contar("vendas where pedido in ('BC-1', 'BC-2')") === 3);
+  await page.getByRole('button', { name: 'Apagar e importar' }).click();
+  check('Substituir: resultado', await ve(page, 'Vendas importadas', 60_000));
+  check('banco: as 3 antigas saíram e as 2 do arquivo entraram (o caldo saiu, o pão de alho com R$ 30)',
+    sql("select string_agg(pedido || ' ' || produto_relatorio || ' ' || valor_total::float, '|' order by pedido, produto_relatorio) from vendas where pedido in ('BC-1', 'BC-2')")
+      === 'BC-1 Pão de Alho especial 30|BC-2 Espeto de Picanha 66');
+
+  // 8. XML num .zip deflate (lido pelo DecompressionStream do navegador): 2 cupons, o cancelamento de um no mesmo envio e uma inutilização
   await passo1(page);
   await novoSistema(page, 'PDV XML', 'XML (cupons)');
-  await page.setInputFiles('#arquivo-vendas', xmls);
+  await page.setInputFiles('#arquivo-vendas', zipXml);
   await prontaPrevia(page);
   check('XML: 1 cupom novo, com a conta dos arquivos', await ve(page, '= 4 arquivos lidos − 1 cancelado (a venda e o cancelamento vieram juntos) − 1 arquivo de cancelamento − 1 ignorado'));
   check('XML: "1 cupom foi cancelado"', await ve(page, '1 cupom foi cancelado (a venda e o cancelamento vieram juntos): não entram.', 5_000));
   await page.getByText('1 arquivo ignorado').first().click();
   check('XML: o ignorado com o motivo', await ve(page, 'inutilização de numeração', 5_000));
   check('XML: botão "Importar 1 cupom"', (await botaoFinal(page).innerText()).includes('Importar 1 cupom'));
+  check('XML: o nome do .zip na prévia', await ve(page, 'xml-do-mes.zip', 5_000));
   await foto(page, 'importar-6-previa-xml');
   const vendasXml = contar('vendas');
   await botaoFinal(page).click();
