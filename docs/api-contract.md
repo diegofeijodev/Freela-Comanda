@@ -138,6 +138,8 @@ status. `DELETE /v1/ia-chave` (admin) → status (volta para a chave do servidor
 vendas: de-para novo, soma de linhas repetidas, "Substituir" apaga o período, repetidas ignoradas, linha com data inválida fica de fora)
 · `GET /v1/de-para` · `PUT /v1/de-para { produto_relatorio, item_cardapio_id|null }` → `{ vendas }` (o gatilho refaz as baixas).
 
+`POST /v1/importacoes/vendas` é **obsoleta** (a tela nova usa §20): continua como a "Planilha padrão do Comanda", e o "Substituir" dela apaga só as vendas da planilha padrão do período (sem cupom, sem XML e sem sistema de origem; R4 de §20).
+
 ## §15 Certificado digital A1 (admin)
 
 Só admin (`@AdminOnly()`): **a loja não alcança nenhuma destas rotas** (nem a lista da loja em `permissoes-protecao.spec.ts` mudou). Nenhuma chama a SEFAZ.
@@ -403,3 +405,44 @@ Cadastro completo das empresas. **No máximo uma `principal`** (índice parcial 
 | 409 | `INATIVA` · `EM_USO` | tornar principal uma inativa · excluir empresa com colaboradores |
 
 O colaborador do ponto tem `empresa_id` opcional (o empregador). O espelho (`GET /v1/ponto/espelho…`) traz `empresa` (a do colaborador ou, sem ela, a principal), que sai no cabeçalho do PDF e do Excel.
+
+## §20 Importar vendas de outros sistemas (admin)
+
+Tela `/vendas/importar` (desenho `2026-11-24-importar-vendas-e-cana-design.md`, Parte A). O navegador lê o arquivo (planilha, XML ou PDF
+já conferido) e manda as linhas; o servidor converte, compara com o banco e **nunca grava na prévia**. Dinheiro: no banco `numeric`;
+no fio de entrada, texto decimal (planilha como está na célula; XML e PDF com ponto: `"12.90"`); nas respostas, **centavos inteiros**
+(`*_centavos`).
+
+| Rota | O quê |
+|---|---|
+| `GET /v1/importacoes/origens` | `{ origens: [{ id, nome, formato_padrao, mapeamento, separador_decimal, prefixo_pedido, ativo, ultima_importacao_em, … }], planilha_padrao: { ultima_importacao_em } }` (ativos e o último usado primeiro) |
+| `POST /v1/importacoes/origens` | `{ nome, formato_padrao: planilha\|xml\|pdf, separador_decimal?: virgula\|ponto, prefixo_pedido? (≤ 10) }` → 201 |
+| `PUT /v1/importacoes/origens/:id` | `{ nome?, formato_padrao?, separador_decimal?, prefixo_pedido?, mapeamento? (null = esquecer), ativo? }` (nunca apaga) |
+| `GET /v1/importacoes/vendas/recentes?limite=5` | `[{ id, created_at, arquivo, formato, origem_id, origem_nome, usuario_nome, inseridas, linhas }]` |
+| `POST /v1/importacoes/vendas/previa` | 200 com a prévia (abaixo); **não grava** |
+| `POST /v1/importacoes/vendas/confirmar` | o mesmo corpo + `chave_idempotencia` (uuid) + `confirmar_sobreposicao?` + `de_para_novos?: [{ produto_relatorio, item_cardapio_id\|null }]` → 201 com o resultado; a mesma chave e o mesmo corpo de novo → **200 com o resultado guardado** (`repetida: true`) |
+| `POST /v1/importacoes/vendas/ler-pdf` | multipart, 1 PDF ≤ 10 MB: lê o relatório pela IA (§12); **não grava** |
+
+**Corpo da prévia e do confirmar:** `{ formato, origem_id: uuid|null (null = planilha padrão, só planilha), arquivo, arquivo_sha256?, modo: acrescentar|substituir (XML só acrescentar) }` e, conforme o formato:
+
+- planilha: `linhas_brutas: Record<coluna, texto>[]` (≤ 100.000), `mapeamento?: { pedido?, data, hora?, produto, quantidade, valor_total, preco_unitario?, desconto?, taxa?, frete? }` (campo → nome da coluna; sem ele, o salvo no sistema), `separador_decimal?`, `salvar_mapeamento?`, `primeira_linha?` (nº da 1ª linha de dados no arquivo, para as frases de problema);
+- pdf: `linhas: [{ pedido|null, data|null, hora|null, produto_relatorio, quantidade, valor_total, desconto? }]` (≤ 5.000; ponto decimal), `data_padrao?` (para as linhas sem data);
+- xml: `arquivos_lidos`, `documentos: [{ arquivo, chave, modelo: 55|65, serie, numero, emitente_cnpj, tp_amb: 1|2, dh_emi (ISO com fuso), valor_total, itens: [{ produto, quantidade, valor_unitario, valor_bruto, desconto, outros, frete, cfop }] }]` (≤ 5.000; ≤ 990 itens), `cancelamentos: [{ arquivo, chave, dh_evento|null }]`, `ignorados: [{ arquivo, motivo }]`, `cnpjs_incluidos?` (só CNPJs de Empresas), `nfe_incluidas?` (chaves de NF-e marcadas). `arquivos_lidos` tem de ser `documentos + cancelamentos + ignorados`.
+
+**Prévia:** `{ periodo: { ini, fim, dias }|null, linhas: { lidas, validas, com_problema, ja_existentes, somadas_no_arquivo, novas }` (lidas = novas + ja_existentes + com_problema + somadas_no_arquivo)`, valor_centavos, ja_existentes_valor_centavos, pedidos, itens, problemas: [{ linha, motivo }] (até 200), motivos: [{ motivo, linhas }] (todas), amostra (20), produtos_sem_de_para: [{ produto_relatorio, linhas, valor_centavos, sugestao_item_cardapio_id, parece_cana }], ja_existentes_mesma_fonte, ja_existentes_de_outra_fonte: [{ fonte, tipo, linhas, exemplo: { pedido, data } }], ja_existentes_pedido_dia, sobreposicao: [{ fonte, tipo, vendas, valor_centavos }], substituir: { vendas, valor_centavos, ini, fim }|null, arquivo_ja_importado: { em, por, vendas }|null, documentos? }`. `fonte` é o nome para a tela ("Planilha padrão do Comanda", "Cupons do próprio Comanda", "XML de PDV Valinhos", "PDV Centro"); `tipo` = `padrao|cupom|sistema|xml`. `documentos` (só XML): `{ arquivos_lidos, vendas_novas, ja_importados, ja_cancelados, do_proprio_comanda, cancelados_no_envio, repetidos_no_envio, arquivos_cancelamento, nfe_fora: [{ chave, serie, numero, dh_emi, valor_centavos, cfops }], outros_cnpjs: [{ cnpj, nome_em_empresas, documentos, incluido }], ignorados: [{ motivo, arquivos }], cancelamentos_de_importados: { documentos, linhas, valor_centavos, ini, fim } }` (cada arquivo lido cai em exatamente um grupo).
+
+**Resultado do confirmar:** `{ importacao_id, confirmada_em, inseridas, ignoradas, apagadas, apagadas_valor_centavos, canceladas: { documentos, linhas, valor_centavos }, documentos_novos, novos_produtos, valor_centavos, periodo, mapeamento_salvo, repetida }`. Os números são os do confirmar (podem diferir da prévia se outra importação entrou no meio).
+
+**Regras:** R1 venda igual (pedido + produto + data) é ignorada; R2 a mesma chave de XML nunca entra duas vezes (nem a de um cupom do próprio Comanda); R3/R4 "Substituir" apaga só as vendas da **mesma fonte** no período das linhas válidas (nunca cupom, XML ou outro sistema); R5 período com vendas de outra fonte exige `confirmar_sobreposicao`; R6 data no futuro = linha com problema; R7 arquivo já importado só avisa; R8 idempotência acima. Cancelamento de XML: `vendas_documento_cancelar` apaga as vendas do documento (as baixas caem em cascata) e marca o documento `cancelada` (nunca apagado). Trocar `prefixo_pedido` de um sistema que já tem vendas é recusado.
+
+| HTTP | `code` | Quando |
+|---|---|---|
+| 400 | `VALIDATION_ERROR` | corpo inválido (inclui chave de XML com DV errado ou que não bate com CNPJ/modelo/série/número; contagem de arquivos que não fecha) |
+| 400 | `MAPEAMENTO_INCOMPLETO` | "Escolha a coluna de: data, produto." |
+| 400 | `IMPORTACAO_VAZIA` | só no confirmar: nenhuma venda nova e nenhum cancelamento a aplicar ("Nenhuma venda válida no arquivo. Confira as colunas de Data e Quantidade.") |
+| 400 | `LOJA_SEM_CNPJ` | XML sem CNPJ da loja ("Cadastre o CNPJ da empresa principal em Empresas antes de importar XML.") |
+| 404 | `ORIGEM_NAO_ENCONTRADA` | sistema inexistente |
+| 409 | `IMPORTACAO_SOBREPOSICAO` | período com vendas de outra fonte, sem `confirmar_sobreposicao` |
+| 409 | `IMPORTACAO_JA_CONFIRMADA` | a mesma `chave_idempotencia` com outro corpo ("Esta importação já foi feita.") |
+| 409 | `ORIGEM_REPETIDA` · `ORIGEM_PREFIXO_EM_USO` | nome já usado (sem caixa e sem acento) · trocar as letras antes do pedido de um sistema com vendas |
+| 422/503 | `PDF_ILEGIVEL` e os demais de §12 | leitura do PDF |

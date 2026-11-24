@@ -209,17 +209,17 @@ export function dataHoraSp(d: Date): { data: string; hora: string } {
 }
 
 /** Pedido da venda do documento: o mesmo formato do cupom do Comanda (`NFC-e <série>-<número>`), com as letras do sistema na frente. */
-export const pedidoDoDocumento = (d: Pick<DocumentoXml, 'modelo' | 'serie' | 'numero'>, prefixo: string) =>
-  `${prefixo}${d.modelo === 65 ? 'NFC-e' : 'NF-e'} ${d.serie}-${d.numero}`;
+export const pedidoDoDocumento = (d: Pick<DocumentoXml, 'modelo' | 'serie' | 'numero'>, prefixo: string, sufixo = '') =>
+  `${prefixo}${d.modelo === 65 ? 'NFC-e' : 'NF-e'} ${d.serie}-${d.numero}${sufixo}`;
 
 /**
  * As linhas de `vendas` de um documento (igual à projeção do cupom): `valor_total` = vProd − vDesc, `desconto` = vDesc, `taxa` = vOutro,
  * `frete` = vFrete. Uma linha por item (`linha` = nº do item); o mesmo produto repetido no documento é somado depois, em `agregarVendas`
  * (o pedido é o do documento, então a soma não mistura documentos).
  */
-export function linhasDoDocumento(d: DocumentoXml, prefixo: string): LinhaVenda[] {
+export function linhasDoDocumento(d: DocumentoXml, prefixo: string, sufixo = ''): LinhaVenda[] {
   const { data, hora } = dataHoraSp(d.dh_emi);
-  const pedido = pedidoDoDocumento(d, prefixo);
+  const pedido = pedidoDoDocumento(d, prefixo, sufixo);
   return d.itens.map(
     (it, k): LinhaVenda => ({
       linha: k + 1,

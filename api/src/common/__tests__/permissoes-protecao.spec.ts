@@ -106,6 +106,19 @@ describe('proteção das rotas (substitui as políticas RLS do Supabase)', () =>
     ]);
   });
 
+  it('importar vendas de outros sistemas é só do admin (origens, prévia, confirmar, recentes)', () => {
+    const r = todas.filter((x) => /\/v1\/importacoes\/(origens|vendas\/)/.test(x.rota));
+    expect(r.map((x) => x.rota).sort()).toEqual([
+      'GET /v1/importacoes/origens',
+      'GET /v1/importacoes/vendas/recentes',
+      'POST /v1/importacoes/origens',
+      'POST /v1/importacoes/vendas/confirmar',
+      'POST /v1/importacoes/vendas/previa',
+      'PUT /v1/importacoes/origens/:id',
+    ]);
+    expect(r.every((x) => x.marca === 'admin')).toBe(true);
+  });
+
   it('a consulta de nota repetida é só do admin', () => {
     expect(todas.filter((r) => r.rota.includes('/notas/repetidas'))).toEqual([{ rota: 'GET /v1/notas/repetidas', marca: 'admin' }]);
   });
