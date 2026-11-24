@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { AdminOnly, Staff } from '../../common/decorators/permissao.decorator';
+import { AdminOnly, Staff, Modulos } from '../../common/decorators/permissao.decorator';
 import { ParseUuidPipe } from '../../common/ids/parse-uuid.pipe';
 import { CardapioService } from './cardapio.service';
 import { IngredienteDto, ItemCardapioDto, NovoIngredienteDto, NovoItemCardapioDto } from './dto/cardapio.dto';
@@ -8,6 +8,7 @@ import { IngredienteDto, ItemCardapioDto, NovoIngredienteDto, NovoItemCardapioDt
 @ApiTags('Fichas técnicas')
 @ApiBearerAuth()
 @AdminOnly()
+@Modulos('vendas', 'importar', 'cupom', 'estoque', 'objetivo')
 @Controller('v1')
 export class CardapioController {
   constructor(private readonly svc: CardapioService) {}

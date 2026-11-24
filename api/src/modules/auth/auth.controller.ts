@@ -39,7 +39,13 @@ export class AuthController {
   @Staff()
   @Get('me')
   me(@CurrentUser() user: AuthUser) {
-    return this.auth.me(user.id);
+    return this.auth.me(user);
+  }
+
+  @Staff()
+  @Get('empresas')
+  empresas(@CurrentUser() user: AuthUser) {
+    return this.auth.empresas(user);
   }
 
   @Staff()

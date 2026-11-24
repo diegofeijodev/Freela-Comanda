@@ -247,7 +247,7 @@ export type CaixaDia = {
 };
 export type Importacao = { id: string; tipo: string; arquivo: string | null; linhas: number; erros: number; created_at: string };
 export type DePara = { produto_relatorio: string; item_cardapio_id: string | null; ignorar: boolean };
-export type Usuario = { id: string; nome: string; email: string; perfil: Perfil | null };
+export type Usuario = { id: string; nome: string; email: string; perfil: Perfil | null; master: boolean; modulos: string[] };
 
 // ---------- chave de IA (leitura de PDF): a chave só vai; o que volta é o provedor e os 4 últimos caracteres
 export type ProvedorIa = 'anthropic' | 'openai' | 'gemini';
@@ -1036,8 +1036,11 @@ export const mapearDePara = (produto_relatorio: string, item_cardapio_id: string
 
 // ---------- usuários
 export const listarUsuarios = () => get<Usuario[]>('/v1/usuarios');
-export const criarUsuario = (u: { nome: string; email: string; senha: string; perfil: Perfil }) => post<{ id: string }>('/v1/usuarios', u);
+export const criarUsuario = (u: { nome: string; email: string; senha: string; perfil: Perfil; modulos?: string[]; master?: boolean }) =>
+  post<{ id: string }>('/v1/usuarios', u);
 export const trocarPerfil = (id: string, perfil: Perfil) => patch<Usuario>(`/v1/usuarios/${id}/perfil`, { perfil });
+/** Telas liberadas ao colaborador (chaves de `@/lib/modulos`). */
+export const trocarModulos = (id: string, modulos: string[]) => patch<Usuario>(`/v1/usuarios/${id}/modulos`, { modulos });
 export const redefinirSenha = (id: string, senha: string) => put<{ ok: true }>(`/v1/usuarios/${id}/senha`, { senha });
 export const excluirUsuario = (id: string) => del(`/v1/usuarios/${id}`);
 export const trocarMinhaSenha = (senha_atual: string, senha_nova: string) => post<{ ok: true }>('/v1/auth/trocar-senha', { senha_atual, senha_nova });
@@ -1133,7 +1136,7 @@ export const pontoTerminais = () => get<PontoTerminal[]>('/v1/ponto/terminais');
 export const pontoCriarTerminal = (nome: string) => post<PontoTerminal & { token: string }>('/v1/ponto/terminais', { nome });
 export const pontoRevogarTerminal = (id: string) => del(`/v1/ponto/terminais/${id}`);
 
-// ---------- empresas (admin)
+// ---------- empresas (só o master; cada empresa tem os próprios dados)
 export type RegimeTributario = 'mei' | 'simples' | 'simples_excesso' | 'presumido' | 'real';
 export type Empresa = {
   id: string; razao_social: string; nome_fantasia: string | null; cnpj: string; inscricao_estadual: string | null; inscricao_municipal: string | null;
@@ -1141,10 +1144,9 @@ export type Empresa = {
   cep: string | null; logradouro: string | null; numero: string | null; complemento: string | null; bairro: string | null; cidade: string | null; uf: string | null; cod_municipio: string | null;
   telefone: string | null; celular: string | null; email: string | null; site: string | null;
   responsavel_nome: string | null; responsavel_cpf: string | null; contador_nome: string | null; contador_email: string | null; contador_telefone: string | null;
-  observacoes: string | null; principal: boolean; ativo: boolean; created_at: string; updated_at: string; _count?: { colaboradores: number };
+  observacoes: string | null; principal: boolean; ativo: boolean; created_at: string; updated_at: string; schema_banco?: string | null; _count?: { usuarios: number };
 };
-export type EmpresaForm = Omit<Empresa, 'id' | 'principal' | 'created_at' | 'updated_at' | '_count'>;
+export type EmpresaForm = Omit<Empresa, 'id' | 'principal' | 'created_at' | 'updated_at' | '_count' | 'schema_banco'>;
 export const listarEmpresas = () => get<Empresa[]>('/v1/empresas');
 export const salvarEmpresa = (id: string | null, e: EmpresaForm) => (id ? put<Empresa>(`/v1/empresas/${id}`, e) : post<Empresa>('/v1/empresas', e));
-export const tornarEmpresaPrincipal = (id: string) => post<Empresa>(`/v1/empresas/${id}/principal`);
 export const excluirEmpresa = (id: string) => del(`/v1/empresas/${id}`);

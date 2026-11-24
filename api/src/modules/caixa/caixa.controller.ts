@@ -1,7 +1,7 @@
 import { BadRequestException, Body, Controller, Delete, Get, Param, Put, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { PrismaService } from '../../common/database/prisma.service';
-import { AdminOnly } from '../../common/decorators/permissao.decorator';
+import { AdminOnly, Modulos } from '../../common/decorators/permissao.decorator';
 import { ParseUuidPipe } from '../../common/ids/parse-uuid.pipe';
 import { dayToDb, monthRange } from '../../common/time/dates';
 import { CaixaDto } from './dto/caixa.dto';
@@ -15,6 +15,7 @@ const MES_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 @ApiTags('Caixa')
 @ApiBearerAuth()
 @AdminOnly()
+@Modulos('caixa')
 @Controller('v1/caixa')
 export class CaixaController {
   constructor(private readonly prisma: PrismaService) {}

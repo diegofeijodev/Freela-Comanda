@@ -35,11 +35,13 @@ Marca por rota: **pública**, **staff** (admin ou loja) ou **admin**. A lista de
 | `GET /me` | `{ user }` (perfil relido do banco) |
 | `POST /trocar-senha` | `{ senha_atual, senha_nova≥6 }` → `{ ok }`; 400 `WRONG_PASSWORD` |
 
-## §4 Usuários (`/v1/usuarios`, admin)
+## §4 Usuários (`/v1/usuarios`, admin da empresa ou master; nunca liberável ao colaborador)
 
-`GET` lista `{ id, nome, email, perfil, created_at }` por nome · `POST { nome, email, senha≥6, perfil }` → `{ id }` (409 e-mail repetido;
-"Dados inválidos") · `PATCH /:id/perfil { perfil }` (400 no próprio) · `PUT /:id/senha { senha }` (substitui o "esqueci a senha" por e-mail)
-· `DELETE /:id` (400 "Você não pode excluir a si mesmo").
+Só os usuários da **empresa da requisição** (§21); o master também vê os masters. `GET` lista `{ id, nome, email, perfil, master, modulos, created_at }`
+(masters primeiro, depois por nome) · `POST { nome, email, senha≥6, perfil: admin|loja, modulos?: [tela], master?: bool }` → `{ id }` (409 e-mail
+repetido; "Dados inválidos"; `master` só o master cria, 403; o usuário nasce na empresa da requisição) · `PATCH /:id/perfil { perfil }` (400 no
+próprio; 400 `MASTER` num master) · `PATCH /:id/modulos { modulos: [tela] }` (telas do colaborador) · `PUT /:id/senha { senha }` (substitui o
+"esqueci a senha" por e-mail) · `DELETE /:id` (400 "Você não pode excluir a si mesmo"). Conta de outra empresa (ou master, para quem não é master) = 404.
 
 ## §5 Cadastros
 
@@ -385,17 +387,21 @@ Cálculo (`api/src/modules/ponto/calculo.ts`, puro e testado): esperado = saída
 
 Exportação no web: Excel (`web/src/lib/ponto.ts`, aba Resumo + uma por colaborador) e PDF pela impressão do navegador (botão "PDF", como fichas e listas).
 
-## §19 Empresas (admin)
+## §19 Empresas (só master)
 
-Cadastro completo das empresas. **No máximo uma `principal`** (índice parcial `empresas_uma_principal`): a primeira cadastrada já nasce principal, e a principal espelha `razao_social`, `nome_fantasia`, `cnpj` e `endereco` (em uma linha) em `configuracoes`, de onde o resto do sistema (telas, SEFAZ, cupom fiscal) continua lendo. Com principal cadastrada, a tela de Configurações mostra esses campos só para leitura e não os regrava. Trocar o CNPJ por aqui tem o mesmo efeito de trocar em Configurações (o cupom calcula `ligada_cnpj === cnpj` na leitura).
+Cadastro completo das empresas, em `public.empresas` (vale para todas). Cada empresa tem os dados num schema próprio (§21) e, dentro dele, a cópia do
+próprio cadastro (FK do ponto, espelho do PDF); `razao_social`, `nome_fantasia`, `cnpj` e `endereco` (em uma linha) são espelhados em `configuracoes` **da
+própria empresa**, de onde o resto do sistema (telas, SEFAZ, cupom fiscal) continua lendo. Com empresa cadastrada, a tela de Configurações mostra esses
+campos só para leitura. A `principal` é a dona do schema `public` (os dados de antes do multiempresa; a primeira cadastrada, se não havia nenhuma).
+Trocar o CNPJ por aqui tem o mesmo efeito de trocar em Configurações (o cupom calcula `ligada_cnpj === cnpj` na leitura).
 
 | Rota | O quê |
 |---|---|
-| `GET /v1/empresas` | lista (principal primeiro), com `_count.colaboradores` |
+| `GET /v1/empresas` | lista (principal primeiro), com `schema_banco` e `_count.usuarios` |
 | `GET /v1/empresas/:id` | uma empresa |
 | `POST /v1/empresas` · `PUT /v1/empresas/:id` | formulário inteiro: `razao_social`*, `cnpj`* (numérico ou alfanumérico, DV conferido), `nome_fantasia`, `inscricao_estadual`, `inscricao_municipal`, `regime_tributario` (`mei`\|`simples`\|`simples_excesso`\|`presumido`\|`real`), `cnae`, `data_abertura`, `cep` (8 números), `logradouro`, `numero`, `complemento`, `bairro`, `cidade`, `uf`, `cod_municipio` (IBGE, 7), `telefone`, `celular`, `email`, `site`, `responsavel_nome`, `responsavel_cpf` (DV conferido), `contador_nome`, `contador_email`, `contador_telefone`, `observacoes`, `ativo`. Vazio vira `null`; no fio, CNPJ/CEP/CPF saem só com os caracteres |
-| `POST /v1/empresas/:id/principal` | torna principal (a anterior deixa de ser) e espelha em `configuracoes` |
-| `DELETE /v1/empresas/:id` | exclui (não a principal; não com colaboradores do ponto) |
+| `DELETE /v1/empresas/:id` | exclui o cadastro (não a principal: 409 `PRINCIPAL`; não com usuários ou colaboradores do ponto: 409 `EM_USO`). Os dados não são apagados: o schema vira `<schema>_excluida_<AAAAMMDDHHMM>` |
+| criar | o `POST` já prepara o schema da empresa (todas as migrações; segundos); falha = 503 `EMPRESA_PREPARO` e o próximo acesso tenta de novo |
 
 | HTTP | `code` | Quando |
 |---|---|---|
@@ -448,3 +454,19 @@ no fio de entrada, texto decimal (planilha como está na célula; XML e PDF com 
 | 409 | `ORIGEM_INATIVA` | prévia ou confirmar de um sistema parado ("O sistema “X” está parado. Em “Editar sistemas”, toque em “Voltar a usar” antes de importar.") |
 | 409 | `SUBSTITUIR_COM_PROBLEMA` | Substituir com linhas com problema e vendas a apagar (a venda da linha ruim sairia e não voltaria); nada é apagado |
 | 422/503 | `PDF_ILEGIVEL` e os demais de §12 | leitura do PDF |
+
+## §21 Multiempresa (master, admin da empresa, colaborador)
+
+- **Dados**: um schema do Postgres por empresa (cópia inteira das tabelas, views e funções; as regras em SQL não mudam). `public` guarda o cadastro de
+  empresas, os usuários e os dados da empresa principal. Empresa nova = schema `empresa_<12 hex do id>`, criado com `prisma migrate deploy`; no deploy,
+  `node dist/src/scripts/migrar-empresas/main.js` (no CMD do Dockerfile) aplica as migrações novas em cada schema.
+- **Empresa da requisição** (guard): master = cabeçalho `X-Empresa-Id` (sem ele, a principal); usuário comum = sempre a dele (o cabeçalho é ignorado),
+  e só se a empresa estiver ativa (403 `EMPRESA_INATIVA`). Id malformado/inexistente = 403 `EMPRESA` (o web volta para a principal).
+- **Perfis**: `master` (todas as empresas; admin em qualquer uma; único que alcança §19) · `admin` (tudo da empresa dele, inclusive os usuários) ·
+  `loja` = **colaborador**: rotas `staff` + as rotas `admin` marcadas com `@Modulos(...)` de uma tela que o admin liberou em `modulos`. As telas com
+  visão da loja (`painel`, `fichas`, `inventario`, `compras`, `ponto`) liberam só essa visão (nenhuma rota de admin; teste
+  `permissoes-protecao.spec.ts`); as demais (`vendas`, `cupom`, `estoque`, `objetivo`, `notas`, `contas`, `caixa`, `dre`, `importar`) abrem a tela
+  inteira. Usuários, chave de IA, certificado e a gravação de Configurações nunca são liberáveis.
+- `GET /v1/auth/me` → `{ user: { id, email, nome, perfil, master, empresa_id, modulos }, empresa: { id, razao_social, nome_fantasia, cnpj, ativo, principal } | null }`
+  · `GET /v1/auth/empresas` (staff) → empresas do seletor (master: todas; comum: a dele), mesmo formato de `empresa`.
+

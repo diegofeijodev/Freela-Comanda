@@ -2,13 +2,14 @@ import { Body, Controller, Get, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { AuthUser } from '../../common/auth/auth-user';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { AdminOnly } from '../../common/decorators/permissao.decorator';
+import { AdminOnly, Modulos } from '../../common/decorators/permissao.decorator';
 import { LancarNotaDto } from './dto/notas.dto';
 import { NotasService } from './notas.service';
 
 @ApiTags('Entrada de notas')
 @ApiBearerAuth()
 @AdminOnly()
+@Modulos('notas')
 @Controller('v1')
 export class NotasController {
   constructor(private readonly svc: NotasService) {}

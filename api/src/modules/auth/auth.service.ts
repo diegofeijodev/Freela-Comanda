@@ -3,20 +3,35 @@ import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import type { users } from '@prisma/client';
 import { senhaConfere } from '../../common/auth/senha-falsa';
-import { PrismaService } from '../../common/database/prisma.service';
+import type { AuthUser } from '../../common/auth/auth-user';
+import { SCHEMA_PADRAO } from '../../common/database/empresa-contexto';
+import { NucleoService } from '../../common/database/prisma.service';
 
 export interface UserView {
   id: string;
   email: string;
   nome: string;
+  /** Perfil na empresa (o master é sempre `admin`). */
   perfil: 'admin' | 'loja';
+  master: boolean;
+  empresa_id: string | null;
+  /** Telas liberadas ao colaborador; vazio para admin/master (veem tudo). */
+  modulos: string[];
 }
 
-export const toUserView = (u: Pick<users, 'id' | 'email' | 'nome' | 'perfil'>): UserView => ({
-  id: u.id,
-  email: u.email,
-  nome: u.nome,
-  perfil: u.perfil,
+export const toUserView = (u: Pick<users, 'id' | 'email' | 'nome' | 'perfil' | 'master' | 'empresa_id' | 'modulos'>): UserView => {
+  const perfil = u.master ? 'admin' : u.perfil;
+  return { id: u.id, email: u.email, nome: u.nome, perfil, master: u.master, empresa_id: u.empresa_id, modulos: perfil === 'admin' ? [] : u.modulos };
+};
+
+const EMPRESA_RESUMO = { id: true, razao_social: true, nome_fantasia: true, cnpj: true, ativo: true, schema_banco: true } as const;
+export const resumoEmpresa = (e: { id: string; razao_social: string; nome_fantasia: string | null; cnpj: string; ativo: boolean; schema_banco: string | null }) => ({
+  id: e.id,
+  razao_social: e.razao_social,
+  nome_fantasia: e.nome_fantasia,
+  cnpj: e.cnpj,
+  ativo: e.ativo,
+  principal: e.schema_banco === SCHEMA_PADRAO,
 });
 
 /** Nome padrão igual ao gatilho handle_new_user do protótipo: a parte antes do @. */
@@ -25,7 +40,7 @@ export const nomePadrao = (nome: string | undefined, email: string) => (nome?.tr
 @Injectable()
 export class AuthService {
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly prisma: NucleoService,
     private readonly jwt: JwtService,
   ) {}
 
@@ -48,7 +63,7 @@ export class AuthService {
   }
 
   /**
-   * "Primeiro acesso? Criar conta de administrador" (gatilho handle_new_user do protótipo: o primeiro vira admin).
+   * "Primeiro acesso? Criar conta de administrador" (gatilho handle_new_user do protótipo: o primeiro vira admin — e master).
    * Só enquanto não existe admin; o trinco consultivo serializa dois cliques simultâneos.
    */
   async primeiroAcesso(nome: string, email: string, senha: string) {
@@ -59,15 +74,27 @@ export class AuthService {
       if ((await tx.users.count({ where: { perfil: 'admin' } })) > 0) {
         throw new ForbiddenException({ code: 'FORBIDDEN', message: 'Novos usuários são cadastrados pelo administrador.' });
       }
-      return tx.users.create({ data: { email: emailNorm, nome: nomePadrao(nome, emailNorm), password_hash: hash, perfil: 'admin' } });
+      return tx.users.create({ data: { email: emailNorm, nome: nomePadrao(nome, emailNorm), password_hash: hash, perfil: 'admin', master: true } });
     });
     return this.sessao(user);
   }
 
-  async me(userId: string) {
-    const user = await this.prisma.users.findUnique({ where: { id: userId } });
+  /** A conta e a empresa da requisição (a escolhida pelo master, ou a do usuário). */
+  async me(eu: AuthUser) {
+    const user = await this.prisma.users.findUnique({ where: { id: eu.id } });
     if (!user) throw new UnauthorizedException({ code: 'UNAUTHORIZED', message: 'Conta não encontrada' });
-    return { user: toUserView(user) };
+    const empresa = eu.empresaId ? await this.prisma.empresas.findUnique({ where: { id: eu.empresaId }, select: EMPRESA_RESUMO }) : null;
+    return { user: toUserView(user), empresa: empresa ? resumoEmpresa(empresa) : null };
+  }
+
+  /** Empresas do seletor da barra lateral: o master vê todas; o usuário comum, só a dele. */
+  async empresas(eu: AuthUser) {
+    const es = await this.prisma.empresas.findMany({
+      where: eu.master ? {} : { id: eu.empresaId ?? '00000000-0000-0000-0000-000000000000' },
+      orderBy: [{ ativo: 'desc' }, { razao_social: 'asc' }],
+      select: EMPRESA_RESUMO,
+    });
+    return es.map(resumoEmpresa).sort((a, b) => Number(b.principal) - Number(a.principal));
   }
 
   /** A PRÓPRIA senha, pedindo a atual. Erros 400 (nunca 401: o web trata 401 como sessão morta). */

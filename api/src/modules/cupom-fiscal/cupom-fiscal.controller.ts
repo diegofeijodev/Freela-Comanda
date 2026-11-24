@@ -17,7 +17,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { FastifyReply } from 'fastify';
 import { AuthUser } from '../../common/auth/auth-user';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { AdminOnly } from '../../common/decorators/permissao.decorator';
+import { AdminOnly, Modulos } from '../../common/decorators/permissao.decorator';
 import { ParseUuidPipe } from '../../common/ids/parse-uuid.pipe';
 import type { AmbienteSefaz } from '../sefaz/distribuicao.port';
 import { CupomCadastroService, type Autor } from './cadastro.service';
@@ -59,6 +59,7 @@ const autor = (eu: AuthUser): Autor => ({ id: eu.id, nome: eu.nome });
 @ApiTags('Cupom fiscal')
 @ApiBearerAuth()
 @AdminOnly()
+@Modulos('cupom')
 @Controller('v1/cupom-fiscal')
 export class CupomFiscalController {
   constructor(

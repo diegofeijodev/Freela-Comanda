@@ -1,5 +1,6 @@
 // Leituras (selectors) que a prévia e o confirmar da importação de vendas fazem no banco. Só leem; quem grava é o serviço.
 // O confirmar chama as mesmas leituras DENTRO da transação (depois da trava), então os números do resultado são os reais (risco 9).
+import { empresaAtual } from '../../common/database/empresa-contexto';
 import { Prisma } from '@prisma/client';
 import { normalizarCnpj } from '../../common/fiscal/cnpj';
 import { chaveVenda } from './planilha';
@@ -95,9 +96,10 @@ export class FatosVendas {
     return normalizarCnpj(c?.cnpj ?? '');
   }
 
-  /** Empresas ativas (menos a da loja): CNPJ → nome para a tela. */
+  /** Empresas ativas (menos a da loja): CNPJ → nome para a tela. Multiempresa: só a da requisição (as outras são de outras lojas). */
   async empresas(cnpjLoja: string) {
-    const es = await this.db.empresas.findMany({ where: { ativo: true }, select: { cnpj: true, razao_social: true, nome_fantasia: true } });
+    const daRequisicao = empresaAtual().empresaId;
+    const es = await this.db.empresas.findMany({ where: { ativo: true, ...(daRequisicao ? { id: daRequisicao } : {}) }, select: { cnpj: true, razao_social: true, nome_fantasia: true } });
     return new Map(
       es.filter((e) => normalizarCnpj(e.cnpj) !== cnpjLoja).map((e) => [normalizarCnpj(e.cnpj), e.nome_fantasia || e.razao_social]),
     );

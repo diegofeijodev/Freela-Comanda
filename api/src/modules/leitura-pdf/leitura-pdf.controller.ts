@@ -1,7 +1,7 @@
 import { BadRequestException, Body, Controller, HttpCode, HttpException, Post, Req } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { FastifyRequest } from 'fastify';
-import { AdminOnly } from '../../common/decorators/permissao.decorator';
+import { AdminOnly, Modulos } from '../../common/decorators/permissao.decorator';
 import { LeituraPdfErro, type ArquivoLeitura, type MimeArquivo } from './leitor-pdf.port';
 import { LeituraPdfService } from './leitura-pdf.service';
 import { SugerirInsumosDto } from './sugerir-insumos.dto';
@@ -76,6 +76,7 @@ function comoHttp(e: unknown): never {
 @ApiTags('Leitura de PDF (IA)')
 @ApiBearerAuth()
 @AdminOnly()
+@Modulos('notas', 'importar', 'contas')
 @Controller('v1')
 export class LeituraPdfController {
   constructor(private readonly svc: LeituraPdfService) {}

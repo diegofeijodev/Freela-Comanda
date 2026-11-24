@@ -31,8 +31,15 @@ async function main() {
   const hash = await bcrypt.hash('erpfreela123', 10);
   await prisma.users.createMany({
     data: [
-      { email: 'admin@erpfreela.local', nome: 'Admin Demo', password_hash: hash, perfil: 'admin' },
-      { email: 'loja@erpfreela.local', nome: 'Loja Valinhos', password_hash: hash, perfil: 'loja' },
+      // Multiempresa: o admin do seed é master (vê todas as empresas); a loja é colaborador com as telas de sempre.
+      { email: 'admin@erpfreela.local', nome: 'Admin Demo', password_hash: hash, perfil: 'admin', master: true },
+      {
+        email: 'loja@erpfreela.local',
+        nome: 'Loja Valinhos',
+        password_hash: hash,
+        perfil: 'loja',
+        modulos: ['painel', 'fichas', 'inventario', 'compras', 'ponto'],
+      },
     ],
   });
 

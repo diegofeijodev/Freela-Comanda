@@ -7,7 +7,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { Trash2 } from "lucide-react";
 import {
-  criarFornecedor, criarSubgrupo, listarEmpresas, excluirFornecedor, excluirSubgrupo, listarFornecedores, listarSazonalidade, listarSubgrupos, salvarConfig, salvarSazonalidade,
+  criarFornecedor, criarSubgrupo, excluirFornecedor, excluirSubgrupo, listarFornecedores, listarSazonalidade, listarSubgrupos, salvarConfig, salvarSazonalidade,
   type Config as ConfigRow,
 } from "@/lib/erp-api";
 import { PageHeader, Panel } from "@/components/ui-kit";
@@ -26,7 +26,7 @@ import { formatarCnpj } from "@/lib/certificado";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { CERTIFICADO_QUERY_KEY } from "@/hooks/use-certificado";
 import { SITUACAO_SEFAZ_KEY } from "@/hooks/use-notas-sefaz";
-import { useMe } from "@/lib/auth";
+import { useEmpresaAtual, useMe } from "@/lib/auth";
 import { CupomFiscalPanel } from "@/components/cupom-fiscal-panel";
 import { CHAVE_EMITENTE } from "@/components/cupom/perfis";
 import { CHAVES_CUPOM, type AlvoFalta } from "@/lib/cupom";
@@ -83,8 +83,9 @@ function Config() {
   }, [params]);
   const queryClient = useQueryClient();
   const { data: cfg, refetch } = useQuery({ queryKey: ["config"], queryFn: getConfig });
-  const { data: empresas } = useQuery({ queryKey: ["empresas"], queryFn: listarEmpresas, enabled: me?.perfil === "admin" });
-  const temPrincipal = !!empresas?.some((e) => e.principal);
+  // Multiempresa: com empresa cadastrada, razão social/CNPJ/endereço vêm do cadastro dela (o master edita em Empresas).
+  const { data: empresaAtual } = useEmpresaAtual();
+  const temPrincipal = !!empresaAtual;
   const { data: saz, refetch: rS } = useQuery({ queryKey: ["sazonalidade"], queryFn: listarSazonalidade });
   const { data: forn, refetch: rF } = useQuery({ queryKey: ["fornecedores"], queryFn: listarFornecedores });
   const { data: subs, refetch: rSub } = useQuery({ queryKey: ["subgrupos"], queryFn: listarSubgrupos });
@@ -148,7 +149,9 @@ function Config() {
       <Panel title="Empresa">
         {temPrincipal && (
           <p className="mb-3 text-sm text-muted-foreground">
-            Estes dados vêm da empresa principal do cadastro de <Link href="/empresas" className="text-primary underline">Empresas</Link>. Para mudar, edite lá.
+            {me?.master
+              ? <>Estes dados vêm do cadastro de <Link href="/empresas" className="text-primary underline">Empresas</Link>. Para mudar, edite lá.</>
+              : <>Estes dados vêm do cadastro da empresa. Para mudar, fale com o usuário master.</>}
           </p>
         )}
         <fieldset disabled={temPrincipal} className="grid gap-3 sm:grid-cols-2">

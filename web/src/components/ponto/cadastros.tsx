@@ -4,8 +4,8 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Trash2 } from "lucide-react";
+import { useEmpresaAtual, useMinhasEmpresas, type EmpresaResumo } from "@/lib/auth";
 import {
-  listarEmpresas, type Empresa,
   pontoAtualizarColaborador, pontoColaboradores, pontoCriarColaborador, pontoCriarFolga, pontoEscalas, pontoExcluirColaborador, pontoExcluirEscala,
   pontoExcluirFolga, pontoFolgas, pontoSalvarEscala, type PontoColaborador, type PontoDiaEscala, type PontoEscala, type TipoFolga,
 } from "@/lib/erp-api";
@@ -30,7 +30,10 @@ const vazio: FormColab = { nome: "", cpf: "", cargo: "", admissao: "", escala_id
 export function ColaboradoresPonto() {
   const { data, refetch } = useQuery({ queryKey: ["ponto-colaboradores"], queryFn: pontoColaboradores });
   const { data: escalas } = useQuery({ queryKey: ["ponto-escalas"], queryFn: pontoEscalas });
-  const { data: empresas } = useQuery({ queryKey: ["empresas"], queryFn: listarEmpresas });
+  // Multiempresa: o empregador é a empresa em uso (as outras têm os próprios colaboradores).
+  const { data: todas } = useMinhasEmpresas();
+  const { data: atual } = useEmpresaAtual();
+  const empresas = atual ? (todas ?? []).filter((e) => e.id === atual.id) : todas;
   const [f, setF] = useState<FormColab>(vazio);
   const nomeEmpresa = (id: string | null) => { const e = empresas?.find((x) => x.id === id); return e ? (e.nome_fantasia || e.razao_social) : null; };
   const [editar, setEditar] = useState<PontoColaborador | null>(null);
@@ -107,7 +110,7 @@ export function ColaboradoresPonto() {
   );
 }
 
-function EditarColaborador({ c, escalas, empresas, onFechar, onSalvo }: { c: PontoColaborador; escalas: PontoEscala[]; empresas: Empresa[]; onFechar: () => void; onSalvo: () => void }) {
+function EditarColaborador({ c, escalas, empresas, onFechar, onSalvo }: { c: PontoColaborador; escalas: PontoEscala[]; empresas: EmpresaResumo[]; onFechar: () => void; onSalvo: () => void }) {
   const [f, setF] = useState<FormColab>({ nome: c.nome, cpf: c.cpf ?? "", cargo: c.cargo ?? "", admissao: c.admissao ?? "", escala_id: c.escala_id ?? "", empresa_id: c.empresa_id ?? "", pin: "" });
   async function salvar() {
     try {

@@ -1,13 +1,14 @@
 import { BadRequestException, Controller, Get, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { PrismaService } from '../../common/database/prisma.service';
-import { AdminOnly } from '../../common/decorators/permissao.decorator';
+import { AdminOnly, Modulos } from '../../common/decorators/permissao.decorator';
 import { dayToDb, isDateString } from '../../common/time/dates';
 
 /** Vendas do período (painel e tela Vendas). Os gráficos são montados no navegador, como no protótipo. */
 @ApiTags('Vendas')
 @ApiBearerAuth()
 @AdminOnly()
+@Modulos('vendas', 'dre', 'caixa', 'cupom')
 @Controller('v1/vendas')
 export class VendasController {
   constructor(private readonly prisma: PrismaService) {}

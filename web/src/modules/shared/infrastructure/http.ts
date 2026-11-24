@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { clearStoredAuth, getStoredAuth } from '@/modules/auth/infrastructure/auth.storage';
+import { clearStoredAuth, getStoredAuth, setEmpresaEscolhida } from '@/modules/auth/infrastructure/auth.storage';
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3016';
 
@@ -11,6 +11,9 @@ api.interceptors.request.use((config) => {
     const auth = getStoredAuth();
     if (auth?.access_token) config.headers.Authorization = `Bearer ${auth.access_token}`;
   }
+  // Multiempresa: a empresa escolhida pelo master no seletor (a API ignora para o usuário comum, que fica sempre na dele).
+  const empresa = getStoredAuth()?.empresa_id;
+  if (empresa && !config.headers['X-Empresa-Id']) config.headers['X-Empresa-Id'] = empresa;
   return config;
 });
 
@@ -20,6 +23,14 @@ api.interceptors.request.use((config) => {
  */
 let redirecionando = false;
 api.interceptors.response.use(undefined, (error) => {
+  // Empresa escolhida que sumiu (excluída) ou ficou fora de alcance: volta para a principal e recarrega uma vez.
+  if (error?.response?.status === 403 && error.response.data?.error?.code === 'EMPRESA' && typeof window !== 'undefined') {
+    if (getStoredAuth()?.empresa_id && !redirecionando) {
+      redirecionando = true;
+      setEmpresaEscolhida(null);
+      window.location.reload();
+    }
+  }
   if (error?.response?.status === 401 && typeof window !== 'undefined') {
     const url = String(error.config?.url ?? '');
     if (!url.includes('/auth/login')) {

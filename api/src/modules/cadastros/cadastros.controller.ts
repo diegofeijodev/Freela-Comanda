@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { AdminOnly, Staff } from '../../common/decorators/permissao.decorator';
+import { AdminOnly, Staff, Modulos } from '../../common/decorators/permissao.decorator';
 import { ParseUuidPipe } from '../../common/ids/parse-uuid.pipe';
 import { CadastrosService } from './cadastros.service';
 import {
@@ -18,6 +18,7 @@ import {
 @ApiTags('Cadastros')
 @ApiBearerAuth()
 @AdminOnly()
+@Modulos('estoque', 'notas', 'contas', 'dre', 'objetivo', 'importar', 'vendas', 'caixa', 'cupom')
 @Controller('v1')
 export class CadastrosController {
   constructor(private readonly svc: CadastrosService) {}
@@ -29,6 +30,7 @@ export class CadastrosController {
     return this.svc.config();
   }
 
+  @Modulos()
   @Patch('configuracoes')
   salvarConfig(@Body() dto: ConfiguracoesDto) {
     return this.svc.salvarConfig(dto);
@@ -39,6 +41,7 @@ export class CadastrosController {
     return this.svc.sazonalidade();
   }
 
+  @Modulos('objetivo')
   @Patch('sazonalidade/:mes')
   salvarSazonalidade(@Param('mes', ParseIntPipe) mes: number, @Body() dto: SazonalidadeDto) {
     return this.svc.salvarSazonalidade(mes, dto.fator_pct);

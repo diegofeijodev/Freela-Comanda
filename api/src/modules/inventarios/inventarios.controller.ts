@@ -2,7 +2,7 @@ import { Body, Controller, Get, HttpCode, Param, Patch, Post } from '@nestjs/com
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { AuthUser } from '../../common/auth/auth-user';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { AdminOnly, Staff } from '../../common/decorators/permissao.decorator';
+import { AdminOnly, Staff, Modulos } from '../../common/decorators/permissao.decorator';
 import { ParseUuidPipe } from '../../common/ids/parse-uuid.pipe';
 import { AbrirInventarioDto, ContagemDto, FinalDto } from './dto/inventarios.dto';
 import { InventariosService } from './inventarios.service';
@@ -26,11 +26,13 @@ export class InventariosController {
     return this.svc.atual();
   }
 
+  @Modulos('dre')
   @Get('inventarios/historico')
   historico() {
     return this.svc.historico();
   }
 
+  @Modulos('dre')
   @Get('inventarios/cmv')
   cmv() {
     return this.svc.cmv();

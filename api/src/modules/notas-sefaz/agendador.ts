@@ -2,6 +2,8 @@
 // nenhum timer é criado. O horário da próxima consulta mora no banco: reiniciar a API não antecipa nada. Cada tique: busca →
 // classificação → respostas à SEFAZ (no máximo um lote; sem `SEFAZ_MANIFESTACAO=ligada` volta na hora, sem tocar no banco).
 import { Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy } from '@nestjs/common';
+import { rodarNaEmpresa } from '../../common/database/empresa-contexto';
+import { EmpresasBancoService } from '../../common/database/empresas-banco.service';
 import { PRIMEIRO_TIQUE_MS, TIQUE_MS } from './agenda';
 import { CicloSefazService, descreverErro } from './ciclo.service';
 import { RespostasSefazService, type FimRespostas } from './respostas.service';
@@ -23,6 +25,7 @@ export class AgendadorSefaz implements OnApplicationBootstrap, OnModuleDestroy {
   constructor(
     private readonly ciclo: CicloSefazService,
     private readonly respostas: RespostasSefazService,
+    private readonly empresas: EmpresasBancoService,
   ) {}
 
   onApplicationBootstrap(): void {
@@ -51,25 +54,40 @@ export class AgendadorSefaz implements OnApplicationBootstrap, OnModuleDestroy {
     if (this.rodando || this.parado) return;
     this.rodando = true;
     try {
+      // Multiempresa: cada empresa tem certificado, agenda e caixa próprios (no schema dela); uma depois da outra.
+      let contextos;
       try {
-        await this.ciclo.ciclo('agendada', null);
+        contextos = await this.empresas.contextosAtivos();
       } catch (e) {
-        this.logger.error(`sefaz.agendador: ciclo falhou (${descreverErro(e)})`);
+        this.logger.error(`sefaz.agendador: lista de empresas falhou (${descreverErro(e)})`);
+        return;
       }
-      try {
-        await this.ciclo.classificarPendentes();
-      } catch (e) {
-        this.logger.error(`sefaz.agendador: classificação falhou (${descreverErro(e)})`);
-      }
-      // Depois da classificação: a ciência só nasce para nota que já está na caixa. Busca desligada ou parada não para a fila.
-      try {
-        const { fim } = await this.respostas.processar();
-        if (FIM_QUE_AVISA.has(fim)) this.logger.warn(JSON.stringify({ evento: 'sefaz.eventos', alerta: 'respostas_sem_envio', fim }));
-      } catch (e) {
-        this.logger.error(`sefaz.agendador: respostas falharam (${descreverErro(e)})`);
+      for (const ctx of contextos) {
+        if (this.parado) return;
+        await rodarNaEmpresa(ctx, () => this.tiqueDaEmpresa());
       }
     } finally {
       this.rodando = false;
+    }
+  }
+
+  private async tiqueDaEmpresa(): Promise<void> {
+    try {
+      await this.ciclo.ciclo('agendada', null);
+    } catch (e) {
+      this.logger.error(`sefaz.agendador: ciclo falhou (${descreverErro(e)})`);
+    }
+    try {
+      await this.ciclo.classificarPendentes();
+    } catch (e) {
+      this.logger.error(`sefaz.agendador: classificação falhou (${descreverErro(e)})`);
+    }
+    // Depois da classificação: a ciência só nasce para nota que já está na caixa. Busca desligada ou parada não para a fila.
+    try {
+      const { fim } = await this.respostas.processar();
+      if (FIM_QUE_AVISA.has(fim)) this.logger.warn(JSON.stringify({ evento: 'sefaz.eventos', alerta: 'respostas_sem_envio', fim }));
+    } catch (e) {
+      this.logger.error(`sefaz.agendador: respostas falharam (${descreverErro(e)})`);
     }
   }
 }

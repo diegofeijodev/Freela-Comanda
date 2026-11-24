@@ -1,9 +1,10 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 
 import { validateEnv } from './common/config/env.validation';
+import { EmpresaInterceptor } from './common/database/empresa.interceptor';
 import { PrismaModule } from './common/database/prisma.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { HealthModule } from './common/health/health.module';
@@ -55,6 +56,8 @@ import { VendasModule } from './modules/vendas/vendas.module';
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     // Depois do Throttler: barra abuso antes de gastar CPU verificando token. Rotas fechadas por padrão.
     { provide: APP_GUARD, useClass: JwtAuthGuard },
+    // Multiempresa: o handler roda no schema da empresa que o guard escolheu.
+    { provide: APP_INTERCEPTOR, useClass: EmpresaInterceptor },
   ],
 })
 export class AppModule {}

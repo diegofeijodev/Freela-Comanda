@@ -1,7 +1,7 @@
 import 'reflect-metadata';
 import { METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
 import { RequestMethod } from '@nestjs/common';
-import { PERMISSAO_KEY } from '../decorators/permissao.decorator';
+import { MODULOS, MODULOS_KEY, PERMISSAO_KEY } from '../decorators/permissao.decorator';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 import { HealthController } from '../health/health.controller';
 import { AuthController } from '../../modules/auth/auth.controller';
@@ -47,7 +47,7 @@ const CONTROLLERS = [
   VendasController,
 ];
 
-type Rota = { rota: string; marca: string };
+type Rota = { rota: string; marca: string; modulos?: string[] };
 
 function rotas(): Rota[] {
   const out: Rota[] = [];
@@ -61,14 +61,16 @@ function rotas(): Rota[] {
       const metodo = RequestMethod[Reflect.getMetadata(METHOD_METADATA, h) as number];
       const publica = Reflect.getMetadata(IS_PUBLIC_KEY, h) ?? Reflect.getMetadata(IS_PUBLIC_KEY, c);
       const marca = publica ? 'public' : (Reflect.getMetadata(PERMISSAO_KEY, h) ?? Reflect.getMetadata(PERMISSAO_KEY, c) ?? 'SEM MARCA');
-      out.push({ rota: `${metodo} /${[base, path].filter(Boolean).join('/')}`.replace(/\/+/g, '/').replace(/\/$/, ''), marca });
+      const modulos: string[] | undefined = Reflect.getMetadata(MODULOS_KEY, h) ?? Reflect.getMetadata(MODULOS_KEY, c);
+      out.push({ rota: `${metodo} /${[base, path].filter(Boolean).join('/')}`.replace(/\/+/g, '/').replace(/\/$/, ''), marca, ...(modulos?.length ? { modulos } : {}) });
     }
   }
   return out;
 }
 
 describe('proteção das rotas (substitui as políticas RLS do Supabase)', () => {
-  const todas = rotas();
+  const comModulos = rotas();
+  const todas = comModulos.map(({ rota, marca }) => ({ rota, marca }));
 
   it('encontra as rotas', () => {
     expect(todas.length).toBeGreaterThan(60);
@@ -182,15 +184,39 @@ describe('proteção das rotas (substitui as políticas RLS do Supabase)', () =>
     expect(ponto.length).toBe(27);
   });
 
-  it('o cadastro de empresas é só do admin', () => {
-    expect(todas.filter((r) => r.rota.includes('/empresas'))).toEqual([
-      { rota: 'GET /v1/empresas', marca: 'admin' },
-      { rota: 'GET /v1/empresas/:id', marca: 'admin' },
-      { rota: 'POST /v1/empresas', marca: 'admin' },
-      { rota: 'PUT /v1/empresas/:id', marca: 'admin' },
-      { rota: 'POST /v1/empresas/:id/principal', marca: 'admin' },
-      { rota: 'DELETE /v1/empresas/:id', marca: 'admin' },
+  it('o cadastro de empresas é só do master (vale para todas as empresas)', () => {
+    expect(todas.filter((r) => r.rota.includes('/v1/empresas'))).toEqual([
+      { rota: 'GET /v1/empresas', marca: 'master' },
+      { rota: 'GET /v1/empresas/:id', marca: 'master' },
+      { rota: 'POST /v1/empresas', marca: 'master' },
+      { rota: 'PUT /v1/empresas/:id', marca: 'master' },
+      { rota: 'DELETE /v1/empresas/:id', marca: 'master' },
     ]);
+    expect(todas.filter((r) => r.marca === 'master').length).toBe(5);
+  });
+
+  // Multiempresa: o colaborador entra numa rota de admin só pela tela liberada. Estas nunca são liberáveis (só o admin da loja).
+  it('usuários, chave de IA, certificado, compras, ponto e a gravação das configurações nunca são liberados ao colaborador', () => {
+    const soAdmin = new Set(comModulos.filter((r) => r.marca === 'admin' && !r.modulos).map((r) => r.rota));
+    for (const r of [
+      'GET /v1/usuarios', 'POST /v1/usuarios', 'PATCH /v1/usuarios/:id/perfil', 'PATCH /v1/usuarios/:id/modulos', 'PUT /v1/usuarios/:id/senha',
+      'DELETE /v1/usuarios/:id', 'GET /v1/ia-chave', 'PUT /v1/ia-chave', 'DELETE /v1/ia-chave', 'GET /v1/certificado-digital',
+      'PUT /v1/certificado-digital', 'DELETE /v1/certificado-digital', 'PATCH /v1/configuracoes', 'POST /v1/listas-compra/gerar',
+      'POST /v1/inventarios/:id/fechar', 'GET /v1/ponto/colaboradores',
+    ])
+      expect([r, soAdmin.has(r)]).toEqual([r, true]);
+  });
+
+  // A fronteira da loja continua: as telas que têm "visão da loja" (Início, Fichas, Inventário, Compras, Ponto) liberam só essa
+  // visão. Com elas, o colaborador não alcança NENHUMA rota de admin (custo, preço, teórico, financeiro).
+  it('o colaborador com as telas da loja não alcança rota de admin', () => {
+    const daLoja = ['painel', 'fichas', 'inventario', 'compras', 'ponto'];
+    expect(comModulos.filter((r) => r.marca === 'admin' && r.modulos?.some((m) => daLoja.includes(m)))).toEqual([]);
+  });
+
+  it('as telas das rotas de admin existem no menu (mesmas chaves do web)', () => {
+    const usadas = new Set(comModulos.flatMap((r) => r.modulos ?? []));
+    expect([...usadas].filter((m) => !(MODULOS as readonly string[]).includes(m))).toEqual([]);
   });
 
   it('só estas rotas são públicas', () => {
@@ -212,6 +238,7 @@ describe('proteção das rotas (substitui as políticas RLS do Supabase)', () =>
     ).toEqual(
       [
         'GET /v1/auth/me',
+        'GET /v1/auth/empresas',
         'POST /v1/auth/trocar-senha',
         'GET /v1/configuracoes',
         'GET /v1/subgrupos',
