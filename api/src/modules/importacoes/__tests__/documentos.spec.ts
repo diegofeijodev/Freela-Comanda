@@ -232,24 +232,27 @@ describe('cancelamentos (revisão de 24/11)', () => {
   it('cancelamento de cupom do próprio Comanda: não é aplicado e é contado à parte, com os que o Comanda ainda tem como autorizados', () => {
     const c30 = chave(LOJA, 65, 1, 30);
     const c31 = chave(LOJA, 65, 1, 31);
+    const c32 = chave(LOJA, 65, 1, 32);
     const r = classificarXml(
       envio(
         [],
         [
           { arquivo: 'canc-30.xml', chave: c30, dh_evento: null },
           { arquivo: 'canc-31.xml', chave: c31, dh_evento: null },
+          { arquivo: 'canc-32.xml', chave: c32, dh_evento: null },
         ],
       ),
       fatos({
         doComanda: new Map([
           [c30, 'autorizado'],
           [c31, 'cancelado'],
+          [c32, 'descartado'], // nunca autorizado: não é "continua autorizado"
         ]),
       }),
     );
     expect(r.cancelar).toEqual([]);
     expect(r.contagem.do_proprio_comanda).toBe(0);
-    expect(r.contagem.cancelamentos_do_comanda).toEqual({ arquivos: 2, ainda_autorizados: 1 });
+    expect(r.contagem.cancelamentos_do_comanda).toEqual({ arquivos: 3, ainda_autorizados: 1 });
     expect(fechaContagemXml(r.contagem)).toBe(true);
   });
 

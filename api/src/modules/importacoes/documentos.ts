@@ -180,7 +180,10 @@ export type ContagemXml = {
   ja_cancelados: number;
   /** Cupons de venda emitidos pelo próprio Comanda (já estão nas vendas). */
   do_proprio_comanda: number;
-  /** Cancelamentos de cupons do próprio Comanda: não são aplicados aqui (o cupom do Comanda se cancela em Cupom fiscal). */
+  /**
+   * Cancelamentos de cupons do próprio Comanda: não são aplicados aqui (o cupom do Comanda se cancela em Cupom fiscal).
+   * `ainda_autorizados` = os que o Comanda tem com `situacao = 'autorizado'`.
+   */
   cancelamentos_do_comanda: { arquivos: number; ainda_autorizados: number };
   cancelados_no_envio: number;
   repetidos_no_envio: number;
@@ -330,7 +333,8 @@ export function classificarXml(env: EnvioXml, f: FatosXml): ClassificacaoXml {
     if (canceladasNoEnvio.has(k.chave)) c.repetidos_no_envio++;
     else if (f.doComanda.has(k.chave)) {
       c.cancelamentos_do_comanda.arquivos++;
-      if (f.doComanda.get(k.chave) !== 'cancelado') c.cancelamentos_do_comanda.ainda_autorizados++;
+      // só o que o Comanda tem como autorizado (rejeitado, descartado ou em envio nunca foi venda)
+      if (f.doComanda.get(k.chave) === 'autorizado') c.cancelamentos_do_comanda.ainda_autorizados++;
     } else if (registrado === 'cancelada') c.ja_cancelados++;
     // a venda já entrou (o emitente foi aceito quando ela entrou): o cancelamento sai, seja qual for o emitente e a marcação de agora
     else if (registrado === 'autorizada') aplicar(k, true);
