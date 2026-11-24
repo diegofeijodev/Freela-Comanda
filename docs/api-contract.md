@@ -464,9 +464,65 @@ no fio de entrada, texto decimal (planilha como está na célula; XML e PDF com 
   e só se a empresa estiver ativa (403 `EMPRESA_INATIVA`). Id malformado/inexistente = 403 `EMPRESA` (o web volta para a principal).
 - **Perfis**: `master` (todas as empresas; admin em qualquer uma; único que alcança §19) · `admin` (tudo da empresa dele, inclusive os usuários) ·
   `loja` = **colaborador**: rotas `staff` + as rotas `admin` marcadas com `@Modulos(...)` de uma tela que o admin liberou em `modulos`. As telas com
-  visão da loja (`painel`, `fichas`, `inventario`, `compras`, `ponto`) liberam só essa visão (nenhuma rota de admin; teste
+  visão da loja (`painel`, `fichas`, `inventario`, `compras`, `ponto`, `cana`) liberam só essa visão (nenhuma rota de admin; teste
   `permissoes-protecao.spec.ts`); as demais (`vendas`, `cupom`, `estoque`, `objetivo`, `notas`, `contas`, `caixa`, `dre`, `importar`) abrem a tela
   inteira. Usuários, chave de IA, certificado e a gravação de Configurações nunca são liberáveis.
 - `GET /v1/auth/me` → `{ user: { id, email, nome, perfil, master, empresa_id, modulos }, empresa: { id, razao_social, nome_fantasia, cnpj, ativo, principal } | null }`
   · `GET /v1/auth/empresas` (staff) → empresas do seletor (master: todas; comum: a dele), mesmo formato de `empresa`.
 
+
+## §22 Controle da cana (loja lança às cegas; admin apura)
+
+Tela `/cana` (desenho `2026-11-24-importar-vendas-e-cana-design.md`, Parte B, e "Decisões da implementação — Cana"). Módulo próprio
+(`api/src/modules/cana`): só **lê** `vendas` e `itens_cardapio`; não toca em estoque, inventário nem CMV. Por empresa (cada schema tem as
+suas tabelas `cana_*`). A conta da semana é a função pura `apuracao.ts` (2ª exceção à "regra em SQL"). Não é dinheiro: dúzias com 2
+casas, litros com 3 (número no fio).
+
+**Quem:** a loja (colaborador com a tela `cana` liberada em Usuários; sem ela, 403 também nas 2 rotas da loja) só lança e vê os próprios
+lançamentos, sem conta nenhuma (contagem cega). O resto é do admin (sem `@Modulos`: a tela `cana` é de visão da loja e nunca abre rota de admin).
+
+| Rota | Marca | O quê |
+|---|---|---|
+| `GET /v1/cana/parametros` | admin | `{ litros_por_duzia_esperado\|null, rendimento_frozen\|null, atualizado_por_nome, atualizado_em, historico: [5 últimas: { litros_por_duzia_esperado, rendimento_frozen, alterado_por_nome, alterado_em }] }`. Nulo = "não informado" (nada vem preenchido) |
+| `PUT /v1/cana/parametros` | admin | `{ litros_por_duzia_esperado: número > 0 \| null, rendimento_frozen: número > 0 \| null }` (os dois campos, até 4 casas); acrescenta uma linha ao histórico (imutável) |
+| `GET /v1/cana/produtos` | admin | itens ativos do cardápio (e os já configurados, mesmo inativos): `[{ item_cardapio_id, nome, categoria, grupo, item_ativo, parece_cana, config: { ml_por_unidade, frozen, ativo, atualizado_por_nome, atualizado_em } \| null }]` |
+| `PUT /v1/cana/produtos/:itemCardapioId` | admin | `{ ml_por_unidade (> 0, 2 casas), frozen, ativo }` (no frozen, o ml é o tamanho do copo de frozen); `ativo: false` = não entra mais na conta |
+| `GET /v1/cana/lancamentos/recentes` | **staff** + tela `cana` | `{ hoje, ontem, lancamentos: [só os da pessoa, 7 dias: { id, tipo, data, duzias, litros_caldo, litros_frozen, fornecedor, observacao, lancado_em, anulado, corrigido }], contagens_lancadas: [{ data, por_nome, em }] (hoje e ontem, de qualquer pessoa, sem número), fornecedores: [até 5] }`. Sem motivo da anulação e sem o número novo de uma correção |
+| `POST /v1/cana/lancamentos` | **staff** + tela `cana` | `{ tipo: recebimento\|producao\|contagem, data, duzias?, litros_caldo?, litros_frozen?, fornecedor?, observacao?, chave_idempotencia? (uuid) }` → 201 com o lançamento e `repetido: false`; a mesma chave do mesmo usuário com os mesmos números → **200** com o da 1ª vez (`repetido: true`) |
+| `GET /v1/cana/lancamentos?ini=&fim=&tipo=` | admin | todos do período (até 400 dias), com os anulados (`anulado_em`, `anulado_por_nome`, `anulado_motivo`), `substitui` (o corrigido) e `corrigido_por_id` |
+| `POST /v1/cana/lancamentos/:id/anular` | admin | `{ motivo }` (3+ letras) → 200 com o lançamento anulado (continua no livro) |
+| `POST /v1/cana/lancamentos/:id/corrigir` | admin | `{ motivo, data, duzias?, litros_caldo?, litros_frozen?, fornecedor?, observacao? }` → 201: anula o antigo ("Corrigido: <motivo>") e lança o novo, do mesmo tipo, com `substitui_id`, **numa transação** |
+| `GET /v1/cana/semanas` | admin | `{ contagens, ultima_contagem, semanas: [até 26, a mais nova primeiro: { contagem_inicial, contagem_final, periodo, cana_moida, caldo_produzido, caldo_vendido, perda }] }` |
+| `GET /v1/cana/semanas/atual` | admin | `{ apuracao: <apuração em andamento: da última contagem até hoje, sem cana moída, perda nem rendimento> \| null }` (null = nenhuma contagem) |
+| `GET /v1/cana/semanas/:contagemFinalId` | admin | a apuração da semana que termina nessa contagem (abaixo); a 1ª contagem (sem anterior), uma anulada ou outro id = 404 |
+
+**O que cada lançamento pede:** recebimento = dúzias > 0 (fornecedor opcional); produção = litros de caldo > 0 (dúzias moídas opcionais, > 0);
+contagem = dúzias ≥ 0 e litros de caldo ≥ 0 (litros de frozen opcionais, ≥ 0). A loja lança só com a data de **hoje ou ontem** (de Brasília);
+o admin, qualquer dia até hoje. A contagem vale como **fim do dia**; uma contagem ativa por dia.
+
+**Apuração** (`SemanaApurada`): `periodo { ini, fim, dias }` (lançamentos e vendas com `data > contagem anterior` e `data <= contagem atual`, a borda de
+`v_cmv_periodo`), `em_andamento`, `contagem_inicial`/`contagem_final` (`{ id, data, lancado_por_nome }`), `cana { inicio, recebida { duzias, lancamentos, ini, fim },
+fim, moida, anotada_nas_producoes { duzias, producoes_com, producoes } }`, `caldo { produzido { litros, lancamentos, ini, fim }, vendido { litros, em_copos, em_frozen },
+inicio/fim { litros, caldo, frozen, frozen_em_caldo }, perda }`, `moagem { litros_por_duzia, esperado, diferenca_litros, diferenca_pct }`,
+`rendimento { litros_vendidos_por_duzia }`, `por_produto [{ item_cardapio_id, nome, quantidade, ml_por_unidade, frozen, litros, litros_caldo }]`,
+`nao_entram { sem_ml, frozen_sem_rendimento, sem_cardapio }`, `avisos [{ codigo, dados }]`, `vendas_importadas_ate`, `parametros`, `calculada_com: "configuracao_de_hoje"`.
+Contas: cana moída = início + recebida − fim; caldo vendido = Σ quantidade × ml ÷ 1.000 (÷ rendimento no frozen), venha a venda de onde vier;
+caldo na contagem = caldo + frozen ÷ rendimento; perda = início + produzido − vendido − fim (negativa = sobra); litros por dúzia = produzido ÷ moída;
+rendimento = vendido ÷ moída (cana moída ≤ 0 = `null`, sem divisão). Códigos dos avisos: `vendas_incompletas`, `nada_configurado`, `produto_sem_ml`,
+`venda_sem_cardapio`, `frozen_sem_rendimento`, `cana_moida_negativa`, `cana_moida_zero`, `producao_zero_com_venda`. Sem "fechar a semana" (B6):
+toda semana é calculada na hora, com a configuração de hoje.
+
+| HTTP | `code` | Quando |
+|---|---|---|
+| 400 | `VALIDATION_ERROR` | formato (casas, sinais, tipo, data inválida) ou o que o tipo pede ("Digite quantas dúzias chegaram (maior que zero).", "Frozen só entra na contagem.", "Fornecedor só entra no recebimento.") |
+| 400 | `CANA_DATA_FORA` | "A loja lança só hoje ou ontem." · "Data no futuro." |
+| 400 | `CANA_MOTIVO_OBRIGATORIO` | anular ou corrigir sem motivo ("Escreva o motivo (pelo menos 3 letras).") |
+| 403 | `FORBIDDEN` | colaborador sem a tela `cana` (inclusive nas 2 rotas da loja); loja em rota de admin |
+| 404 | `NOT_FOUND` | lançamento, produto do cardápio ou semana inexistente |
+| 409 | `CANA_CONTAGEM_DO_DIA` | já há contagem ativa no dia. Admin: "Já existe uma contagem em dd/mm. Anule a anterior para lançar outra."; loja: "… Se ela está errada, avise o gerente: só ele corrige." |
+| 409 | `CANA_JA_ANULADO` | anular ou corrigir o que já foi anulado (ou corrigido) |
+| 409 | `CANA_CHAVE_REPETIDA` | a mesma `chave_idempotencia` com outros números ou de outra pessoa ("Este lançamento já foi enviado com outros números. Abra o formulário de novo.") |
+
+**No banco:** `cana_lancamentos` só cresce (gatilho `cana_lancamentos_imutavel`: sem DELETE; UPDATE só preenche a anulação, uma vez); `cana_parametros_historico`
+também é imutável. O índice único parcial `cana_uma_contagem_por_dia` só existe na migração `20261127120000_cana` (o Prisma não o escreve). Quem lançou
+fica como uuid + nome fotografado (sem FK para `users`, que só existe em `public`).

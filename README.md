@@ -97,6 +97,17 @@ Na máquina do dono, sempre pelo teto de memória (`scripts/run-capped.sh`, ver 
   7. Se o navegador disser que não abre .zip, descompactar e escolher os .xml soltos (Ctrl+A na pasta).
   8. NF-e (modelo 55) com ICMS-ST ou IPI somados no total: a conferência "soma dos itens × total" não conhece esses impostos e põe a nota em "com problema" (fica de fora). Se aparecer, mandar o XML.
 
+- **Controle da cana (aba Cana):** pronto, testado só com números inventados; **nada vem preenchido**. Antes do primeiro uso, na empresa
+  da cana (Frutá Frozen Outlet Premium Itupeva, escolhida no seletor abaixo do logo):
+  1. Usuários → no colaborador da loja, "Liberar telas" → marcar **Cana (lançar)**. Sem isso a loja nem vê a aba.
+  2. Cana → Configuração: ligar "Leva caldo" em cada produto que leva caldo, com os ml de 1 unidade (no frozen, o tamanho do copo) e a marca "É frozen".
+  3. Responder e informar: o que é o "rendimento do frozen" (a tela pergunta "1 litro de caldo vira quantos litros de frozen?"; se for outra coisa,
+     avisar antes de usar); os litros esperados por dúzia podem ficar em branco nas 2 ou 3 primeiras semanas (a tela mostra a média real).
+  4. A loja faz a 1ª contagem (fim do dia; de manhã = marcar Ontem) e, ao longo da semana, lança recebimentos e produção. Na contagem seguinte,
+     abrir Cana → Semana e conferir as contas com o caderno da loja; anotar onde não bater.
+  5. Ainda sem resposta (a tela já se ajusta, nada a mudar no código): sobra frozen pronto de uma semana para outra (o campo é opcional)? a loja pode
+     desfazer o próprio lançamento por alguns minutos (hoje só o gerente anula)? quer um limite de perda que vire alerta?
+
   Para quem mexer no banco: o índice `vendas_origens_nome_key` (nome do sistema único, em `lower(nome)`) só existe na migração `20261125120000_vendas_importacao`; um `prisma migrate dev` vai propor apagá-lo. Não aceite (o mesmo vale para os índices parciais do cupom fiscal e `empresas_uma_principal`).
 
 ## Migração dos dados (pendente)

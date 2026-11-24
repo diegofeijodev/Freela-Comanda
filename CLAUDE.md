@@ -54,6 +54,13 @@ contrato: `docs/api-contract.md`. Protótipo de referência em `.prototype/` (gi
 - Importar vendas de outros sistemas (`api/src/modules/importacoes/{planilha,documentos,previa,fatos-vendas}.ts` + `importacoes-vendas.service.ts`, rotas `/v1/importacoes/origens` e `/v1/importacoes/vendas/{previa,confirmar,recentes,ler-pdf}` em `docs/api-contract.md` §20, tela `web/src/app/(app)/vendas/importar`, só admin): o navegador lê o arquivo (planilha, XML/.zip, PDF já conferido) e o servidor converte e confere; **a prévia nunca grava**. O confirmar (e a rota antiga) é uma transação com `pg_advisory_xact_lock` (`TRAVA_IMPORTACAO_VENDAS`); a mesma `chave_idempotencia` com o mesmo corpo devolve o resultado guardado (200, `repetida`), com outro corpo 409. Substituir com linha com problema e vendas a apagar = 409 `SUBSTITUIR_COM_PROBLEMA` (nada apagado); XML cuja soma dos itens não bate com o vNF fica de fora ("com problema").
   "Substituir" apaga só a **mesma fonte** (planilha padrão = sem cupom, sem XML e sem sistema; sistema = `importacoes.origem_id`); nunca o cupom nem o XML. A venda de XML é projeção de `vendas_documentos` (imutável, gatilho): cancelar = `vendas_documento_cancelar` (apaga as vendas, marca `cancelada`). Dinheiro: Decimal no servidor, centavos nas respostas; número ambíguo da planilha ("12.90" no modo vírgula) é linha com problema, nunca palpite. A rota antiga `POST /v1/importacoes/vendas` é a planilha padrão (obsoleta, fica pelo smoke).
   O índice único `vendas_origens_nome_key` (em `lower(nome)`) **só existe na migração** `20261125120000_vendas_importacao` (o Prisma não escreve índice de expressão): um `prisma migrate dev` vai querer apagá-lo. Não aceite; é ele que segura o nome repetido na corrida (P2002 → 409 `ORIGEM_REPETIDA`). Os parciais do cupom (`nfce_cupons_numero_vivo`, `nfce_cupons_chave_viva`, `nfce_cupons_pendentes`) e `empresas_uma_principal` estão na mesma situação.
+- Cana (`api/src/modules/cana`, rotas `/v1/cana` em `docs/api-contract.md` §22, tela `web/src/app/(app)/cana`, migração `20261127120000_cana`): módulo próprio que só LÊ
+  `vendas` e `itens_cardapio` (nunca estoque, inventário ou CMV), por empresa. A loja (colaborador com a tela `cana`; o `@Staff()` sozinho não basta:
+  `exigirModuloCana` no serviço) só alcança `POST /lancamentos` e `GET /lancamentos/recentes` e lança às cegas (só hoje/ontem; nunca vê conta, motivo
+  nem o número novo de uma correção); o resto é `@AdminOnly()` SEM `@Modulos` (tela de visão da loja). Livro só de acréscimo (gatilho): corrigir =
+  `POST /lancamentos/:id/corrigir` (anula e lança numa transação); chave de repetição no lançar. 2ª exceção à "regra em SQL": a conta da semana é a
+  função pura `modules/cana/apuracao.ts` (Decimal por dentro; testes em `__tests__/apuracao.spec.ts`); `web/src/lib/cana.ts` só formata. Nada vem
+  preenchido (ml, frozen, rendimento, esperado). O índice parcial `cana_uma_contagem_por_dia` só existe na migração (como os do cupom).
 - Web: storage do navegador só em `modules/auth/infrastructure/auth.storage.ts` (sessão `authUser`), `modules/inventario/infrastructure/rascunho.storage.ts`
   (rascunho da contagem) e `modules/ponto/infrastructure/terminal.storage.ts` (token do terminal de ponto). Telas são `'use client'`; `@/lib/erp-api.ts` é o único lugar com chamadas HTTP.
 
@@ -78,6 +85,7 @@ yarn dev | typecheck | lint | test
 ../scripts/run-capped.sh 3300 bash scripts/browser-check.sh       # navegador headless, capturas em .cache/telas
 BC_ROTAS="/ /auth /painel /vendas /vendas/importar" CHECK_SCRIPT=scripts/browser-check-importar-vendas.mjs \
   ../scripts/run-capped.sh 2400 bash scripts/browser-check.sh   # só o grupo Importar vendas (aquece só as rotas dele)
+BC_ROTAS="/ /auth /painel /cana" CHECK_SCRIPT=scripts/browser-check-cana.mjs ../scripts/run-capped.sh 2400 bash scripts/browser-check.sh   # só a Cana
 ```
 
 Seed de dev: `admin@erpfreela.local` / `erpfreela123` (admin) e `loja@erpfreela.local` / `erpfreela123` (loja).

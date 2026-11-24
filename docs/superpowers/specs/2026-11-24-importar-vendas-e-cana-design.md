@@ -1140,3 +1140,69 @@ Tomadas na implementação (ramo `feat/vendas-cana`), pelo mais seguro quando ha
 **Ficou de fora (anotado):** a rota antiga continua com o Substituir sem o bloqueio das linhas com problema (o `vendasDasLinhas` descarta a linha ruim calado, como sempre); ela é obsoleta e só o smoke a usa.
 
 **Ambiente desta implementação (não muda o código):** o `node_modules` do worktree é atalho para o checkout principal, então o cliente Prisma novo foi gerado à parte (`api/.cache/prisma-client`, fora do git) e o jest/tsc/smoke usaram um `tsconfig` com `paths` para ele; o cliente compartilhado não foi tocado. O Postgres do projeto (rede `172.62.0.0/24`) estava inalcançável do host por causa do Cloudflare WARP (essa faixa é pública e vai pelo túnel); o smoke rodou numa cópia descartável apontada para um Postgres 16 na ponte padrão do Docker.
+
+---
+
+## Decisões da implementação — Cana e Parte C (24/11/2026, ramo `feat/cana`)
+
+Implementado sobre `origin/main` 9ab291c, já com o **multiempresa** do Diego (PR #3), que este desenho não conhecia. Pelo mais seguro quando havia
+escolha; cada uma dá para voltar atrás.
+
+**Respostas do dono (24/11) e o que mudou no desenho**
+
+- Pergunta 1: a cana é da **Frutá Frozen Outlet Premium Itupeva**, empresa própria no Comanda (schema `empresa_deb691b82d30`); Valinhos não vende
+  cana. O risco 1 deixou de existir: com o multiempresa, cada empresa tem as suas tabelas `cana_*`, as suas vendas e a sua configuração. Nada de
+  "loja" dentro das tabelas da cana.
+- Pergunta 5: a loja lança (às cegas) e só o admin apura. "Loja" = colaborador com a tela **`cana`** liberada (tela nova no catálogo de módulos,
+  API `MODULOS` + `web/src/lib/modulos.ts`, "Cana (lançar)" em Usuários → Liberar telas; fora do padrão de colaborador novo). Como o guard não
+  olha módulos em rota `@Staff()`, as 2 rotas da loja conferem a tela no serviço (`exigirModuloCana`; 403 sem ela). As rotas de admin ficam
+  `@AdminOnly()` **sem** `@Modulos` (a `cana` é tela de visão da loja, como `inventario`; teste `permissoes-protecao.spec.ts`).
+- Perguntas 2, 3, 4, 6 e 7 continuam sem resposta: tudo configurável e nada preenchido. Pergunta 3 implementada como (a) "1 litro de caldo vira
+  quantos litros de frozen?" (a recomendação); pergunta 6 como "fim do dia" (o texto da contagem diz para marcar Ontem quando contar de manhã);
+  pergunta 7 com o campo de frozen opcional.
+
+**Pontos da UX (seção 7) que tocam a Cana**
+
+| Ponto | Decisão | Por quê |
+|---|---|---|
+| 7.13 chave de repetição | aceito: `chave_idempotencia` (uuid, única) no `POST /lancamentos`; nasce no navegador a cada abertura do formulário. A mesma chave do **mesmo usuário com os mesmos números** devolve o lançamento da 1ª vez (200, `repetido`); outra pessoa ou outros números = 409 `CANA_CHAVE_REPETIDA` | recebimento em dobro com o sinal fraco do balcão; e a chave não pode devolver a contagem de outra pessoa (quebraria a contagem cega). Com ela, a "releitura depois de 3 s" da UX saiu: tocar de novo em Lançar é seguro |
+| 7.14 corrigir em duas chamadas | aceito: `POST /lancamentos/:id/corrigir` anula ("Corrigido: …") e lança o novo, do mesmo tipo, com `substitui_id`, numa transação (`SELECT … FOR UPDATE` no antigo). `substitui_id` saiu do `POST` (só o corrigir o usa) e é único | nunca fica o antigo anulado sem o novo; a contagem do mesmo dia passa pelo índice parcial na ordem certa |
+| 7.15 contagem do dia | aceito: a frase de `CANA_CONTAGEM_DO_DIA` muda pelo perfil (loja: "avise o gerente"); `recentes.contagens_lancadas` traz as de hoje e ontem **sem número** e o formulário avisa antes | a loja não anula; contar à toa cansa |
+| 7.16 recentes da loja | aceito: só os próprios, com `anulado`/`corrigido` sem motivo e sem o número novo; `hoje`/`ontem` do servidor; os 5 últimos fornecedores | contagem cega; relógio do celular |
+| 7.17 desfazer da loja | **não feito** (anotado no README como pergunta) | muda regra: só com o "sim" do dono |
+| 7.18 parcelas prontas | aceito: cada número com as parcelas (lançamentos, datas, ids das contagens, período das vendas), as dúzias anotadas nas produções e os avisos como `{ codigo, dados }` | a tela escreve a conta e o link de cada aviso |
+| 7.19 casas | aceito como a UX: dúzias e litros com 1 casa na tela, "L por dúzia" com 2, porcentagem com 1; o servidor guarda e devolve com 2/3/4 casas e só arredonda na saída (Decimal por dentro) | o exemplo do desenho mostra 4,28 |
+| 7.20 quem mudou | aceito: `GET /parametros` com `atualizado_por_nome`, `atualizado_em` e as 5 últimas do histórico; produtos com `atualizado_por_nome`/`atualizado_em` | auditoria |
+| 7.21 média real | os 4 números da lista ficaram cana moída, produzido, vendido e perda; a sugestão "Usar 4,9" na Configuração **não foi feita** | opcional; os dados já estão na lista |
+| 7.22 pergunta 3 (b) | não se aplica enquanto a resposta for (a); anotado | — |
+| 7.23 rendimento da semana | como o desenho (vendido ÷ moída), com a frase explicativa sob o cartão | é o pedido do dono |
+| 7.24 perda sem limite | sem cor e sem limite | parâmetro novo só com o dono |
+| B6 fechar a semana | **não feito**: toda semana é calculada na hora, com a configuração de hoje (`calculada_com`), e a tela diz isso | opcional no desenho |
+
+**Outras decisões**
+
+- **Sem FK para `users`** em `cana_*` (quem lançou = uuid + nome fotografado): a migração roda em cada schema de empresa, e `users` só tem linhas em
+  `public`. Pelo mesmo motivo, nada é qualificado com `public.` (teste em `esquema.spec.ts`).
+- **Sem semente** em `cana_parametros`: a linha única nasce no primeiro "Salvar os números" (a migração só acrescenta, sem INSERT).
+- `cana_parametros_historico` também é imutável (gatilho), além do livro de lançamentos.
+- "Cana moída zero" ganhou o aviso próprio `cana_moida_zero` (o desenho só tinha o negativo); os cartões que dividem mostram "—".
+- O web segue o padrão do repositório (`useQuery` + `useState`); o desenho pedia react-hook-form + zod, que as telas não usam. "Sair sem lançar?"
+  usa o `confirm` do navegador.
+
+**Parte C: o que mudou das checagens de C.3 (desenho anterior ao multiempresa)**
+
+- E1–E6 e E9 entraram como escritas, no **fim** do smoke (o 1º `POST /v1/empresas` toma o `public` e regrava `configuracoes`). Nenhuma falhou no
+  código de hoje. O CMV em valor (E4) confere o `cmv_valor` da rota e as parcelas direto em `v_cmv_periodo` (a rota só devolve o valor).
+- E7: `POST /v1/empresas/:id/principal` não existe mais; a principal é a dona do `public` (a 1ª cadastrada). Conferido: a 1ª fica com o `public` e
+  é a principal, Configurações espelha; a 2ª nasce num schema próprio com todas as migrações; `DUPLICADO`, `PRINCIPAL` ao excluir, `EM_USO` (usuários),
+  CNPJ inválido, loja 403. "Desativar a principal → 409" **saiu**: o PR #3 tirou essa regra de propósito (a frase do excluir diz "Desative-a"), mas o
+  §19 do contrato ainda a cita (e cita "tornar principal") — a corrigir no contrato pelo dono do multiempresa.
+- E8: no multiempresa o empregador do ponto só pode ser a empresa da requisição (`empresaExiste`); outra empresa = 404. Conferido assim, mais o
+  espelho com a principal (sem empregador), com o empregador e, dentro da 2ª, com ela mesma.
+- E9: `corrigir` do ponto responde 200 (`@HttpCode(200)`), não 201.
+- Multiempresa: insumo, cana e colaborador do ponto criados numa empresa não aparecem na outra; cabeçalho malformado/inexistente = 403 `EMPRESA`; a
+  colaboradora da 2ª fica nela mesmo mandando o cabeçalho da 1ª. K1–K4 rodam também na 2ª empresa (o cliente real da cana é um schema `empresa_*`).
+
+**Produção (multiempresa):** o CMD do Dockerfile roda `prisma migrate deploy` (public) **e** `migrar-empresas` (cada `empresa_*`) a cada subida; a
+migração `cana` chega a `empresa_deb691b82d30` sozinha no `subir-api.sh`. Conferido num banco parado na multiempresa com um schema de empresa:
+as 4 tabelas, os 2 gatilhos e o índice parcial nos dois schemas. Os dois passos estão encadeados com `&&`: se um schema falhar, a API não sobe.
