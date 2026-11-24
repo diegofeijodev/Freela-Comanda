@@ -1104,7 +1104,7 @@ Tomadas na implementação (ramo `feat/vendas-cana`), pelo mais seguro quando ha
 **Outras decisões**
 
 - **"Ações não atômicas" (editar o sistema fora do confirmar):** trocar `prefixo_pedido` de um sistema que **já tem vendas** é recusado com 409 `ORIGEM_PREFIXO_EM_USO` (a chave R1 mudaria e o mesmo arquivo entraria de novo). Nome, separador, colunas e "parar de usar" seguem livres.
-- **Concorrência:** o confirmar começa com `pg_advisory_xact_lock(hashtext('importacao_vendas'))` e refaz todas as conferências dentro da transação (o `FOR UPDATE` não trava chave que ainda não existe). A rota antiga não pega a trava.
+- **Concorrência:** o confirmar começa com `pg_advisory_xact_lock(hashtext('importacao_vendas'))` e refaz todas as conferências dentro da transação (o `FOR UPDATE` não trava chave que ainda não existe). Desde a revisão de 24/11, a rota antiga pega a mesma trava (`TRAVA_IMPORTACAO_VENDAS`).
 - **NF-e (modelo 55):** o DTO ganhou `nfe_incluidas` (chaves marcadas na prévia); sem estar na lista, a NF-e fica de fora (`documentos.nfe_fora`, com os CFOPs). Idem `cnpjs_incluidos`, que só vale para CNPJ ativo de Empresas.
 - **Pedido do XML de outra empresa incluída** leva o CNPJ no fim (`NFC-e 1-12 98765432000110`): a mesma série-número de dois CNPJs não colide na chave R1. O da loja continua `NFC-e <série>-<número>` (o formato do cupom do Comanda).
 - **Números da planilha:** no modo vírgula, "12.90" e "1.234" (sem vírgula) são linha com problema; no modo ponto, "12,90" e "1,234". Valor negativo também. Nada de palpite. No Excel, o leitor novo usa o valor **tipado** (data e número), não o texto formatado da célula (`raw: false` dava `m/d/yy` e `1,234.56`); a tela manda o número com o separador escolhido.
@@ -1120,5 +1120,23 @@ Tomadas na implementação (ramo `feat/vendas-cana`), pelo mais seguro quando ha
 - 10 (mesmo caixa ou outro canal): a prévia avisa a sobreposição e exige a caixa (R5); recomendação: do mesmo caixa, uma forma de importar por período.
 - 11 (PDF sem pedido nem data por linha): entra como "1 pedido por dia" (`DIA <data>`), com a data escolhida na conferência e o aviso de vários dias.
 - 12 (XML de outro CNPJ de Empresas): fica de fora por padrão; a prévia mostra com a caixa "Incluir" desmarcada (`cnpjs_incluidos`).
+
+**Correções da revisão de código (24/11/2026, ramo `feat/vendas-cana`)**
+
+| # | Achado | Decisão | Por quê |
+|---|---|---|---|
+| 1 | Cancelamento de cupom de outra Empresa ignorado | cancelamento de chave já `autorizada` em `vendas_documentos` sai **antes** do teste de emitente (qualquer emitente); cancelamento de CNPJ de Empresas que nunca entrou vai para `outros_cnpjs` (com `cancelamentos`) e só vale com o CNPJ marcado | quem aceitou o emitente foi a importação da venda; a caixa "Incluir" vale por CNPJ |
+| 2 | Substituir apaga vendas de linhas com problema | **bloquear** (não excluir chaves): com linha com problema e vendas a apagar, `substituir.bloqueado` na prévia, aviso âmbar com "Só acrescentar as novas", e o confirmar dá 409 `SUBSTITUIR_COM_PROBLEMA` sem apagar nada | excluir as chaves das linhas ruins não protege a linha com data ou produto ilegível (o problema mais comum): não dá para saber qual venda ela é |
+| 3 | Soma dos itens × vNF | Σ(vProd − vDesc + vOutro + vFrete + vSeg) contra `valor_total`, tolerância R$ 0,02 × nº de itens; conferido só no documento que **entraria** (depois de NF-e desmarcada, já importado e cancelado no envio); divergente = `documentos.com_problema` com o motivo e os dois valores | o servidor não confia no resumo do navegador. **Limite:** ICMS-ST e IPI (que somam no vNF da NF-e) não entram na conta; NF-e com eles fica de fora (README) |
+| 4 | `documentoDaVenda` por pedido | `vendasDosNovos` recusa (400) dois documentos novos com o mesmo pedido e chaves diferentes, com os dois nomes de arquivo | a venda de um iria para o documento do outro |
+| 7 | Sistema parado | 409 `ORIGEM_INATIVA` na prévia e no confirmar | "Parar de usar" tira da lista; importar por id direto não pode passar |
+| 8 | P2002 do `lower(nome)` | 409 `ORIGEM_REPETIDA` ao criar e ao renomear (o `catch` fica fora do `$transaction`) | a conferência por nome não segura a corrida; o índice segura |
+| 9 | Centavos | valor, desconto, taxa e frete da planilha/PDF com 2 casas (meio para cima); quantidade e preço unitário como vieram | a coluna é `numeric` sem escala: "12,345" ia para o banco com 3 casas |
+| 11 | Cancelamento de cupom do próprio Comanda | não aplica; `cancelamentos_do_comanda { arquivos, ainda_autorizados }` e o aviso (âmbar com link para Cupom fiscal se algum continua autorizado aqui) | o cupom do Comanda se cancela no Comanda |
+| 12 | Cancelamento de cupom cujas vendas vieram por planilha | `cancelamentos_sem_venda_xml`: cancelamentos de chave que nunca veio por XML (nem no envio) e as vendas de planilha/sistema nos dias deles (dia do evento em Brasília; sem ele, o mês da chave); o aviso é condicional ("se esses cupons são do mesmo caixa…") | o pedido do PDV não aparece no cupom: não dá para casar cupom e linha da planilha |
+| 13 | Trava na rota antiga | `pg_advisory_xact_lock(hashtext('importacao_vendas'))` no início da transação de `vendas()` | as duas rotas nunca correm juntas |
+| 5, 6, 10 | .zip, número ambíguo, índice fora do schema | inflate em fluxo com teto real (1 MB por arquivo, 100 MB de bytes reais no total); "1.234" na conferência do PDF = ambíguo (como na planilha); o índice anotado no CLAUDE.md e no README | — |
+
+**Ficou de fora (anotado):** a rota antiga continua com o Substituir sem o bloqueio das linhas com problema (o `vendasDasLinhas` descarta a linha ruim calado, como sempre); ela é obsoleta e só o smoke a usa.
 
 **Ambiente desta implementação (não muda o código):** o `node_modules` do worktree é atalho para o checkout principal, então o cliente Prisma novo foi gerado à parte (`api/.cache/prisma-client`, fora do git) e o jest/tsc/smoke usaram um `tsconfig` com `paths` para ele; o cliente compartilhado não foi tocado. O Postgres do projeto (rede `172.62.0.0/24`) estava inalcançável do host por causa do Cloudflare WARP (essa faixa é pública e vai pelo túnel); o smoke rodou numa cópia descartável apontada para um Postgres 16 na ponte padrão do Docker.

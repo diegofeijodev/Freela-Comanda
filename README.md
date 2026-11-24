@@ -95,6 +95,9 @@ Na máquina do dono, sempre pelo teto de memória (`scripts/run-capped.sh`, ver 
   5. PDF: a leitura pela IA só foi testada com leitor falso. Com a chave de IA salva, ler um relatório real de um dia e conferir linha a linha (a tela mostra "soma × total impresso").
   6. XML: o cancelamento por substituição (evento 110112), a contingência e o .zip com pastas nunca foram vistos num arquivo real; se algum cupom aparecer como "ignorado", anotar o motivo e mandar o arquivo.
   7. Se o navegador disser que não abre .zip, descompactar e escolher os .xml soltos (Ctrl+A na pasta).
+  8. NF-e (modelo 55) com ICMS-ST ou IPI somados no total: a conferência "soma dos itens × total" não conhece esses impostos e põe a nota em "com problema" (fica de fora). Se aparecer, mandar o XML.
+
+  Para quem mexer no banco: o índice `vendas_origens_nome_key` (nome do sistema único, em `lower(nome)`) só existe na migração `20261125120000_vendas_importacao`; um `prisma migrate dev` vai propor apagá-lo. Não aceite (o mesmo vale para os índices parciais do cupom fiscal e `empresas_uma_principal`).
 
 ## Migração dos dados (pendente)
 
