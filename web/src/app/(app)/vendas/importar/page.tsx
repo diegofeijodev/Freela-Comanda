@@ -4,10 +4,10 @@ import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { CheckCircle2, CircleAlert, FileCode2, FileSpreadsheet, Upload } from "lucide-react";
+import { CheckCircle2, CircleAlert, FileCode2, FileSpreadsheet, FileText, Loader2, Upload } from "lucide-react";
 import {
-  confirmarImportarVendas, importacoesVendasRecentes, listarCardapio, listarOrigensVendas, previaImportarVendas, statusDoErro,
-  type CorpoImportarVendas, type DocumentoVendaXml, type FormatoVendas, type PreviaVendas, type ResultadoImportarVendas,
+  confirmarImportarVendas, importacoesVendasRecentes, lerRelatorioVendasPdf, listarCardapio, listarOrigensVendas, previaImportarVendas, statusDoErro,
+  type CorpoImportarVendas, type DocumentoVendaXml, type FormatoVendas, type PreviaVendas, type RelatorioVendasLido, type ResultadoImportarVendas,
 } from "@/lib/erp-api";
 import { lerXmlVenda, MOTIVO_XML } from "@/lib/nfe-vendas";
 import { lerZip, ZipErro } from "@/lib/zip-leitura";
@@ -15,7 +15,8 @@ import { errCode, errMsg } from "@/lib/db";
 import { useMe } from "@/lib/auth";
 import { lerTabelaDeBuffer, type Celula } from "@/lib/parse";
 import {
-  acharCabecalho, deduzirSeparador, linhasParaEnvio, plural, sha256Hex, sugerirMapeamento, type CampoVenda, type Mapeamento, type Separador,
+  acharCabecalho, deduzirSeparador, linhasParaEnvio, numeroDigitado, numeroParaCampo, plural, sha256Hex, sugerirMapeamento,
+  type CampoVenda, type LinhaConferencia, type Mapeamento, type Separador,
 } from "@/lib/importar-vendas";
 import { PageHeader } from "@/components/ui-kit";
 import { Button } from "@/components/ui/button";
@@ -24,11 +25,16 @@ import { PADRAO, Sistemas, sistemaInicial, UltimasImportacoes } from "@/componen
 import { Colunas } from "@/components/importar-vendas/colunas";
 import { PreviaImportacao, type EscolhasPrevia } from "@/components/importar-vendas/previa";
 import { Resultado } from "@/components/importar-vendas/resultado";
+import { ConferirPdf } from "@/components/importar-vendas/conferir-pdf";
 import { cn } from "@/lib/utils";
 
-type Passo = "arquivo" | "colunas" | "lendo" | "previa" | "resultado";
-const NOME_PASSO: Record<Passo, string> = { arquivo: "Arquivo", colunas: "Colunas", lendo: "Lendo os arquivos", previa: "Conferir e importar", resultado: "Conferir e importar" };
-const NUMERO_PASSO: Record<Passo, number> = { arquivo: 1, colunas: 2, lendo: 2, previa: 3, resultado: 3 };
+type Passo = "arquivo" | "colunas" | "lendo" | "ia" | "conferir" | "previa" | "resultado";
+const NOME_PASSO: Record<Passo, string> = {
+  arquivo: "Arquivo", colunas: "Colunas", lendo: "Lendo os arquivos", ia: "Conferir a leitura", conferir: "Conferir a leitura", previa: "Conferir e importar",
+  resultado: "Conferir e importar",
+};
+const NUMERO_PASSO: Record<Passo, number> = { arquivo: 1, colunas: 2, lendo: 2, ia: 2, conferir: 2, previa: 3, resultado: 3 };
+const TETO_PDF = 10 * 1024 * 1024;
 type EnvioXml = {
   arquivos_lidos: number;
   documentos: DocumentoVendaXml[];
@@ -44,6 +50,10 @@ const TIPOS: { formato: FormatoVendas; titulo: string; texto: string; icone: typ
   {
     formato: "xml", titulo: "XML", texto: "cupons fiscais: vários arquivos ou o .zip do mês", icone: FileCode2, botao: "Escolher os arquivos XML ou o .zip",
     accept: ".xml,.zip,text/xml,application/zip", ajuda: "Pode escolher vários .xml de uma vez, ou o .zip que o sistema gera para o contador.",
+  },
+  {
+    formato: "pdf", titulo: "PDF", texto: "relatório impresso do sistema, lido pela inteligência artificial (IA)", icone: FileText, botao: "Escolher o PDF",
+    accept: ".pdf,application/pdf", ajuda: "Um PDF de até 10 MB. Relatório de um dia lê melhor do que o do mês.",
   },
 ];
 
@@ -75,6 +85,12 @@ export default function ImportarVendasPage() {
   const [xml, setXml] = useState<EnvioXml | null>(null);
   const [leitura, setLeitura] = useState<{ lidos: number; total: number } | null>(null);
   const pararLeitura = useRef(false);
+  // pdf
+  const [lido, setLido] = useState<RelatorioVendasLido | null>(null);
+  const [linhasPdf, setLinhasPdf] = useState<LinhaConferencia[]>([]);
+  const [dataPadrao, setDataPadrao] = useState("");
+  const [erroIa, setErroIa] = useState<{ msg: string; codigo: string | null } | null>(null);
+  const pdfAtual = useRef<File | null>(null);
   // prévia e importar
   const [escolhas, setEscolhas] = useState<EscolhasPrevia>(ESCOLHAS_INICIAIS);
   const [previa, setPrevia] = useState<PreviaVendas | null>(null);
@@ -129,11 +145,21 @@ export default function ImportarVendasPage() {
         ...(sistema === PADRAO ? {} : { mapeamento: mapa, separador_decimal: sep }),
       };
     }
+    if (formato === "pdf" && lido) {
+      return {
+        ...base, formato, modo: escolhas.modo,
+        linhas: linhasPdf.map((l) => ({
+          pedido: l.pedido, data: l.data, hora: l.hora, produto_relatorio: l.produto.trim(),
+          quantidade: numeroDigitado(l.quantidade) ?? "", valor_total: numeroDigitado(l.valor) ?? "",
+        })),
+        ...(dataPadrao ? { data_padrao: dataPadrao } : {}),
+      };
+    }
     if (formato === "xml" && xml) {
       return { ...base, formato, modo: "acrescentar", ...xml, cnpjs_incluidos: escolhas.cnpjsIncluidos, nfe_incluidas: escolhas.nfeIncluidas };
     }
     return null;
-  }, [arquivo, sistema, formato, planilha, xml, escolhas.modo, escolhas.cnpjsIncluidos, escolhas.nfeIncluidas, mapa, sep]);
+  }, [arquivo, sistema, formato, planilha, xml, lido, linhasPdf, dataPadrao, escolhas.modo, escolhas.cnpjsIncluidos, escolhas.nfeIncluidas, mapa, sep]);
 
   // a prévia se refaz sozinha (500 ms depois da última mudança; o pedido anterior é cancelado: UX 7.25)
   useEffect(() => {
@@ -172,6 +198,7 @@ export default function ImportarVendasPage() {
   function recomecar(manterSistema = true) {
     setPasso("arquivo");
     setArquivo(null); setTabela(null); setMapa({}); setSugeridos(new Set()); setSumiram({}); setXml(null); setLeitura(null);
+    setLido(null); setLinhasPdf([]); setDataPadrao(""); setErroIa(null);
     setPrevia(null); setErroPrevia(null); setErroColunas(null); setResultado(null); setErroImportar(null); setAvisoTopo(null);
     setEscolhas(ESCOLHAS_INICIAIS); setErroArquivo(null);
     if (!manterSistema) setSistema(null);
@@ -227,8 +254,39 @@ export default function ImportarVendasPage() {
     setPasso("previa");
   }
 
+  /** PDF (UX 2.5): a IA lê (até 1 minuto) e a pessoa confere linha a linha; a leitura não grava nada. */
+  async function lerPdf(file: File) {
+    if (!/\.pdf$/i.test(file.name) && file.type !== "application/pdf") {
+      setErroArquivo("Este arquivo não é um PDF. Escolha o relatório em PDF.");
+      return;
+    }
+    if (file.size > TETO_PDF) {
+      setErroArquivo(`O PDF tem ${Math.ceil(file.size / 1024 / 1024)} MB, e o limite é 10 MB. Exporte um período menor.`);
+      return;
+    }
+    pdfAtual.current = file;
+    setErroIa(null);
+    setPasso("ia");
+    try {
+      const r = await lerRelatorioVendasPdf(file);
+      setLido(r);
+      setLinhasPdf(r.linhas.map((l) => ({
+        id: crypto.randomUUID(), pedido: l.pedido, data: l.data, hora: l.hora, produto: l.produto,
+        quantidade: numeroParaCampo(l.quantidade), valor: numeroParaCampo(l.valor_total),
+      })));
+      setDataPadrao("");
+      setArquivo({ nome: file.name, sha256: await sha256Hex(await file.arrayBuffer()) });
+      setEscolhas(ESCOLHAS_INICIAIS);
+      setPrevia(null);
+      setPasso("conferir");
+    } catch (e) {
+      setErroIa({ msg: errMsg(e), codigo: errCode(e) });
+    }
+  }
+
   async function escolherArquivo(file: File) {
     setErroArquivo(null);
+    if (formato === "pdf") return lerPdf(file);
     if (formato === "planilha") {
       if (!/\.(csv|txt|xlsx|xls)$/i.test(file.name)) {
         setErroArquivo("Este arquivo não é uma planilha (CSV ou Excel). Escolha outro arquivo ou troque o tipo acima.");
@@ -397,8 +455,44 @@ export default function ImportarVendasPage() {
         </section>
       )}
 
-      {passo !== "arquivo" && passo !== "resultado" && passo !== "lendo" && (
-        <Button variant="ghost" className="h-11" onClick={() => (passo === "previa" && formato === "planilha" && sistema !== PADRAO ? setPasso("colunas") : recomecar())}>
+      {passo === "ia" && (
+        <section aria-labelledby="titulo-ia" className="space-y-3">
+          <h2 id="titulo-ia" className="text-lg font-semibold">Conferir a leitura</h2>
+          {!erroIa ? (
+            <div aria-live="polite" className="space-y-1">
+              <p className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" aria-hidden /> A IA está lendo o relatório (pode levar até 1 minuto)…</p>
+              <p className="text-sm text-muted-foreground">Você confere tudo antes de importar.</p>
+              <Button variant="ghost" className="h-11" aria-disabled>Aguarde a leitura</Button>
+            </div>
+          ) : (
+            <div role="alert" className="space-y-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm">
+              <p className="font-semibold">{erroIa.msg}</p>
+              {erroIa.codigo === "PDF_NAO_CONFIGURADO" && <p>Use a planilha ou o XML do sistema.</p>}
+              {erroIa.codigo === "PDF_ILEGIVEL" && <p>Relatório grande? Exporte um dia por vez, ou exporte em planilha.</p>}
+              <div className="flex flex-wrap gap-2">
+                {erroIa.codigo === "PDF_ILEGIVEL" ? (
+                  <Button variant="outline" className="h-11" onClick={() => recomecar()}>Escolher outro PDF</Button>
+                ) : erroIa.codigo !== "PDF_NAO_CONFIGURADO" && erroIa.codigo !== "ARQUIVO_INVALIDO" ? (
+                  <Button variant="outline" className="h-11" onClick={() => pdfAtual.current && void lerPdf(pdfAtual.current)}>Tentar de novo</Button>
+                ) : null}
+                <Button variant="outline" className="h-11" onClick={() => { recomecar(); setFormato("planilha"); }}>Trocar para planilha</Button>
+              </div>
+            </div>
+          )}
+        </section>
+      )}
+
+      {passo === "conferir" && lido && (
+        <ConferirPdf lido={lido} linhas={linhasPdf} onLinhas={setLinhasPdf} dataPadrao={dataPadrao} onDataPadrao={setDataPadrao}
+          onPrevia={() => { setPrevia(null); setPasso("previa"); }} />
+      )}
+
+      {passo !== "arquivo" && passo !== "resultado" && passo !== "lendo" && passo !== "ia" && (
+        <Button variant="ghost" className="h-11" onClick={() => {
+          if (passo === "previa" && formato === "planilha" && sistema !== PADRAO) return setPasso("colunas");
+          if (passo === "previa" && formato === "pdf") return setPasso("conferir");
+          recomecar();
+        }}>
           ← Voltar
         </Button>
       )}
@@ -439,8 +533,8 @@ export default function ImportarVendasPage() {
           erroImportar={erroImportar}
           avisoTopo={avisoTopo}
           onImportar={importar}
-          onVoltar={() => setPasso("colunas")}
-          textoVoltar={formato === "planilha" && sistema !== PADRAO ? "Ver as colunas" : null}
+          onVoltar={() => setPasso(formato === "pdf" ? "conferir" : "colunas")}
+          textoVoltar={formato === "planilha" && sistema !== PADRAO ? "Ver as colunas" : formato === "pdf" ? "Ver a leitura" : null}
           onSubstituirDialogo={() => setDialogo(true)}
           dialogoAberto={dialogo}
           onFecharDialogo={() => setDialogo(false)}

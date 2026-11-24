@@ -110,6 +110,14 @@ export class LeituraPdfController {
     return this.svc.sugerirInsumos(dto.itens).catch(comoHttp);
   }
 
+  /** Relatório de vendas de outro sistema em PDF (importar vendas, contrato §20): lê pela IA e não grava nada. */
+  @HttpCode(200)
+  @Post('importacoes/vendas/ler-pdf')
+  async lerRelatorioVendas(@Req() req: FastifyRequest) {
+    const { base64, nome } = await lerPdf(req);
+    return this.svc.lerRelatorioVendas(base64, nome).catch(comoHttp);
+  }
+
   @HttpCode(200)
   @Post('dda/ler-pdf')
   async lerDDA(@Req() req: FastifyRequest) {

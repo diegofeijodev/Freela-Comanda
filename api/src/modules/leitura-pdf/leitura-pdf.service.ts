@@ -4,7 +4,17 @@ import { documentoLidoPelaIa } from '../../common/fiscal/cnpj';
 import { isDateString } from '../../common/time/dates';
 import { PrismaService } from '../../common/database/prisma.service';
 import { LEITOR_PDF, LeituraPdfErro, type ArquivoLeitura, type LeitorPdf } from './leitor-pdf.port';
-import { INSTRUCOES_DDA, INSTRUCOES_NOTA_SUGESTAO, INSTRUCOES_SUGESTAO_ITENS, SCHEMA_DDA, SCHEMA_NOTA_SUGESTAO, SCHEMA_SUGESTAO_ITENS } from './schemas';
+import { limparRelatorioVendas } from './relatorio-vendas';
+import {
+  INSTRUCOES_DDA,
+  INSTRUCOES_NOTA_SUGESTAO,
+  INSTRUCOES_RELATORIO_VENDAS,
+  INSTRUCOES_SUGESTAO_ITENS,
+  SCHEMA_DDA,
+  SCHEMA_NOTA_SUGESTAO,
+  SCHEMA_RELATORIO_VENDAS,
+  SCHEMA_SUGESTAO_ITENS,
+} from './schemas';
 import { casarPorIndice, limparItens, linhasNumeradas, textoCatalogo, type ItemIa } from './sugestao-insumo';
 
 /** dd/mm/aaaa → aaaa-mm-dd; o resto corta em 10 caracteres (o `iso` do protótipo). */
@@ -99,6 +109,22 @@ export class LeituraPdfService {
     return {
       itens: limparItens(juntos, insumos, subgrupos).map(({ item_estoque_id, novo, fator }) => ({ item_estoque_id, novo, fator })),
     };
+  }
+
+  /**
+   * Relatório de vendas de outro sistema (importar vendas, A.6): só lê, nunca grava. Resposta que não é relatório (ou cortada, quando o
+   * relatório é longo demais para a IA) = PDF_ILEGIVEL; a tela sugere exportar por dia ou em planilha.
+   */
+  async lerRelatorioVendas(pdfBase64: string, nome: string) {
+    const r = await this.leitor.ler({
+      arquivos: [{ base64: pdfBase64, mime: 'application/pdf', nome: nome || 'relatorio.pdf' }],
+      instrucoes: INSTRUCOES_RELATORIO_VENDAS,
+      pedido: 'Extraia as vendas deste relatório.',
+      schema: SCHEMA_RELATORIO_VENDAS as unknown as Record<string, unknown>,
+    });
+    const limpo = limparRelatorioVendas(r);
+    if (!limpo) throw ilegivel('as vendas');
+    return limpo;
   }
 
   async lerDDA(pdfBase64: string, nome: string) {

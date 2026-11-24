@@ -1,7 +1,7 @@
 import { ClaudeLeitorPdf } from '../claude-leitor-pdf';
 import { LeituraPdfErro, MSG, type LeitorPdf, type PedidoLeitura } from '../leitor-pdf.port';
 import { iso, LeituraPdfService } from '../leitura-pdf.service';
-import { INSTRUCOES_SUGESTAO_ITENS, SCHEMA_DDA, SCHEMA_NOTA_SUGESTAO, SCHEMA_SUGESTAO_ITENS } from '../schemas';
+import { INSTRUCOES_RELATORIO_VENDAS, INSTRUCOES_SUGESTAO_ITENS, SCHEMA_DDA, SCHEMA_NOTA_SUGESTAO, SCHEMA_RELATORIO_VENDAS, SCHEMA_SUGESTAO_ITENS } from '../schemas';
 import type { PrismaService } from '../../../common/database/prisma.service';
 
 /** Leitor falso: nenhum teste faz rede. Guarda o pedido para conferir esquema/instruções. */
@@ -195,5 +195,48 @@ describe('sugerirInsumos', () => {
       },
     };
     await expect(servico(leitor).sugerirInsumos(linhas)).rejects.toMatchObject({ status: 503, code: 'PDF_NAO_CONFIGURADO' });
+  });
+});
+
+describe('relatório de vendas de outro sistema (importar vendas, A.6)', () => {
+  it('usa o esquema do relatório, limpa o que a IA devolveu e não inventa nada', async () => {
+    const leitor = new LeitorFalso({
+      sistema: '  PDV  X ',
+      periodo_ini: '17/11/2026',
+      periodo_fim: '2026-02-31',
+      total_relatorio: '1234.50',
+      linhas: [
+        { pedido: null, data: '2026-11-20', hora: '19:30', produto: 'Caldo  300 ml', quantidade: 2, valor_total: 20, desconto: null },
+        { pedido: '1001', data: '31/02/2026', hora: '25:00', produto: 'Pastel', quantidade: 'dois', valor_total: '8.50', desconto: 0 },
+        { pedido: null, data: null, hora: null, produto: '   ', quantidade: 1, valor_total: 1, desconto: null },
+        'lixo',
+      ],
+    });
+    const r = await servico(leitor).lerRelatorioVendas('JVBERi0=', 'rel.pdf');
+    expect(leitor.pedidos[0]!.schema).toBe(SCHEMA_RELATORIO_VENDAS);
+    expect(leitor.pedidos[0]!.instrucoes).toBe(INSTRUCOES_RELATORIO_VENDAS);
+    expect(r).toEqual({
+      sistema: 'PDV X',
+      periodo_ini: '2026-11-17',
+      periodo_fim: null,
+      total_relatorio: 1234.5,
+      linhas: [
+        { pedido: null, data: '2026-11-20', hora: '19:30', produto: 'Caldo 300 ml', quantidade: 2, valor_total: 20, desconto: null },
+        { pedido: '1001', data: null, hora: null, produto: 'Pastel', quantidade: null, valor_total: 8.5, desconto: 0 },
+      ],
+    });
+  });
+
+  it('resposta que não é relatório (ou cortada) = 422 PDF_ILEGIVEL', async () => {
+    for (const resposta of [null, { linhas: 'x' }, { sistema: 'X' }]) {
+      const e = await servico(new LeitorFalso(resposta)).lerRelatorioVendas('JVBERi0=', 'rel.pdf').catch((x: unknown) => x);
+      expect(e).toBeInstanceOf(LeituraPdfErro);
+      expect([(e as LeituraPdfErro).status, (e as LeituraPdfErro).code, (e as LeituraPdfErro).message]).toEqual([422, 'PDF_ILEGIVEL', 'Não consegui identificar as vendas deste PDF.']);
+    }
+  });
+
+  it('sem chave de IA: a frase de hoje passa adiante', async () => {
+    const semChave: LeitorPdf = { ler: async () => { throw new LeituraPdfErro(MSG.naoConfigurada, 503, 'PDF_NAO_CONFIGURADO'); } };
+    await expect(servico(semChave).lerRelatorioVendas('JVBERi0=', 'rel.pdf')).rejects.toMatchObject({ message: MSG.naoConfigurada, code: 'PDF_NAO_CONFIGURADO' });
   });
 });

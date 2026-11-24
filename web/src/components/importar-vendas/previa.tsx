@@ -39,6 +39,9 @@ export function Aviso({ tom, titulo, children, acao }: { tom: "ambar" | "vermelh
   );
 }
 
+/** "Ver as colunas" → "Voltar às colunas"; "Ver a leitura" → "Voltar à leitura". */
+const voltarPara = (t: string) => t.replace(/^Ver as /, "Voltar às ").replace(/^Ver a /, "Voltar à ");
+
 function Numero({ titulo, valor, conta }: { titulo: string; valor: string; conta: string }) {
   return (
     <div className="rounded-xl border bg-card p-4">
@@ -251,12 +254,12 @@ export function PreviaImportacao({
               <summary className="min-h-11 cursor-pointer font-medium">{plural(p.linhas.com_problema, "linha com problema fica", "linhas com problema ficam")} de fora</summary>
               <ul className="mt-2 space-y-1">{p.problemas.map((x) => <li key={x.linha}>Linha {x.linha}: {x.motivo}</li>)}</ul>
               {p.linhas.com_problema > p.problemas.length && <p>e mais {inteiro(p.linhas.com_problema - p.problemas.length)} linhas</p>}
-              {textoVoltar && <Button variant="outline" className="mt-2 h-11" onClick={onVoltar}>{textoVoltar.replace("Ver", "Voltar")}</Button>}
+              {textoVoltar && <Button variant="outline" className="mt-2 h-11" onClick={onVoltar}>{voltarPara(textoVoltar)}</Button>}
             </details>
           )}
           {semValidas && (
             <Aviso tom="vermelho" titulo="Nenhuma venda válida no arquivo."
-              acao={textoVoltar ? <Button className="h-11" onClick={onVoltar}>{textoVoltar.replace("Ver", "Voltar")}</Button> : undefined}>
+              acao={textoVoltar ? <Button className="h-11" onClick={onVoltar}>{voltarPara(textoVoltar)}</Button> : undefined}>
               <ul>{p.motivos.slice(0, 5).map((m) => <li key={m.motivo}>{inteiro(m.linhas)} · {m.motivo}</li>)}</ul>
               <p>Quase sempre é a coluna errada: confira Data e Quantidade.</p>
             </Aviso>

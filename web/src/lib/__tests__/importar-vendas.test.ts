@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   acharCabecalho, botaoImportar, celulaTexto, colunasDoCabecalho, contaTotal, contaVendasNovas, deduzirSeparador, exemplosDaColuna,
-  linhasParaEnvio, sugerirMapeamento, textoJaExistentes, textoSobreposicao,
+  linhasParaEnvio, numeroDigitado, problemaDaLinha, somaPdf, sugerirMapeamento, textoJaExistentes, textoSobreposicao,
 } from "../importar-vendas";
 import type { PreviaVendas } from "../erp-api";
 
@@ -109,5 +109,25 @@ describe("frases da prévia (cada número com a conta)", () => {
     };
     const p = previa({ linhas: { ...previa().linhas, novas: 0 }, documentos });
     expect(botaoImportar(p, { modo: "acrescentar", sobreposicaoMarcada: false, atualizando: false })).toMatchObject({ rotulo: "Tirar 2 cupons cancelados", acao: "importar" });
+  });
+});
+
+
+describe("conferência do PDF", () => {
+  const l = (valor: string, quantidade = "1", produto = "Caldo") => ({ id: "x", pedido: null, data: null, hora: null, produto, quantidade, valor });
+  it("número digitado vira texto com ponto", () => {
+    expect([numeroDigitado("12,90"), numeroDigitado("12.90"), numeroDigitado("1.234,56"), numeroDigitado("R$ 3"), numeroDigitado("abc"), numeroDigitado("")])
+      .toEqual(["12.90", "12.90", "1234.56", "3", null, null]);
+  });
+  it("o que falta em cada linha", () => {
+    expect([problemaDaLinha(l("10")), problemaDaLinha(l("10", "")), problemaDaLinha(l("10", "0")), problemaDaLinha(l("")), problemaDaLinha(l("1", "1", " "))]).toEqual([
+      null, "Falta a quantidade. Digite ou tire a linha.", "Digite a quantidade (maior que zero).", "Falta o valor. Digite ou tire a linha.", "Digite o nome do produto.",
+    ]);
+  });
+  it("soma × total impresso em centavos (0,10 + 0,20 = 30; até R$ 0,05 de diferença bate)", () => {
+    expect(somaPdf([l("0,10"), l("0,20")], 0.3)).toEqual({ soma_centavos: 30, total_centavos: 30, bate: true });
+    expect(somaPdf([l("1.222,20")], 1234.5)).toEqual({ soma_centavos: 122220, total_centavos: 123450, bate: false });
+    expect(somaPdf([l("10,04")], 10)).toMatchObject({ bate: true });
+    expect(somaPdf([l("10")], null)).toEqual({ soma_centavos: 1000, total_centavos: null, bate: null });
   });
 });

@@ -139,3 +139,39 @@ export const SCHEMA_DDA = {
 
 export const INSTRUCOES_DDA =
   'Você lê relatórios de DDA (Débito Direto Autorizado) de bancos brasileiros. Liste TODOS os boletos: beneficiário, CNPJ, vencimento, valor e linha digitável. Números com ponto decimal. Datas aaaa-mm-dd.';
+
+/** Relatório de vendas impresso por outro sistema (importar vendas, desenho 24/11 A.6). Não grava nada: a tela confere linha a linha. */
+export const SCHEMA_RELATORIO_VENDAS = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['sistema', 'periodo_ini', 'periodo_fim', 'total_relatorio', 'linhas'],
+  properties: {
+    sistema: { type: ['string', 'null'], description: 'nome do sistema ou da loja no cabeçalho do relatório' },
+    periodo_ini: { type: ['string', 'null'], description: 'aaaa-mm-dd' },
+    periodo_fim: { type: ['string', 'null'], description: 'aaaa-mm-dd' },
+    total_relatorio: { type: ['number', 'null'], description: 'o total geral impresso no relatório' },
+    linhas: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['pedido', 'data', 'hora', 'produto', 'quantidade', 'valor_total', 'desconto'],
+        properties: {
+          pedido: { type: ['string', 'null'] },
+          data: { type: ['string', 'null'], description: 'aaaa-mm-dd' },
+          hora: { type: ['string', 'null'], description: 'hh:mm' },
+          produto: { type: 'string' },
+          quantidade: { type: 'number' },
+          valor_total: { type: 'number' },
+          desconto: { type: ['number', 'null'] },
+        },
+      },
+    },
+  },
+} as const;
+
+export const INSTRUCOES_RELATORIO_VENDAS =
+  'Você lê relatórios de vendas impressos por sistemas de caixa (PDV) de restaurantes brasileiros. Devolva uma linha por produto vendido ' +
+  '(uma por pedido, se o relatório separar as vendas por pedido). Não invente número de pedido nem data: use null quando o relatório não ' +
+  'mostrar. Pule cabeçalhos, subtotais, totais gerais e itens cancelados ou estornados. Números com ponto decimal (12.90), sem separador ' +
+  'de milhar. valor_total é o valor da linha já com o desconto. total_relatorio é o total geral impresso no relatório (null se não houver).';

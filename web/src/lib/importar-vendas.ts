@@ -200,3 +200,39 @@ export function botaoImportar(p: PreviaVendas, o: { modo: "acrescentar" | "subst
   }
   return { rotulo: `Importar ${plural(novas, "venda", "vendas")}`, destrutivo: false, acao: "importar" };
 }
+
+// ---------- conferência do PDF lido pela IA (UX 2.5)
+
+/** Número digitado na conferência ("12,90", "12.90", "1.234,56") → texto com ponto para o servidor; ilegível = null. */
+export function numeroDigitado(s: string): string | null {
+  const t = s.replace(/[R$\s]/g, "");
+  if (!t) return null;
+  let c = t;
+  if (c.includes(",")) c = c.replace(/\./g, "").replace(",", ".");
+  return /^\d+(\.\d+)?$/.test(c) ? c : null;
+}
+/** Número da IA para o campo da tela (pt-BR, sem milhar). */
+export const numeroParaCampo = (n: number | null) => (n == null ? "" : String(n).replace(".", ","));
+
+export type LinhaConferencia = { id: string; pedido: string | null; data: string | null; hora: string | null; produto: string; quantidade: string; valor: string };
+
+/** O que falta numa linha da conferência ("Falta a quantidade. Digite ou tire a linha."); null = a linha está boa. */
+export function problemaDaLinha(l: LinhaConferencia): string | null {
+  if (!l.produto.trim()) return "Digite o nome do produto.";
+  const q = numeroDigitado(l.quantidade);
+  if (!q || Number(q) <= 0) return l.quantidade.trim() ? "Digite a quantidade (maior que zero)." : "Falta a quantidade. Digite ou tire a linha.";
+  if (!numeroDigitado(l.valor)) return l.valor.trim() ? "Digite o valor (R$)." : "Falta o valor. Digite ou tire a linha.";
+  return null;
+}
+
+/** Soma das linhas × total impresso (diferença até R$ 0,05 = bate). Em centavos, sem ponto flutuante na soma. */
+export function somaPdf(linhas: readonly LinhaConferencia[], totalImpresso: number | null) {
+  const soma = linhas.reduce((s, l) => {
+    const v = numeroDigitado(l.valor);
+    if (!v) return s;
+    const [i, d = ""] = v.split(".");
+    return s + Number(i) * 100 + Number((d + "00").slice(0, 2)) + (Number(d[2] ?? 0) >= 5 ? 1 : 0);
+  }, 0);
+  const total = totalImpresso == null ? null : Math.round(totalImpresso * 100);
+  return { soma_centavos: soma, total_centavos: total, bate: total == null ? null : Math.abs(soma - total) <= 5 };
+}

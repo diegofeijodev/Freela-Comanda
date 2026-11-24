@@ -102,17 +102,19 @@ describe('proteção das rotas (substitui as políticas RLS do Supabase)', () =>
     expect(todas.filter((r) => r.rota.includes('/ler-'))).toEqual([
       { rota: 'POST /v1/notas/ler-pdf', marca: 'admin' },
       { rota: 'POST /v1/notas/ler-foto', marca: 'admin' },
+      { rota: 'POST /v1/importacoes/vendas/ler-pdf', marca: 'admin' },
       { rota: 'POST /v1/dda/ler-pdf', marca: 'admin' },
     ]);
   });
 
-  it('importar vendas de outros sistemas é só do admin (origens, prévia, confirmar, recentes)', () => {
+  it('importar vendas de outros sistemas é só do admin (origens, prévia, confirmar, recentes, leitura do PDF)', () => {
     const r = todas.filter((x) => /\/v1\/importacoes\/(origens|vendas\/)/.test(x.rota));
     expect(r.map((x) => x.rota).sort()).toEqual([
       'GET /v1/importacoes/origens',
       'GET /v1/importacoes/vendas/recentes',
       'POST /v1/importacoes/origens',
       'POST /v1/importacoes/vendas/confirmar',
+      'POST /v1/importacoes/vendas/ler-pdf',
       'POST /v1/importacoes/vendas/previa',
       'PUT /v1/importacoes/origens/:id',
     ]);
