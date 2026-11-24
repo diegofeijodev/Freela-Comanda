@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import * as XLSX from "xlsx";
 import { decodificarTexto, lerTabelaDeBuffer, parseCSV, parseLinhasCSV, separadorDoTexto } from "../parse";
+import { celulaTexto } from "../importar-vendas";
 import { parseNum } from "../format";
 
 describe("importação CSV", () => {
@@ -53,5 +54,18 @@ describe("planilha de outro sistema", () => {
     const [d, v] = t[1]!;
     expect(d instanceof Date && [d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes()]).toEqual([2026, 10, 20, 19, 30]);
     expect(v).toBe(1234.56);
+  });
+});
+
+describe("Excel de verdade: a data é um número serial com formato de data", () => {
+  it("serial 46346 = 20/11/2026 e 46346,8125 = 20/11/2026 19:30, sem cair no dia anterior", async () => {
+    const ws = XLSX.utils.aoa_to_sheet([["Data"], [46346], [46346.8125]]);
+    ws.A2!.z = "dd/mm/yyyy";
+    ws.A3!.z = "dd/mm/yyyy hh:mm";
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Vendas");
+    const buf = XLSX.write(wb, { type: "array", bookType: "xlsx" }) as ArrayBuffer;
+    const t = await lerTabelaDeBuffer("v.xlsx", buf);
+    expect([celulaTexto(t[1]![0]!, "virgula"), celulaTexto(t[2]![0]!, "virgula")]).toEqual(["2026-11-20", "2026-11-20 19:30:00"]);
   });
 });
