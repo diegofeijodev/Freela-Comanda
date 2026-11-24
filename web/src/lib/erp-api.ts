@@ -1150,3 +1150,96 @@ export type EmpresaForm = Omit<Empresa, 'id' | 'principal' | 'created_at' | 'upd
 export const listarEmpresas = () => get<Empresa[]>('/v1/empresas');
 export const salvarEmpresa = (id: string | null, e: EmpresaForm) => (id ? put<Empresa>(`/v1/empresas/${id}`, e) : post<Empresa>('/v1/empresas', e));
 export const excluirEmpresa = (id: string) => del(`/v1/empresas/${id}`);
+
+// ---------- cana (contrato §22). A loja (tela `cana` liberada) só lança e vê os PRÓPRIOS lançamentos, sem conta nenhuma;
+// configuração, lista completa, anular/corrigir e a semana são do admin. Os números chegam prontos do servidor (apuracao.ts).
+export type TipoCana = 'recebimento' | 'producao' | 'contagem';
+export type CanaQuantidades = { duzias: number | null; litros_caldo: number | null; litros_frozen: number | null };
+export type CanaLancamento = CanaQuantidades & {
+  id: string; tipo: TipoCana; data: string; fornecedor: string | null; observacao: string | null; substitui_id: string | null;
+  lancado_por_nome: string; lancado_em: string; anulado_em: string | null; anulado_por_nome: string | null; anulado_motivo: string | null;
+  corrigido_por_id: string | null;
+  substitui: (CanaQuantidades & { id: string; data: string; lancado_por_nome: string }) | null;
+};
+/** O que a loja vê do que ELA lançou: sem motivo, sem o número novo de uma correção. */
+export type CanaMeu = CanaQuantidades & {
+  id: string; tipo: TipoCana; data: string; fornecedor: string | null; observacao: string | null; lancado_em: string; anulado: boolean; corrigido: boolean;
+};
+export type CanaRecentes = {
+  hoje: string; ontem: string; lancamentos: CanaMeu[];
+  /** Contagens de hoje e ontem (de qualquer pessoa), sem número nenhum: o formulário avisa antes de contar à toa. */
+  contagens_lancadas: { data: string; por_nome: string; em: string }[];
+  fornecedores: string[];
+};
+export type CanaNovo = {
+  tipo: TipoCana; data: string; duzias?: number | null; litros_caldo?: number | null; litros_frozen?: number | null;
+  fornecedor?: string | null; observacao?: string | null; chave_idempotencia?: string;
+};
+export type CanaParametros = {
+  litros_por_duzia_esperado: number | null; rendimento_frozen: number | null; atualizado_por_nome: string | null; atualizado_em: string | null;
+  historico: { id: string; litros_por_duzia_esperado: number | null; rendimento_frozen: number | null; alterado_por_nome: string; alterado_em: string }[];
+};
+export type CanaProduto = {
+  item_cardapio_id: string; nome: string; categoria: string; grupo: string; item_ativo: boolean; parece_cana: boolean;
+  config: { ml_por_unidade: number; frozen: boolean; ativo: boolean; atualizado_por_nome: string | null; atualizado_em: string } | null;
+};
+export type CanaAviso =
+  | { codigo: 'vendas_incompletas'; dados: { ate: string | null; fim: string } }
+  | { codigo: 'nada_configurado'; dados: Record<string, never> }
+  | { codigo: 'produto_sem_ml'; dados: { produtos: { nome: string; quantidade: number }[] } }
+  | { codigo: 'venda_sem_cardapio'; dados: { produtos: { produto_relatorio: string; vendas: number }[] } }
+  | { codigo: 'frozen_sem_rendimento'; dados: { vendidos: number; litros_frozen_contados: number } }
+  | { codigo: 'cana_moida_negativa'; dados: { duzias: number } }
+  | { codigo: 'cana_moida_zero'; dados: Record<string, never> }
+  | { codigo: 'producao_zero_com_venda'; dados: { litros_vendidos: number } };
+export type CanaCaldoNaContagem = { litros: number; caldo: number; frozen: number | null; frozen_em_caldo: number | null };
+export type CanaPorProduto = { item_cardapio_id: string; nome: string; quantidade: number; ml_por_unidade: number; frozen: boolean; litros: number; litros_caldo: number };
+export type CanaSemana = {
+  periodo: { ini: string; fim: string; dias: number };
+  em_andamento: boolean;
+  contagem_inicial: { id: string; data: string; lancado_por_nome: string };
+  contagem_final: { id: string; data: string; lancado_por_nome: string } | null;
+  cana: {
+    inicio: number; recebida: { duzias: number; lancamentos: number; ini: string | null; fim: string | null }; fim: number | null; moida: number | null;
+    anotada_nas_producoes: { duzias: number; producoes_com: number; producoes: number };
+  };
+  caldo: {
+    produzido: { litros: number; lancamentos: number; ini: string | null; fim: string | null };
+    vendido: { litros: number; em_copos: number; em_frozen: number };
+    inicio: CanaCaldoNaContagem; fim: CanaCaldoNaContagem | null; perda: number | null;
+  };
+  moagem: { litros_por_duzia: number | null; esperado: number | null; diferenca_litros: number | null; diferenca_pct: number | null };
+  rendimento: { litros_vendidos_por_duzia: number | null };
+  por_produto: CanaPorProduto[];
+  nao_entram: {
+    sem_ml: { item_cardapio_id: string; nome: string; quantidade: number }[];
+    frozen_sem_rendimento: { item_cardapio_id: string; nome: string; quantidade: number }[];
+    sem_cardapio: { produto_relatorio: string; vendas: number; quantidade: number }[];
+  };
+  avisos: CanaAviso[];
+  vendas_importadas_ate: string | null;
+  parametros: { litros_por_duzia_esperado: number | null; rendimento_frozen: number | null };
+  calculada_com: 'configuracao_de_hoje';
+};
+export type CanaSemanaResumo = {
+  contagem_inicial: CanaSemana['contagem_inicial']; contagem_final: NonNullable<CanaSemana['contagem_final']>; periodo: CanaSemana['periodo'];
+  cana_moida: number | null; caldo_produzido: number; caldo_vendido: number; perda: number | null;
+};
+export type CanaSemanas = {
+  contagens: number;
+  ultima_contagem: (CanaQuantidades & { id: string; data: string; lancado_por_nome: string }) | null;
+  semanas: CanaSemanaResumo[];
+};
+export const canaRecentes = () => get<CanaRecentes>('/v1/cana/lancamentos/recentes');
+export const canaLancar = (l: CanaNovo) => post<CanaLancamento & { repetido: boolean }>('/v1/cana/lancamentos', l);
+export const canaLancamentos = (ini: string, fim: string, tipo?: TipoCana) => get<CanaLancamento[]>('/v1/cana/lancamentos', { ini, fim, ...(tipo ? { tipo } : {}) });
+export const canaAnular = (id: string, motivo: string) => post<CanaLancamento>(`/v1/cana/lancamentos/${id}/anular`, { motivo });
+export const canaCorrigir = (id: string, c: Omit<CanaNovo, 'tipo' | 'chave_idempotencia'> & { motivo: string }) =>
+  post<CanaLancamento>(`/v1/cana/lancamentos/${id}/corrigir`, c);
+export const canaParametros = () => get<CanaParametros>('/v1/cana/parametros');
+export const canaSalvarParametros = (p: { litros_por_duzia_esperado: number | null; rendimento_frozen: number | null }) => put<CanaParametros>('/v1/cana/parametros', p);
+export const canaProdutos = () => get<CanaProduto[]>('/v1/cana/produtos');
+export const canaSalvarProduto = (itemId: string, p: { ml_por_unidade: number; frozen: boolean; ativo: boolean }) => put(`/v1/cana/produtos/${itemId}`, p);
+export const canaSemanas = () => get<CanaSemanas>('/v1/cana/semanas');
+export const canaSemanaAtual = () => get<{ apuracao: CanaSemana | null }>('/v1/cana/semanas/atual');
+export const canaSemana = (contagemFinalId: string) => get<CanaSemana>(`/v1/cana/semanas/${contagemFinalId}`);

@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import {
   BarChart3, BookOpen, ClipboardCheck, Boxes, Target, ShoppingCart, Upload, Settings, Users, LayoutDashboard, LogOut, FileInput, Wallet, Calculator, Landmark, KeyRound,
-  Receipt, Clock, Building2,
+  Receipt, Clock, Building2, CupSoda,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useEmpresaAtual, useMe, useMinhasEmpresas, useSair, useTrocarEmpresa } from '@/lib/auth';
@@ -21,6 +21,7 @@ const MENU = [
   { to: '/cupom', label: 'Cupom Fiscal', icon: Receipt, modulo: 'cupom' },
   { to: '/fichas', label: 'Fichas Técnicas', icon: BookOpen, modulo: 'fichas' },
   { to: '/inventario', label: 'Inventário', icon: ClipboardCheck, modulo: 'inventario' },
+  { to: '/cana', label: 'Cana', icon: CupSoda, modulo: 'cana' },
   { to: '/estoque', label: 'Estoque & Movimentações', icon: Boxes, modulo: 'estoque' },
   { to: '/objetivo', label: 'Estoque Objetivo', icon: Target, modulo: 'objetivo' },
   { to: '/compras', label: 'Lista de Compras', icon: ShoppingCart, modulo: 'compras' },

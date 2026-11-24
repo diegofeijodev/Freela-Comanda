@@ -15,6 +15,7 @@ export const MODULOS = [
   { chave: 'contas', label: 'Contas a Pagar', loja: false },
   { chave: 'caixa', label: 'Conciliação de Caixa', loja: false },
   { chave: 'ponto', label: 'Ponto (terminal)', loja: true },
+  { chave: 'cana', label: 'Cana (lançar)', loja: true },
   { chave: 'dre', label: 'DRE', loja: false },
   { chave: 'importar', label: 'Importar Dados', loja: false },
 ] as const;
