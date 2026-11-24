@@ -882,6 +882,141 @@ export const importacoesRecentes = () => get<Importacao[]>('/v1/importacoes', { 
 export const importar = (tipo: 'insumos' | 'fichas' | 'vendas', corpo: { arquivo: string; modo: string; linhas: Record<string, string>[]; erros: number }) =>
   post<Record<string, number>>(`/v1/importacoes/${tipo}`, corpo);
 export const listarDePara = () => get<DePara[]>('/v1/de-para');
+
+// ---------- importar vendas de outros sistemas (contrato §20; tela /vendas/importar)
+export type FormatoVendas = 'planilha' | 'xml' | 'pdf';
+export type MapeamentoVendas = Partial<Record<'pedido' | 'data' | 'hora' | 'produto' | 'quantidade' | 'valor_total' | 'preco_unitario' | 'desconto' | 'taxa' | 'frete', string>>;
+export type OrigemVendas = {
+  id: string;
+  nome: string;
+  formato_padrao: FormatoVendas;
+  mapeamento: MapeamentoVendas | null;
+  separador_decimal: 'virgula' | 'ponto';
+  prefixo_pedido: string;
+  ativo: boolean;
+  ultima_importacao_em: string | null;
+};
+export type OrigensVendas = { origens: OrigemVendas[]; planilha_padrao: { ultima_importacao_em: string | null } };
+export type ImportacaoVendasRecente = {
+  id: string;
+  created_at: string;
+  arquivo: string | null;
+  formato: FormatoVendas;
+  origem_id: string | null;
+  origem_nome: string;
+  usuario_nome: string | null;
+  inseridas: number | null;
+  linhas: number;
+};
+export type TipoFonteVendas = 'padrao' | 'cupom' | 'sistema' | 'xml';
+export type DocumentoVendaXml = {
+  arquivo: string;
+  chave: string;
+  modelo: 55 | 65;
+  serie: number;
+  numero: number;
+  emitente_cnpj: string;
+  tp_amb: 1 | 2;
+  dh_emi: string;
+  valor_total: string;
+  itens: { produto: string; quantidade: string; valor_unitario: string; valor_bruto: string; desconto: string; outros: string; frete: string; cfop: string | null }[];
+};
+export type LinhaPdfVendas = {
+  pedido: string | null;
+  data: string | null;
+  hora: string | null;
+  produto_relatorio: string;
+  quantidade: string;
+  valor_total: string;
+  desconto?: string | null;
+};
+export type CorpoImportarVendas = {
+  formato: FormatoVendas;
+  origem_id: string | null;
+  arquivo: string;
+  arquivo_sha256?: string;
+  modo: 'acrescentar' | 'substituir';
+  linhas_brutas?: Record<string, string>[];
+  mapeamento?: MapeamentoVendas;
+  separador_decimal?: 'virgula' | 'ponto';
+  salvar_mapeamento?: boolean;
+  primeira_linha?: number;
+  linhas?: LinhaPdfVendas[];
+  data_padrao?: string;
+  arquivos_lidos?: number;
+  documentos?: DocumentoVendaXml[];
+  cancelamentos?: { arquivo: string; chave: string; dh_evento: string | null }[];
+  ignorados?: { arquivo: string; motivo: string }[];
+  cnpjs_incluidos?: string[];
+  nfe_incluidas?: string[];
+};
+export type PreviaVendas = {
+  periodo: { ini: string; fim: string; dias: number } | null;
+  linhas: { lidas: number; validas: number; com_problema: number; ja_existentes: number; somadas_no_arquivo: number; novas: number };
+  valor_centavos: number;
+  ja_existentes_valor_centavos: number;
+  pedidos: number;
+  itens: number;
+  problemas: { linha: number; motivo: string }[];
+  motivos: { motivo: string; linhas: number }[];
+  amostra: { pedido: string; data: string; hora: string | null; produto_relatorio: string; quantidade: number; valor_centavos: number }[];
+  produtos_sem_de_para: { produto_relatorio: string; linhas: number; valor_centavos: number; sugestao_item_cardapio_id: string | null; parece_cana: boolean }[];
+  ja_existentes_mesma_fonte: number;
+  ja_existentes_de_outra_fonte: { fonte: string; tipo: TipoFonteVendas; linhas: number; exemplo: { pedido: string; data: string } }[];
+  ja_existentes_pedido_dia: number;
+  sobreposicao: { fonte: string; tipo: TipoFonteVendas; vendas: number; valor_centavos: number }[];
+  substituir: { vendas: number; valor_centavos: number; ini: string; fim: string } | null;
+  arquivo_ja_importado: { em: string; por: string | null; vendas: number | null } | null;
+  documentos?: {
+    arquivos_lidos: number;
+    vendas_novas: number;
+    ja_importados: number;
+    ja_cancelados: number;
+    do_proprio_comanda: number;
+    cancelados_no_envio: number;
+    repetidos_no_envio: number;
+    arquivos_cancelamento: number;
+    nfe_fora: { chave: string; serie: number; numero: number; dh_emi: string; valor_centavos: number; cfops: string[] }[];
+    outros_cnpjs: { cnpj: string; nome_em_empresas: string; documentos: number; incluido: boolean }[];
+    ignorados: { motivo: string; arquivos: string[] }[];
+    cancelamentos_de_importados: { documentos: number; linhas: number; valor_centavos: number; ini: string | null; fim: string | null };
+  };
+};
+export type ResultadoImportarVendas = {
+  importacao_id: string;
+  confirmada_em: string;
+  inseridas: number;
+  ignoradas: number;
+  apagadas: number;
+  apagadas_valor_centavos: number;
+  canceladas: { documentos: number; linhas: number; valor_centavos: number };
+  documentos_novos: number;
+  novos_produtos: number;
+  valor_centavos: number;
+  periodo: { ini: string; fim: string } | null;
+  mapeamento_salvo: boolean;
+  repetida: boolean;
+};
+export type RelatorioVendasLido = {
+  sistema: string | null;
+  periodo_ini: string | null;
+  periodo_fim: string | null;
+  total_relatorio: number | null;
+  linhas: { pedido: string | null; data: string | null; hora: string | null; produto: string; quantidade: number | null; valor_total: number | null; desconto: number | null }[];
+};
+export const listarOrigensVendas = () => get<OrigensVendas>('/v1/importacoes/origens');
+export const criarOrigemVendas = (o: { nome: string; formato_padrao: FormatoVendas; prefixo_pedido?: string }) => post<OrigemVendas>('/v1/importacoes/origens', o);
+export const editarOrigemVendas = (id: string, o: Partial<Pick<OrigemVendas, 'nome' | 'formato_padrao' | 'separador_decimal' | 'prefixo_pedido' | 'ativo' | 'mapeamento'>>) =>
+  put<OrigemVendas>(`/v1/importacoes/origens/${id}`, o);
+export const importacoesVendasRecentes = () => get<ImportacaoVendasRecente[]>('/v1/importacoes/vendas/recentes', { limite: 5 });
+/** A prévia (não grava). `signal` cancela a anterior quando a pessoa muda uma escolha (UX 7.25). */
+export const previaImportarVendas = async (corpo: CorpoImportarVendas, signal?: AbortSignal) =>
+  (await api.post<PreviaVendas>('/v1/importacoes/vendas/previa', corpo, { signal })).data;
+export const confirmarImportarVendas = (
+  corpo: CorpoImportarVendas & { chave_idempotencia: string; confirmar_sobreposicao?: boolean; de_para_novos?: { produto_relatorio: string; item_cardapio_id: string | null }[] },
+) => post<ResultadoImportarVendas>('/v1/importacoes/vendas/confirmar', corpo);
+/** O relatório em PDF lido pela IA (não grava nada). */
+export const lerRelatorioVendasPdf = (arquivo: File) => enviarPdf<RelatorioVendasLido>('/v1/importacoes/vendas/ler-pdf', arquivo);
 export const mapearDePara = (produto_relatorio: string, item_cardapio_id: string | null) =>
   put<{ vendas: number }>('/v1/de-para', { produto_relatorio, item_cardapio_id });
 

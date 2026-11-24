@@ -1,7 +1,10 @@
 'use client';
 
 import { useQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useMemo, useState } from "react";
+import { Upload } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Cell, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { PageHeader, Panel, Stat, Empty } from "@/components/ui-kit";
 import { Button } from "@/components/ui/button";
@@ -36,11 +39,22 @@ function anterior(ini: string, fim: string): [string, string] {
 }
 const semana = (s: string) => { const d = new Date(s + "T12:00"); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return isoDate(d); };
 
-export default function Vendas() {
+const DIA = /^\d{4}-\d{2}-\d{2}$/;
+
+export default function VendasPage() {
+  return <Suspense fallback={null}><Vendas /></Suspense>;
+}
+
+function Vendas() {
   const { data: me } = useMe();
-  const [p, setP] = useState("30");
-  const [ci, setCi] = useState(isoDate(new Date(Date.now() - 30 * 864e5)));
-  const [cf, setCf] = useState(isoDate(new Date()));
+  // "Ver vendas do período" da importação abre /vendas?ini=&fim= como "Personalizado" (UX 7.8)
+  const params = useSearchParams();
+  const ini0 = params.get("ini") ?? "";
+  const fim0 = params.get("fim") ?? "";
+  const daUrl = DIA.test(ini0) && DIA.test(fim0) && ini0 <= fim0;
+  const [p, setP] = useState(daUrl ? "custom" : "30");
+  const [ci, setCi] = useState(daUrl ? ini0 : isoDate(new Date(Date.now() - 30 * 864e5)));
+  const [cf, setCf] = useState(daUrl ? fim0 : isoDate(new Date()));
   const [cat, setCat] = useState("todas");
   const [item, setItem] = useState("todos");
   const [rankBy, setRankBy] = useState<"qtd" | "fat">("qtd");
@@ -96,12 +110,13 @@ export default function Vendas() {
 
   return (
     <div className="space-y-5">
-      <PageHeader title="Vendas" sub={`${dataBR(ini)} a ${dataBR(fim)}`} actions={
+      <PageHeader title="Vendas" sub={`${dataBR(ini)} a ${dataBR(fim)}`} actions={<>
+        <Button asChild><Link href="/vendas/importar"><Upload className="h-4 w-4" aria-hidden /> Importar vendas</Link></Button>
         <Button variant="outline" onClick={() => downloadCSV(`vendas_${ini}_${fim}.csv`, [
           ["pedido", "data", "produto", "item", "categoria", "quantidade", "valor_total"],
           ...vf.map((v) => [v.pedido, dataBR(v.data), v.produto_relatorio, v.item_cardapio_id ? fm.get(v.item_cardapio_id)?.nome : "", catDe(v.item_cardapio_id), Number(v.quantidade), Number(v.valor_total)]),
         ])}>Exportar CSV</Button>
-      } />
+      </>} />
       <div className="flex flex-wrap gap-2">
         <Select value={p} onValueChange={setP}>
           <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
@@ -123,7 +138,12 @@ export default function Vendas() {
         </Select>
       </div>
 
-      {isLoading ? <Empty>Carregando vendas…</Empty> : vf.length === 0 ? <Empty>Sem vendas no período.</Empty> : (
+      {isLoading ? <Empty>Carregando vendas…</Empty> : vf.length === 0 ? (
+        <Empty>
+          Nenhuma venda neste período. Traga as vendas do seu sistema de caixa.
+          <span className="mt-3 block"><Button asChild className="h-11"><Link href="/vendas/importar">Importar vendas</Link></Button></span>
+        </Empty>
+      ) : (
         <>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
             <Stat label="Faturamento" value={brl(r.fat)} delta={delta(r.fat, ra.fat)} />
@@ -136,6 +156,7 @@ export default function Vendas() {
           {semFicha.length > 0 && (
             <div className="rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm text-warning">
               {semFicha.length} lançamentos sem ficha técnica (não geram baixa nem CMV): {[...new Set(semFicha.map((v) => v.produto_relatorio))].slice(0, 6).join(", ")}
+              {" "}<Link href="/importar#ligacao-cardapio" className="underline underline-offset-2">Ligar ao cardápio</Link>
             </div>
           )}
           <div className="grid gap-4 lg:grid-cols-2">

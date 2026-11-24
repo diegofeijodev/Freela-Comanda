@@ -4,9 +4,9 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
-import { CircleAlert } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import {
-  importacoesRecentes, importar as enviarImportacao, listarCardapio, listarDePara, listarItensEstoque, mapearDePara, vendasCupomNoPeriodo,
+  importacoesRecentes, importar as enviarImportacao, listarCardapio, listarDePara, listarItensEstoque, mapearDePara,
 } from "@/lib/erp-api";
 import { PageHeader, Panel, Tag } from "@/components/ui-kit";
 import { Button } from "@/components/ui/button";
@@ -16,17 +16,15 @@ import { Label } from "@/components/ui/label";
 import { lerArquivo, type Row } from "@/lib/parse";
 import { dataBR, parseNum } from "@/lib/format";
 import { errMsg } from "@/lib/db";
-import { useMe } from "@/lib/auth";
-import { periodoDoArquivo, textoAvisoImportacao } from "@/lib/cupom";
 
 
-type Tipo = "insumos" | "fichas" | "vendas";
+// Vendas saíram daqui em 25/11: agora se importam em Vendas → Importar vendas (/vendas/importar), de qualquer sistema.
+type Tipo = "insumos" | "fichas";
 const COLS: Record<Tipo, string[]> = {
   insumos: ["codigo", "nome", "tipo", "subgrupo", "unidade", "preco_unitario", "embalagem_compra", "qtd_por_embalagem", "consumo_semanal_base", "estoque_seguranca_pct"],
   fichas: ["item_cardapio", "categoria", "preco_venda", "insumo", "quantidade", "unidade", "observacao"],
-  vendas: ["pedido", "data", "hora", "produto_relatorio", "item_cardapio", "preco_unitario", "quantidade", "desconto", "taxa", "frete", "valor_total"],
 };
-const OBRIG: Record<Tipo, string[]> = { insumos: ["nome", "unidade"], fichas: ["item_cardapio", "insumo", "quantidade"], vendas: ["pedido", "data", "produto_relatorio", "quantidade", "valor_total"] };
+const OBRIG: Record<Tipo, string[]> = { insumos: ["nome", "unidade"], fichas: ["item_cardapio", "insumo", "quantidade"] };
 
 
 function validar(tipo: Tipo, rows: Row[], insumos: Set<string>) {
@@ -34,7 +32,6 @@ function validar(tipo: Tipo, rows: Row[], insumos: Set<string>) {
   rows.forEach((r, i) => {
     for (const c of OBRIG[tipo]) if (!r[c]) erros.push(`Linha ${i + 2}: coluna "${c}" vazia`);
     if (tipo === "fichas" && r.insumo && !insumos.has(r.insumo.toLowerCase())) erros.push(`Linha ${i + 2}: insumo "${r.insumo}" não cadastrado`);
-    if (tipo === "vendas" && r.data && !/^\d{4}-\d{2}-\d{2}$/.test(r.data)) erros.push(`Linha ${i + 2}: data deve ser aaaa-mm-dd`);
     if (tipo === "fichas" && r.quantidade && parseNum(r.quantidade) == null) erros.push(`Linha ${i + 2}: quantidade inválida`);
   });
   return erros;
@@ -42,7 +39,7 @@ function validar(tipo: Tipo, rows: Row[], insumos: Set<string>) {
 
 export default function Importar() {
   const qc = useQueryClient();
-  const [tipo, setTipo] = useState<Tipo>("vendas");
+  const [tipo, setTipo] = useState<Tipo>("insumos");
   const [modo, setModo] = useState<"acrescentar" | "substituir">("acrescentar");
   const [rows, setRows] = useState<Row[]>([]);
   const [arq, setArq] = useState("");
@@ -51,16 +48,6 @@ export default function Importar() {
   const { data: cardapio } = useQuery({ queryKey: ["cardapio-nomes"], queryFn: listarCardapio });
   const { data: dePara, refetch: rDP } = useQuery({ queryKey: ["depara"], queryFn: listarDePara });
   const { data: imps, refetch: rImp } = useQuery({ queryKey: ["importacoes"], queryFn: importacoesRecentes });
-  const { data: me } = useMe();
-  // UX 5.8: cupons do Freela Comanda já no estoque no período do arquivo de vendas (aviso que não bloqueia; falhar = sem aviso)
-  const periodo = tipo === "vendas" && rows.length > 0 ? periodoDoArquivo(rows.map((r) => r.data)) : null;
-  const { data: noPeriodo } = useQuery({
-    queryKey: ["cupom-fiscal", "vendas-no-periodo", periodo?.ini, periodo?.fim],
-    queryFn: () => vendasCupomNoPeriodo(periodo!.ini, periodo!.fim),
-    enabled: periodo !== null && me?.perfil === "admin",
-    retry: false,
-  });
-  const avisoCupons = periodo && noPeriodo ? textoAvisoImportacao(noPeriodo) : null;
 
   const insSet = new Set((insumos ?? []).map((i) => i.nome.toLowerCase()));
   const erros = rows.length ? validar(tipo, rows, insSet) : [];
@@ -94,10 +81,14 @@ export default function Importar() {
     <div className="space-y-5">
       <PageHeader title="Importar Dados" sub="CSV com ponto e vírgula e vírgula decimal (UTF-8) ou XLSX" />
       <Panel title="1. Tipo de arquivo">
-        <div className="flex flex-wrap gap-2">{(["insumos", "fichas", "vendas"] as Tipo[]).map((t) => (
-          <Button key={t} variant={tipo === t ? "default" : "outline"} onClick={() => { setTipo(t); setRows([]); }}>{t === "fichas" ? "Fichas técnicas" : t[0].toUpperCase() + t.slice(1)}</Button>
+        <div className="flex flex-wrap gap-2">{(["insumos", "fichas"] as Tipo[]).map((t) => (
+          <Button key={t} variant={tipo === t ? "default" : "outline"} onClick={() => { setTipo(t); setRows([]); }}>{t === "fichas" ? "Fichas técnicas" : "Insumos"}</Button>
         ))}</div>
         <p className="mt-3 break-all font-mono text-xs text-muted-foreground">{COLS[tipo].join(";")}</p>
+        <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border bg-muted/40 p-3 text-sm">
+          <span>Vendas agora se importam em <strong>Vendas → Importar vendas</strong>: planilha de qualquer sistema, XML de cupons ou PDF de relatório.</span>
+          <Button asChild variant="outline" className="h-11"><Link href="/vendas/importar">Ir para Importar vendas <ArrowRight className="h-4 w-4" aria-hidden /></Link></Button>
+        </div>
       </Panel>
       <Panel title="2. Arquivo e modo">
         <div className="flex flex-wrap items-center gap-4">
@@ -107,9 +98,7 @@ export default function Importar() {
             <div className="flex items-center gap-2"><RadioGroupItem value="substituir" id="s" /><Label htmlFor="s">Substituir</Label></div>
           </RadioGroup>
         </div>
-        <p className="mt-2 text-xs text-muted-foreground">
-          {tipo === "vendas" ? "Substituir apaga as vendas do mesmo período do arquivo antes de importar (as dos cupons fiscais emitidos aqui ficam). Vendas repetidas (pedido + produto + data) são ignoradas." : "Substituir desativa os itens que não estão no arquivo."}
-        </p>
+        <p className="mt-2 text-xs text-muted-foreground">Substituir desativa os itens que não estão no arquivo.</p>
       </Panel>
       {rows.length > 0 && (
         <Panel title={`3. Pré-visualização · ${rows.length} linhas`}>
@@ -124,20 +113,10 @@ export default function Importar() {
               {erros.slice(0, 50).map((e) => <div key={e}>{e}</div>)}
             </div>
           )}
-          {avisoCupons && periodo && (
-            <div role="status" className="mt-3 flex min-w-0 items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
-              <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" aria-hidden />
-              <div className="min-w-0 space-y-1">
-                <p className="break-words">{avisoCupons}</p>
-                <Link href={`/cupom?aba=emitidos&ini=${periodo.ini}&fim=${periodo.fim}`} className="inline-flex min-h-11 items-center text-primary underline underline-offset-2">
-                  Ver os cupons
-                </Link>
-              </div>
-            </div>
-          )}
           <Button className="mt-4" disabled={busy || faltando.length > 0} onClick={importar}>{busy ? "Importando…" : `Importar ${rows.length} linhas`}</Button>
         </Panel>
       )}
+      <div id="ligacao-cardapio" className="scroll-mt-4" />
       <Panel title={`De-para do relatório de vendas · ${pend.length} pendentes`}>
         <p className="mb-3 text-xs text-muted-foreground">Nome do produto no relatório do PDV/iFood → item do cardápio. Itens sem ficha não geram baixa de estoque.</p>
         <div className="max-h-[420px] overflow-auto"><table className="w-full text-sm">
