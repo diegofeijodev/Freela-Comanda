@@ -37,7 +37,7 @@ describe('esquema.ts × migrações', () => {
   it('ordem de carga respeita toda chave estrangeira (mãe antes da filha)', () => {
     const ordem = TABELAS.map((t) => t.nome);
     const fks = [...sql.matchAll(/ALTER TABLE "([a-z_]+)" ADD CONSTRAINT "[a-z_]+" FOREIGN KEY \("[a-z_]+"\) REFERENCES "([a-z_]+)"/g)];
-    expect(fks).toHaveLength(32);
+    expect(fks).toHaveLength(36); // 32 + as 4 da migração vendas_importacao (24/11)
     for (const [, filha, mae] of fks) {
       if (filha === mae) continue; // auto-referência (notas_entrada.repetida_de): sem ordem a respeitar
       if ((TABELAS_SO_NOSSAS as readonly string[]).includes(filha!)) continue; // tabela só nossa (SEFAZ): a carga não toca
@@ -110,7 +110,7 @@ describe('cupom fiscal (migração nfce)', () => {
       'nfce_envios',
     ])
       expect(TABELAS_SO_NOSSAS).toContain(t);
-    expect(COLUNAS_SO_NOSSAS.vendas).toEqual(['nfce_cupom_id']);
+    expect(COLUNAS_SO_NOSSAS.vendas).toContain('nfce_cupom_id');
   });
   it('a sequence do idLote é avulsa (aparece uma vez, e nenhuma coluna a usa como padrão)', () => {
     expect(m.split(SEQUENCE_AVULSA)).toHaveLength(2);
@@ -119,6 +119,24 @@ describe('cupom fiscal (migração nfce)', () => {
   it('os 3 gatilhos de imutável estão em GATILHOS', () => {
     for (const t of ['nfce_cupons.nfce_cupons_imutavel', 'nfce_cupom_itens.nfce_filhos_imutaveis', 'nfce_cupom_pagamentos.nfce_filhos_imutaveis'])
       expect(GATILHOS.map((g) => `${g.tabela}.${g.nome}`)).toContain(t);
+  });
+});
+
+describe('importar vendas (migração vendas_importacao)', () => {
+  const m = readFileSync(join(MIGR, '20261125120000_vendas_importacao', 'migration.sql'), 'utf8');
+  it('as 2 tabelas novas em TABELAS_SO_NOSSAS e as colunas novas de vendas e importacoes em COLUNAS_SO_NOSSAS', () => {
+    for (const t of ['vendas_origens', 'vendas_documentos']) expect(TABELAS_SO_NOSSAS).toContain(t);
+    expect(COLUNAS_SO_NOSSAS.vendas).toEqual(['nfce_cupom_id', 'documento_id']);
+    expect(COLUNAS_SO_NOSSAS.importacoes).toEqual(['origem_id', 'formato', 'arquivo_sha256', 'chave_idempotencia', 'corpo_sha256', 'resultado']);
+  });
+  it('o gatilho de imutável está em GATILHOS e a migração não usa sequence', () => {
+    expect(GATILHOS.map((g) => `${g.tabela}.${g.nome}`)).toContain('vendas_documentos.vendas_documentos_imutavel');
+    expect(m).not.toMatch(/SERIAL|IDENTITY|nextval|CREATE SEQUENCE/i);
+  });
+  it('só acrescenta: fora do corpo das funções, nada de DROP, DELETE, UPDATE, ALTER COLUMN nem RENAME', () => {
+    const fora = m.replace(/\$\$[\s\S]*?\$\$/g, '').replace(/^\s*--.*$/gm, '').replace(/^CREATE TRIGGER .*$/gm, '')
+      .replace(/ON (DELETE|UPDATE) (RESTRICT|CASCADE|SET NULL)/g, '');
+    expect(fora).not.toMatch(/\bDROP\b|\bDELETE\b|\bUPDATE\b|ALTER COLUMN|RENAME/i);
   });
 });
 

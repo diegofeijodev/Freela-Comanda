@@ -11,6 +11,15 @@ const LOTE = 500;
 const lotes = <T>(a: T[], n = LOTE) => Array.from({ length: Math.ceil(a.length / n) }, (_, i) => a.slice(i * n, i * n + n));
 // Importação grande (um mês de PDV) roda dentro de uma transação só: tudo ou nada, como a tela promete.
 const OPCOES_TX = { timeout: 300_000, maxWait: 10_000 } as const;
+/**
+ * Vendas da "Planilha padrão do Comanda" (R4): nem do cupom fiscal, nem de XML, e sem sistema de origem (importação antiga, sem
+ * `importacao_id`, ou importação sem `origem_id`). As 4.474 vendas de produção de antes de 25/11 são todas daqui.
+ */
+export const ONDE_PLANILHA_PADRAO = {
+  nfce_cupom_id: null,
+  documento_id: null,
+  OR: [{ importacao_id: null }, { importacoes: { is: { origem_id: null } } }],
+} satisfies Prisma.vendasWhereInput;
 
 @Injectable()
 export class ImportacoesService {
@@ -82,9 +91,10 @@ export class ImportacoesService {
   }
 
   /**
-   * Vendas: produto novo entra no de-para (ligado ao item de mesmo nome, se houver); linhas repetidas somam; "Substituir"
-   * apaga as vendas do período do arquivo que vieram da importação (a do cupom fiscal, `nfce_cupom_id`, só sai pelo cancelamento do
-   * cupom); venda já existente (pedido+produto+data) é ignorada. O gatilho gera as baixas.
+   * Vendas pela rota antiga (= "Planilha padrão do Comanda", origem nula; R4 do desenho de 24/11): produto novo entra no de-para (ligado ao
+   * item de mesmo nome, se houver); linhas repetidas somam; "Substituir" apaga só as vendas da planilha padrão no período do arquivo (nunca
+   * as do cupom fiscal, `nfce_cupom_id`, as de XML, `documento_id`, nem as de outro sistema de origem); venda já existente
+   * (pedido+produto+data) é ignorada. O gatilho gera as baixas. A tela nova (`/vendas/importar`) usa `vendas/previa` e `vendas/confirmar`.
    */
   async vendas(dto: ImportacaoDto, usuarioId: string) {
     const vs = vendasDasLinhas(dto.linhas);
@@ -111,7 +121,10 @@ export class ImportacoesService {
       if (dto.modo === 'substituir') {
         const datas = vs.map((v) => v.data).sort();
         const r = await tx.vendas.deleteMany({
-          where: { nfce_cupom_id: null, data: { gte: dayToDb(datas[0]!), lte: dayToDb(datas[datas.length - 1]!) } },
+          where: {
+            ...ONDE_PLANILHA_PADRAO,
+            data: { gte: dayToDb(datas[0]!), lte: dayToDb(datas[datas.length - 1]!) },
+          },
         });
         apagadas = r.count;
       }

@@ -255,7 +255,8 @@ export const COLUNAS_USERS = ['id', 'email', 'nome', 'password_hash', 'perfil', 
  * Tabelas que só existem no nosso banco (fora da comparação com o Lovable). `ia_chave` = chave de IA da tela de Configurações (12/11);
  * `certificado_digital*` = certificado A1 (16/11); `sefaz_*` e `notas_sefaz` = busca de notas na SEFAZ (17/11); `nfce_*` = cupom fiscal
  * (19/11); `ponto_*` = ponto (23/11) e `empresas` = cadastro de empresas (24/11), as duas criadas SEM aspas (o teste aceita as duas formas).
- * `ponto_colaboradores.empresa_id` não vai para COLUNAS_SO_NOSSAS: a tabela inteira já é só nossa.
+ * `ponto_colaboradores.empresa_id` não vai para COLUNAS_SO_NOSSAS: a tabela inteira já é só nossa. `vendas_origens` e `vendas_documentos` =
+ * importar vendas de outros sistemas (25/11).
  */
 export const TABELAS_SO_NOSSAS = ['users', '_prisma_migrations', 'ia_chave', 'certificado_digital', 'certificado_digital_historico',
   'sefaz_distribuicao',
@@ -284,12 +285,15 @@ export const TABELAS_SO_NOSSAS = ['users', '_prisma_migrations', 'ia_chave', 'ce
   'ponto_marcacoes',
   'ponto_justificativas',
   'empresas',
+  'vendas_origens',
+  'vendas_documentos',
 ] as const;
 
 /** Colunas nossas em tabela do Lovable: ficam nulas na carga (que só insere `colunas`) e o importador as desconta ao conferir o banco. */
 export const COLUNAS_SO_NOSSAS: Readonly<Record<string, readonly string[]>> = {
   notas_entrada: ['repetida_de'],
-  vendas: ['nfce_cupom_id'],
+  vendas: ['nfce_cupom_id', 'documento_id'],
+  importacoes: ['origem_id', 'formato', 'arquivo_sha256', 'chave_idempotencia', 'corpo_sha256', 'resultado'],
 };
 
 /** A migração `regras` semeia estas três; a carga aceita exatamente esses seeds e os SUBSTITUI pelos do Lovable. */
@@ -336,6 +340,11 @@ export const GATILHOS: readonly { tabela: string; nome: string; porque: string }
     tabela: 'nfce_cupom_pagamentos',
     nome: 'nfce_filhos_imutaveis',
     porque: 'tabela só nossa (cupom fiscal), que a carga não toca: desligar e religar junto com os outros não muda nada',
+  },
+  {
+    tabela: 'vendas_documentos',
+    nome: 'vendas_documentos_imutavel',
+    porque: 'tabela só nossa (vendas importadas por XML), que a carga não toca: desligar e religar junto com os outros não muda nada',
   },
 ];
 

@@ -38,12 +38,17 @@ const linha = (data: string, pedido: string) => ({
 });
 
 describe('importação de vendas e a venda do cupom fiscal', () => {
-  it('"Substituir" apaga só as vendas da importação do período (nfce_cupom_id nulo), nunca as do cupom', async () => {
+  it('"Substituir" (rota antiga = planilha padrão, R4) apaga só as vendas da planilha padrão do período: nunca as do cupom, as de XML nem as de outro sistema', async () => {
     const { svc, tx } = montar();
     const r = await svc.vendas({ modo: 'substituir', linhas: [linha('2026-11-17', '10'), linha('2026-11-15', '11')] }, 'u-1');
     expect(tx.vendas.deleteMany).toHaveBeenCalledTimes(1);
     expect(tx.vendas.deleteMany).toHaveBeenCalledWith({
-      where: { nfce_cupom_id: null, data: { gte: dayToDb('2026-11-15'), lte: dayToDb('2026-11-17') } },
+      where: {
+        nfce_cupom_id: null,
+        documento_id: null,
+        OR: [{ importacao_id: null }, { importacoes: { is: { origem_id: null } } }],
+        data: { gte: dayToDb('2026-11-15'), lte: dayToDb('2026-11-17') },
+      },
     });
     expect(r.apagadas).toBe(4);
   });

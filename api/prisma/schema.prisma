@@ -678,15 +678,70 @@ model de_para_produtos {
 }
 
 model importacoes {
-  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  tipo       String
-  arquivo    String?
-  linhas     Int      @default(0)
-  erros      Int      @default(0)
-  usuario_id String?  @db.Uuid
-  created_at DateTime @default(now()) @db.Timestamptz(6)
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tipo               String
+  arquivo            String?
+  linhas             Int      @default(0)
+  erros              Int      @default(0)
+  usuario_id         String?  @db.Uuid
+  created_at         DateTime @default(now()) @db.Timestamptz(6)
+  /// Só nossas (importar vendas de outros sistemas, migração vendas_importacao): sistema de origem (nulo = planilha padrão do Comanda),
+  /// formato do arquivo, SHA-256 do arquivo (aviso "já importado"), chave do "Importar" (repetição devolve o resultado guardado).
+  origem_id          String?  @db.Uuid
+  formato            String?
+  arquivo_sha256     String?  @db.Char(64)
+  chave_idempotencia String?  @unique(map: "importacoes_chave_idempotencia_key") @db.Uuid
+  corpo_sha256       String?  @db.Char(64)
+  resultado          Json?
 
-  vendas vendas[]
+  vendas                vendas[]
+  origem                vendas_origens?     @relation(fields: [origem_id], references: [id], onDelete: Restrict)
+  documentos            vendas_documentos[] @relation("documento_importacao")
+  documentos_cancelados vendas_documentos[] @relation("documento_cancelamento")
+
+  @@index([origem_id])
+}
+
+/// Só nossa: sistema de onde vêm as vendas importadas. Nunca é apagado (ativo = false). O nome é único sem caixa (índice em lower(nome),
+/// só na migração) e a API compara também sem acento.
+model vendas_origens {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  nome              String
+  formato_padrao    String
+  mapeamento        Json?
+  separador_decimal String   @default("virgula")
+  prefixo_pedido    String   @default("")
+  ativo             Boolean  @default(true)
+  criado_por        String?  @db.Uuid
+  criado_em         DateTime @default(now()) @db.Timestamptz(6)
+  atualizado_por    String?  @db.Uuid
+  atualizado_em     DateTime @default(now()) @db.Timestamptz(6)
+
+  importacoes importacoes[]
+}
+
+/// Só nossa: registro imutável (gatilho `vendas_documentos_imutavel`) dos cupons/notas de venda importados por XML. Cancelar = a função
+/// `vendas_documento_cancelar` apaga as vendas do documento e marca `cancelada`.
+model vendas_documentos {
+  id                         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  chave                      String    @unique(map: "vendas_documentos_chave_key") @db.VarChar(44)
+  modelo                     Int       @db.SmallInt
+  serie                      Int
+  numero                     BigInt
+  emitente_cnpj              String    @db.VarChar(14)
+  dh_emi                     DateTime? @db.Timestamptz(6)
+  valor_total                Decimal?  @db.Decimal(15, 2)
+  situacao                   String
+  importacao_id              String?   @db.Uuid
+  cancelado_em               DateTime? @db.Timestamptz(6)
+  cancelamento_importacao_id String?   @db.Uuid
+  criado_em                  DateTime  @default(now()) @db.Timestamptz(6)
+
+  importacao              importacoes? @relation("documento_importacao", fields: [importacao_id], references: [id], onDelete: Restrict)
+  cancelamento_importacao importacoes? @relation("documento_cancelamento", fields: [cancelamento_importacao_id], references: [id], onDelete: Restrict)
+  vendas                  vendas[]
+
+  @@index([importacao_id])
 }
 
 model vendas {
@@ -706,15 +761,20 @@ model vendas {
   created_at        DateTime  @default(now()) @db.Timestamptz(6)
   /// Só nossa (não existe no Lovable): a venda lançada pelo cupom fiscal autorizado (`nfce_lancar_venda`). Nula = venda da importação.
   nfce_cupom_id     String?   @db.Uuid
+  /// Só nossa: a venda veio de um cupom/nota importado por XML (projeção do documento; o cancelamento a apaga).
+  documento_id      String?   @db.Uuid
 
-  itens_cardapio itens_cardapio? @relation(fields: [item_cardapio_id], references: [id], onDelete: SetNull)
-  importacoes    importacoes?    @relation(fields: [importacao_id], references: [id], onDelete: SetNull)
-  nfce_cupom     nfce_cupons?    @relation(fields: [nfce_cupom_id], references: [id], onDelete: Restrict)
+  itens_cardapio itens_cardapio?    @relation(fields: [item_cardapio_id], references: [id], onDelete: SetNull)
+  importacoes    importacoes?       @relation(fields: [importacao_id], references: [id], onDelete: SetNull)
+  nfce_cupom     nfce_cupons?       @relation(fields: [nfce_cupom_id], references: [id], onDelete: Restrict)
+  documento      vendas_documentos? @relation(fields: [documento_id], references: [id], onDelete: Restrict)
   movimentacoes  movimentacoes[]
 
   @@unique([pedido, produto_relatorio, data])
   @@index([data])
   @@index([nfce_cupom_id])
+  @@index([importacao_id])
+  @@index([documento_id])
 }
 
 model movimentacoes {
