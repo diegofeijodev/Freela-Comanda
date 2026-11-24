@@ -362,7 +362,7 @@ export function PreviaImportacao({
             <div className="fixed inset-x-0 bottom-0 z-20 border-t bg-background p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:static md:border-0 md:p-0">
               {botao.falta && !carregando && <p className="mb-1 text-sm text-warning">{botao.falta}</p>}
               <div className="flex items-center gap-3">
-                <span className="text-sm text-muted-foreground md:hidden">{inteiro(p.linhas.novas)} vendas · {reais(p.valor_centavos)}</span>
+                <span className="text-sm text-muted-foreground md:hidden">{plural(p.linhas.novas, "venda", "vendas")} · {reais(p.valor_centavos)}</span>
                 <Button
                   className="h-11 flex-1 md:flex-none"
                   variant={botao.destrutivo ? "destructive" : "default"}

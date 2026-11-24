@@ -68,6 +68,7 @@ npm run prisma:migrate:deploy | prisma:generate
 # web/
 yarn dev | typecheck | lint | test
 ../scripts/run-capped.sh 3300 bash scripts/browser-check.sh       # navegador headless, capturas em .cache/telas
+CHECK_SCRIPT=scripts/browser-check-importar-vendas.mjs ../scripts/run-capped.sh 2400 bash scripts/browser-check.sh   # só o grupo Importar vendas
 ```
 
 Seed de dev: `admin@erpfreela.local` / `erpfreela123` (admin) e `loja@erpfreela.local` / `erpfreela123` (loja).

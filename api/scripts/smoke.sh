@@ -919,6 +919,20 @@ check "V4 Substituir do sistema: 201, apagou 1, entrou 1" "201 1 1" "$CODE $(j .
 check "V4: a do sistema saiu e a nova entrou" "0 1" "$(sql "select count(*) from vendas where pedido='IF-1'") $(sql "select count(*) from vendas where pedido='IF-2'")"
 check "V4: planilha padrão, XML e cupom ficaram" "1 1 2" "$(sql "select count(*) from vendas where pedido='SUBST1'") $(sql "select count(*) from vendas where pedido='NFC-e 2-501'") $(sql "select count(*) from vendas where nfce_cupom_id='$CUP'")"
 
+# V4b (revisão 24/11): Substituir com linha com problema e vendas a apagar → prévia bloqueada e 409, nada apagado
+V4B=$(echo "$PLAN_B" | jq -c '.modo = "substituir" | .linhas_brutas[0].pedido = "3" | .linhas_brutas += [{"pedido":"4","data":"31/02/2026","produto":"X","qtd":"1","total":"1"}]')
+req POST $IV/vendas/previa "$ADM" "$V4B"; check "V4b prévia: Substituir bloqueado" "true 1" "$(j '.substituir.bloqueado') $(j '.substituir.vendas')"
+req POST $IV/vendas/confirmar "$ADM" "$(echo "$V4B" | jq -c '. + {chave_idempotencia:"00000000-0000-4000-8000-00000000c0b3", confirmar_sobreposicao:true}')"
+check "V4b confirmar: 409 SUBSTITUIR_COM_PROBLEMA, a venda do sistema ficou" "409 SUBSTITUIR_COM_PROBLEMA 1 0" "$CODE $(j .error.code) $(sql "select count(*) from vendas where pedido='IF-2'") $(sql "select count(*) from vendas where pedido='IF-3'")"
+# sistema parado não importa
+req POST $IV/origens "$ADM" '{"nome":"Smoke Parado","formato_padrao":"planilha"}'; ORIG_P=$(j .id)
+req PUT "$IV/origens/$ORIG_P" "$ADM" '{"ativo":false}'
+req POST $IV/vendas/previa "$ADM" "$(echo "$PLAN_B" | jq -c --arg o "$ORIG_P" '.origem_id = $o')"; check "sistema parado: 409 ORIGEM_INATIVA" "409 ORIGEM_INATIVA" "$CODE $(j .error.code)"
+# XML cuja soma dos itens não bate com o total: fica de fora como "com problema"
+K505=$(chave_dv "352611${LOJA_CNPJ}65002000000505112345678")
+req POST $IV/vendas/previa "$ADM" "$(xml_corpo "[$(doc "$K505" "$LOJA_CNPJ" 505 1 12.00 | jq -c '.valor_total = "99.00"')]" '[]' '[]')"
+check "V5b XML soma × vNF: com problema, nada novo" "1 0 a soma dos itens (R\$ 12,00) não bate com o total do cupom (R\$ 99,00)" "$(j '.documentos.com_problema | length') $(j .documentos.vendas_novas) $(j '.documentos.com_problema[0].motivo')"
+
 # V7: o Substituir da rota antiga (planilha padrão) não apaga venda de XML nem de outro sistema
 req POST $IV/vendas "$ADM" '{"arquivo":"vendas-17-11.csv","modo":"substituir","linhas":[{"pedido":"SUBST2","data":"2026-11-17","produto_relatorio":"SMOKE ESPETO","quantidade":"1","valor_total":"12"}]}'
 check "V7 rota antiga Substituir: 201" 201 "$CODE"
