@@ -8,6 +8,7 @@ import { AuthController } from '../../modules/auth/auth.controller';
 import { CadastrosController } from '../../modules/cadastros/cadastros.controller';
 import { CaixaController } from '../../modules/caixa/caixa.controller';
 import { CertificadoDigitalController } from '../../modules/certificado-digital/certificado-digital.controller';
+import { CanaController } from '../../modules/cana/cana.controller';
 import { CardapioController } from '../../modules/cardapio/cardapio.controller';
 import { ComprasController } from '../../modules/compras/compras.controller';
 import { ContasController } from '../../modules/contas/contas.controller';
@@ -29,6 +30,7 @@ const CONTROLLERS = [
   AuthController,
   CadastrosController,
   CaixaController,
+  CanaController,
   CardapioController,
   CertificadoDigitalController,
   ComprasController,
@@ -184,6 +186,26 @@ describe('proteção das rotas (substitui as políticas RLS do Supabase)', () =>
     expect(ponto.length).toBe(27);
   });
 
+  // A cana (contagem cega): a loja só lança e vê os próprios lançamentos; o resto (contas, configuração, anular, corrigir) é do admin, sem
+  // `@Modulos` (a tela `cana` é de visão da loja). O colaborador ainda precisa da tela `cana` liberada (conferido no serviço e no smoke).
+  it('a cana: a loja só lança e vê os próprios lançamentos', () => {
+    expect(todas.filter((r) => r.rota.includes('/v1/cana'))).toEqual([
+      { rota: 'GET /v1/cana/parametros', marca: 'admin' },
+      { rota: 'PUT /v1/cana/parametros', marca: 'admin' },
+      { rota: 'GET /v1/cana/produtos', marca: 'admin' },
+      { rota: 'PUT /v1/cana/produtos/:itemCardapioId', marca: 'admin' },
+      { rota: 'GET /v1/cana/lancamentos/recentes', marca: 'staff' },
+      { rota: 'GET /v1/cana/lancamentos', marca: 'admin' },
+      { rota: 'POST /v1/cana/lancamentos', marca: 'staff' },
+      { rota: 'POST /v1/cana/lancamentos/:id/anular', marca: 'admin' },
+      { rota: 'POST /v1/cana/lancamentos/:id/corrigir', marca: 'admin' },
+      { rota: 'GET /v1/cana/semanas', marca: 'admin' },
+      { rota: 'GET /v1/cana/semanas/atual', marca: 'admin' },
+      { rota: 'GET /v1/cana/semanas/:contagemFinalId', marca: 'admin' },
+    ]);
+    expect(comModulos.filter((r) => r.rota.includes('/v1/cana') && r.modulos)).toEqual([]);
+  });
+
   it('o cadastro de empresas é só do master (vale para todas as empresas)', () => {
     expect(todas.filter((r) => r.rota.includes('/v1/empresas'))).toEqual([
       { rota: 'GET /v1/empresas', marca: 'master' },
@@ -210,7 +232,7 @@ describe('proteção das rotas (substitui as políticas RLS do Supabase)', () =>
   // A fronteira da loja continua: as telas que têm "visão da loja" (Início, Fichas, Inventário, Compras, Ponto) liberam só essa
   // visão. Com elas, o colaborador não alcança NENHUMA rota de admin (custo, preço, teórico, financeiro).
   it('o colaborador com as telas da loja não alcança rota de admin', () => {
-    const daLoja = ['painel', 'fichas', 'inventario', 'compras', 'ponto'];
+    const daLoja = ['painel', 'fichas', 'inventario', 'compras', 'ponto', 'cana'];
     expect(comModulos.filter((r) => r.marca === 'admin' && r.modulos?.some((m) => daLoja.includes(m)))).toEqual([]);
   });
 
@@ -256,6 +278,8 @@ describe('proteção das rotas (substitui as políticas RLS do Supabase)', () =>
         'POST /v1/ponto/terminal/identificar',
         'POST /v1/ponto/terminal/marcar',
         'POST /v1/ponto/terminal/justificar',
+        'GET /v1/cana/lancamentos/recentes',
+        'POST /v1/cana/lancamentos',
       ].sort(),
     );
   });

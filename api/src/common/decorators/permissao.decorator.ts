@@ -29,6 +29,7 @@ export const MODULOS = [
   'contas',
   'caixa',
   'ponto',
+  'cana',
   'dre',
   'importar',
 ] as const;

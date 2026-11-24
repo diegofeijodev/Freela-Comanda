@@ -17,6 +17,7 @@ import { ContasModule } from './modules/contas/contas.module';
 import { CupomFiscalModule } from './modules/cupom-fiscal/cupom-fiscal.module';
 import { EmpresasModule } from './modules/empresas/empresas.module';
 import { EstoqueModule } from './modules/estoque/estoque.module';
+import { CanaModule } from './modules/cana/cana.module';
 import { ImportacoesModule } from './modules/importacoes/importacoes.module';
 import { InventariosModule } from './modules/inventarios/inventarios.module';
 import { LeituraPdfModule } from './modules/leitura-pdf/leitura-pdf.module';
@@ -50,6 +51,7 @@ import { VendasModule } from './modules/vendas/vendas.module';
     CaixaModule,
     ImportacoesModule,
     PontoModule,
+    CanaModule,
     EmpresasModule,
   ],
   providers: [
