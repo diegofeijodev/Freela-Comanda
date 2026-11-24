@@ -22,6 +22,8 @@ export async function definirSenha(prisma: PrismaClient, expectDb: string, email
   const e = email.trim().toLowerCase();
   const user = await prisma.users.findUnique({ where: { email: e }, select: { id: true } });
   if (!user) throw new Error(`não existe conta com o e-mail ${mascararEmail(e)} no banco "${expectDb}"`);
-  await new UsuariosService(prisma as never).redefinirSenha(user.id, senha);
+  // Pelo terminal o dono age como master (alcança qualquer conta).
+  const master = { id: '', email: '', nome: '', perfil: 'admin', master: true, modulos: [], empresaId: null } as const;
+  await new UsuariosService(prisma as never).redefinirSenha({ ...master, modulos: [] }, user.id, senha);
   return `senha definida para ${mascararEmail(e)}`;
 }

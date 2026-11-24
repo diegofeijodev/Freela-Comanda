@@ -1,3 +1,4 @@
+import { empresaAtual } from '../../common/database/empresa-contexto';
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
@@ -125,9 +126,9 @@ export class PontoService {
   }
 
   async atualizarColaborador(id: string, dto: AtualizarColaboradorDto) {
-    await this.colaboradorExiste(id);
+    const atual = await this.colaboradorExiste(id);
     if (dto.escala_id) await this.escalaExiste(dto.escala_id);
-    if (dto.empresa_id) await this.empresaExiste(dto.empresa_id);
+    if (dto.empresa_id && dto.empresa_id !== atual.empresa_id) await this.empresaExiste(dto.empresa_id);
     const data: Prisma.ponto_colaboradoresUncheckedUpdateInput = {};
     if (dto.nome !== undefined) data.nome = dto.nome.trim();
     if (dto.cpf !== undefined) data.cpf = soDigitos(dto.cpf);
@@ -158,14 +159,17 @@ export class PontoService {
     return e;
   }
 
+  /** Multiempresa: o empregador é a própria empresa da requisição (no schema `public` o cadastro tem as outras também). */
   private async empresaExiste(id: string) {
-    const e = await this.prisma.empresas.findUnique({ where: { id }, select: { id: true } });
+    const daRequisicao = empresaAtual().empresaId;
+    const e = daRequisicao && id !== daRequisicao ? null : await this.prisma.empresas.findUnique({ where: { id }, select: { id: true } });
     if (!e) throw new NotFoundException({ code: 'NOT_FOUND', message: 'Empresa não encontrada' });
   }
 
   private async colaboradorExiste(id: string) {
-    const c = await this.prisma.ponto_colaboradores.findUnique({ where: { id }, select: { id: true } });
+    const c = await this.prisma.ponto_colaboradores.findUnique({ where: { id }, select: { id: true, empresa_id: true } });
     if (!c) throw new NotFoundException({ code: 'NOT_FOUND', message: 'Colaborador não encontrado' });
+    return c;
   }
 
   // ---------- folgas / feriados

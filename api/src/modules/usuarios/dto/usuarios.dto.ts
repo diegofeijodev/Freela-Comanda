@@ -1,4 +1,5 @@
-import { IsEmail, IsIn, IsString, MaxLength, MinLength } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsBoolean, IsEmail, IsIn, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { MODULOS } from '../../../common/decorators/permissao.decorator';
 
 const PERFIS = ['admin', 'loja'] as const;
 
@@ -17,6 +18,25 @@ export class CriarUsuarioDto {
 
   @IsIn(PERFIS, { message: 'Dados inválidos' })
   perfil!: (typeof PERFIS)[number];
+
+  /** Telas do colaborador (perfil `loja`). */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(MODULOS.length)
+  @IsIn(MODULOS, { each: true, message: 'Tela inválida' })
+  modulos?: string[];
+
+  /** Só o master cria outro master (vê todas as empresas). */
+  @IsOptional()
+  @IsBoolean()
+  master?: boolean;
+}
+
+export class ModulosDto {
+  @IsArray()
+  @ArrayMaxSize(MODULOS.length)
+  @IsIn(MODULOS, { each: true, message: 'Tela inválida' })
+  modulos!: string[];
 }
 
 export class PerfilDto {

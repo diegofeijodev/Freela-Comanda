@@ -3,7 +3,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { FastifyReply } from 'fastify';
 import { AuthUser } from '../../common/auth/auth-user';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { AdminOnly } from '../../common/decorators/permissao.decorator';
+import { AdminOnly, Modulos } from '../../common/decorators/permissao.decorator';
 import { ParseUuidPipe } from '../../common/ids/parse-uuid.pipe';
 import { DeParaDto, ImportacaoDto } from './dto/importacoes.dto';
 import { OrigemDto, OrigemEdicaoDto, VendasConfirmarDto, VendasImportacaoDto } from './dto/vendas-importacao.dto';
@@ -13,6 +13,7 @@ import { ImportacoesService } from './importacoes.service';
 @ApiTags('Importar dados')
 @ApiBearerAuth()
 @AdminOnly()
+@Modulos('importar', 'vendas')
 @Controller('v1')
 export class ImportacoesController {
   constructor(

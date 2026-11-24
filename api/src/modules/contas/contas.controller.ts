@@ -1,6 +1,6 @@
 import { BadRequestException, Body, Controller, Delete, Get, HttpCode, Param, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { AdminOnly } from '../../common/decorators/permissao.decorator';
+import { AdminOnly, Modulos } from '../../common/decorators/permissao.decorator';
 import { ParseUuidPipe } from '../../common/ids/parse-uuid.pipe';
 import { ContasService } from './contas.service';
 import { LiquidarDto, NovaContaDto } from './dto/contas.dto';
@@ -10,6 +10,7 @@ const MES_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 @ApiTags('Contas a pagar')
 @ApiBearerAuth()
 @AdminOnly()
+@Modulos('contas', 'dre', 'caixa')
 @Controller('v1')
 export class ContasController {
   constructor(private readonly svc: ContasService) {}

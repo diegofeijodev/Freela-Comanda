@@ -3,7 +3,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { FastifyReply } from 'fastify';
 import { AuthUser } from '../../common/auth/auth-user';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { AdminOnly } from '../../common/decorators/permissao.decorator';
+import { AdminOnly, Modulos } from '../../common/decorators/permissao.decorator';
 import { ParseUuidPipe } from '../../common/ids/parse-uuid.pipe';
 import { CaixaSefazService } from './caixa.service';
 import { CicloSefazService } from './ciclo.service';
@@ -16,6 +16,7 @@ import { ConfigurarBuscaDto, ConfigurarRespostasDto, IgnorarNotaSefazDto } from 
 @ApiTags('Notas da SEFAZ')
 @ApiBearerAuth()
 @AdminOnly()
+@Modulos('notas')
 @Controller('v1/notas-sefaz')
 export class NotasSefazController {
   constructor(

@@ -3,9 +3,9 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Star, Trash2 } from "lucide-react";
+import { Trash2 } from "lucide-react";
 import {
-  excluirEmpresa, listarEmpresas, salvarEmpresa, tornarEmpresaPrincipal, type Empresa, type EmpresaForm, type RegimeTributario,
+  excluirEmpresa, listarEmpresas, salvarEmpresa, type Empresa, type EmpresaForm, type RegimeTributario,
 } from "@/lib/erp-api";
 import { errMsg } from "@/lib/db";
 import { formatarCnpj } from "@/lib/certificado";
@@ -38,25 +38,24 @@ const cepFmt = (c: string | null) => (c && c.length === 8 ? `${c.slice(0, 5)}-${
 const cpfFmt = (c: string | null) => (c && c.length === 11 ? `${c.slice(0, 3)}.${c.slice(3, 6)}.${c.slice(6, 9)}-${c.slice(9)}` : c ?? "");
 
 function paraForm(e: Empresa): EmpresaForm {
-  const { id: _id, principal: _p, created_at: _c, updated_at: _u, _count, ...resto } = e;
-  void _id; void _p; void _c; void _u; void _count;
+  const { id: _id, principal: _p, created_at: _c, updated_at: _u, _count, schema_banco: _s, ...resto } = e;
+  void _id; void _p; void _c; void _u; void _count; void _s;
   return { ...resto, cnpj: formatarCnpj(e.cnpj), cep: cepFmt(e.cep), responsavel_cpf: cpfFmt(e.responsavel_cpf) };
 }
 
-/** Cadastro de empresas (admin). A principal é a empresa do sistema: alimenta Configurações, SEFAZ, cupom e o espelho de ponto. */
+/**
+ * Cadastro de empresas (só o master). Cada empresa tem os próprios dados (estoque, vendas, notas…) e os próprios usuários; o master
+ * escolhe a empresa em uso no seletor abaixo do logo. A "principal" é a que ficou com os dados de antes do multiempresa.
+ */
 export default function Empresas() {
   const qc = useQueryClient();
   const { data, refetch } = useQuery({ queryKey: ["empresas"], queryFn: listarEmpresas });
   const [edit, setEdit] = useState<{ id: string | null; f: EmpresaForm } | null>(null);
 
-  const recarregar = () => { refetch(); qc.invalidateQueries({ queryKey: ["config"] }); };
+  const recarregar = () => { refetch(); qc.invalidateQueries({ queryKey: ["config"] }); qc.invalidateQueries({ queryKey: ["minhas-empresas"] }); qc.invalidateQueries({ queryKey: ["me"] }); };
 
-  async function principal(e: Empresa) {
-    if (!confirm(`Tornar "${e.razao_social}" a empresa principal? Razão social, fantasia, CNPJ e endereço em Configurações passam a ser os dela (inclusive para SEFAZ e cupom fiscal).`)) return;
-    try { await tornarEmpresaPrincipal(e.id); toast.success("Empresa principal trocada"); recarregar(); } catch (error) { toast.error(errMsg(error)); }
-  }
   async function excluir(e: Empresa) {
-    if (!confirm(`Excluir "${e.razao_social}"?`)) return;
+    if (!confirm(`Excluir "${e.razao_social}"? O cadastro sai da lista; os dados dela ficam guardados no banco.`)) return;
     try { await excluirEmpresa(e.id); toast.success("Empresa excluída"); recarregar(); } catch (error) { toast.error(errMsg(error)); }
   }
 
@@ -72,8 +71,8 @@ export default function Empresas() {
           principal={!!data?.find((x) => x.id === edit.id)?.principal}
           onCancelar={() => setEdit(null)}
           onSalvar={async (f) => {
-            const e = await salvarEmpresa(edit.id, f);
-            toast.success(e.principal ? "Salva — é a empresa principal, Configurações atualizadas" : "Empresa salva");
+            await salvarEmpresa(edit.id, f);
+            toast.success(edit.id ? "Empresa salva — Configurações dela atualizadas" : "Empresa criada — escolha-a no seletor abaixo do logo para cadastrar os dados e os usuários dela");
             setEdit(null); recarregar();
           }}
         />
@@ -82,7 +81,7 @@ export default function Empresas() {
       <Panel title={`Empresas cadastradas · ${data?.length ?? 0}`}>
         <div className="overflow-x-auto"><table className="w-full text-sm [&_td]:pr-3 [&_th]:pr-3">
           <thead><tr className="text-left text-xs text-muted-foreground">
-            <th className="py-1">Razão social</th><th>CNPJ</th><th>Cidade</th><th>Regime</th><th>Colaboradores</th><th>Situação</th><th />
+            <th className="py-1">Razão social</th><th>CNPJ</th><th>Cidade</th><th>Regime</th><th>Usuários</th><th>Situação</th><th />
           </tr></thead>
           <tbody>
             {(data ?? []).map((e) => (
@@ -94,23 +93,24 @@ export default function Empresas() {
                 <td className="whitespace-nowrap tabular-nums">{formatarCnpj(e.cnpj)}</td>
                 <td>{[e.cidade, e.uf].filter(Boolean).join("/") || "—"}</td>
                 <td className="text-xs">{e.regime_tributario ? REGIMES[e.regime_tributario] : "—"}</td>
-                <td>{e._count?.colaboradores ?? 0}</td>
+                <td>{e._count?.usuarios ?? 0}</td>
                 <td className="whitespace-nowrap space-x-1">
                   {e.principal && <Tag tone="gold">Principal</Tag>}
                   {e.ativo ? <Tag tone="ok">Ativa</Tag> : <Tag>Inativa</Tag>}
                 </td>
                 <td className="whitespace-nowrap text-right">
                   <Button size="sm" variant="outline" onClick={() => setEdit({ id: e.id, f: paraForm(e) })}>Editar</Button>
-                  {!e.principal && e.ativo && <Button size="sm" variant="ghost" onClick={() => principal(e)}><Star className="mr-1 h-4 w-4" />Tornar principal</Button>}
                   {!e.principal && <Button size="sm" variant="ghost" aria-label="Excluir" onClick={() => excluir(e)}><Trash2 className="h-4 w-4" /></Button>}
                 </td>
               </tr>
             ))}
-            {data?.length === 0 && <tr><td colSpan={7} className="py-6 text-center text-muted-foreground">Nenhuma empresa cadastrada. A primeira vira a principal.</td></tr>}
+            {data?.length === 0 && <tr><td colSpan={7} className="py-6 text-center text-muted-foreground">Nenhuma empresa cadastrada. A primeira fica com os dados que já estão no sistema.</td></tr>}
           </tbody>
         </table></div>
         <p className="mt-2 text-xs text-muted-foreground">
-          A empresa <b>principal</b> é a do sistema: razão social, fantasia, CNPJ e endereço dela vão para Configurações (usados nas telas, na busca da SEFAZ e no cupom fiscal) e para o espelho de ponto de quem não tiver empresa.
+          Cada empresa tem os próprios dados e usuários: escolha a empresa no seletor abaixo do logo para trabalhar nela e cadastrar o admin da loja em Usuários.
+          Razão social, fantasia, CNPJ e endereço vão para as Configurações da própria empresa (telas, busca da SEFAZ e cupom fiscal).
+          A <b>principal</b> é a que ficou com os dados de antes do multiempresa.
         </p>
       </Panel>
     </div>
@@ -131,13 +131,13 @@ function Formulario({ inicial, novo, principal, onCancelar, onSalvar }: {
   const cnpjErrado = cnpj.length > 0 && !cnpjValido(cnpj);
   const cpf = (f.responsavel_cpf ?? "").replace(/\D/g, "");
   const cpfErrado = cpf.length > 0 && !cpfValido(cpf);
-  const cnpjMudou = principal && normalizarCnpj(inicial.cnpj) !== cnpj;
+  const cnpjMudou = !novo && normalizarCnpj(inicial.cnpj) !== cnpj;
 
   async function salvar(e: React.FormEvent) {
     e.preventDefault();
     if (cnpjErrado) return toast.error("CNPJ inválido. Confira os 14 caracteres (pode ter letras).");
     if (cpfErrado) return toast.error("CPF do responsável inválido");
-    if (cnpjMudou && !confirm("Você mudou o CNPJ da empresa principal. Isso muda o CNPJ usado na busca de notas da SEFAZ e no cupom fiscal. Continuar?")) return;
+    if (cnpjMudou && !confirm("Você mudou o CNPJ da empresa. Isso muda o CNPJ usado na busca de notas da SEFAZ e no cupom fiscal dela. Continuar?")) return;
     setSalvando(true);
     try { await onSalvar(f); } catch (error) { toast.error(errMsg(error)); } finally { setSalvando(false); }
   }
@@ -216,9 +216,7 @@ function Formulario({ inicial, novo, principal, onCancelar, onSalvar }: {
           <section>
             <Label>Observações</Label>
             <Textarea rows={3} maxLength={1000} value={f.observacoes ?? ""} onChange={(e) => set("observacoes", e.target.value)} />
-            {!principal && (
-              <label className="mt-3 flex items-center gap-2 text-sm"><input type="checkbox" checked={f.ativo} onChange={(e) => set("ativo", e.target.checked)} /> Empresa ativa</label>
-            )}
+            <label className="mt-3 flex items-center gap-2 text-sm"><input type="checkbox" checked={f.ativo} onChange={(e) => set("ativo", e.target.checked)} /> Empresa ativa (inativa: os usuários dela não entram)</label>
           </section>
         </div>
         <div className="mt-4 flex justify-end gap-2">

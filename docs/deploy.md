@@ -27,7 +27,7 @@ Os scripts ficam fora do repositório, em `~/erp-deploy/` (o dono roda cada um c
      fica ilegível ("não pode ser lido") e precisa ser enviado de novo.
    - Nunca copiar dump do banco e `.env` juntos (o dump leva o certificado cifrado; o `.env` leva a chave que o abre).
 4. **API:** `bash ~/erp-deploy/subir-api.sh` — backup do banco + imagem de volta (a partir da 2ª subida), cópia da árvore LIMPA do `master`,
-   `docker compose -f docker-compose.prod.yml up -d --build` (o contêiner roda `prisma migrate deploy`) e espera `/health`.
+   `docker compose -f docker-compose.prod.yml up -d --build` (o contêiner roda `prisma migrate deploy` e depois `migrar-empresas`, que aplica as mesmas migrações no schema de cada empresa) e espera `/health`.
 5. **nginx + HTTPS:** `bash ~/erp-deploy/https-api.sh` — instala `docs/deploy/nginx-api-erp.conf` como `erp-freela-api`, `nginx -t`, reload e
    `certbot --nginx -d api.freelacomanda.com.br --redirect`.
 6. **Web:** `bash ~/erp-deploy/subir-web.sh` — cópia de `web/` (sem `.next`/`node_modules`/`.env.local`), `NEXT_PUBLIC_API_URL` fixo em

@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Logger } from '@nestjs/common';
+import type { EmpresasBancoService } from '../../../common/database/empresas-banco.service';
 import { AgendadorSefaz } from '../agendador';
 import type { CicloSefazService, ResumoCiclo } from '../ciclo.service';
 import type { RespostasSefazService, ResumoRespostas } from '../respostas.service';
@@ -14,7 +15,8 @@ function montar(ambiente: 'desligado' | 'homologacao' | 'producao', ciclo?: jest
     classificarPendentes: jest.fn(async () => 0),
   };
   const respostas = { processar: processar ?? jest.fn(async (): Promise<ResumoRespostas> => ({ fim: 'vazia', enviados: 0 })) };
-  const ag = new AgendadorSefaz(falso as unknown as CicloSefazService, respostas as unknown as RespostasSefazService);
+  const empresas = { contextosAtivos: jest.fn(async () => [{ schema: 'public', empresaId: null }]) };
+  const ag = new AgendadorSefaz(falso as unknown as CicloSefazService, respostas as unknown as RespostasSefazService, empresas as unknown as EmpresasBancoService);
   ag.onApplicationBootstrap();
   return { ag, falso, respostas };
 }

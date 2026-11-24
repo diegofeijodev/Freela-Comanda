@@ -9,7 +9,7 @@ import { NOME_CUPOM, NOME_PADRAO } from '../previa';
 // Importar vendas (desenho 24/11, A.8): a prévia nunca grava; o confirmar roda numa transação, na ordem do desenho, depois da trava;
 // a mesma chave com o mesmo corpo devolve o resultado guardado; o Substituir só apaga a fonte própria.
 
-const ADMIN: AuthUser = { id: 'u-1', email: 'a@x', nome: 'Diego', perfil: 'admin' };
+const ADMIN: AuthUser = { id: 'u-1', email: 'a@x', nome: 'Diego', perfil: 'admin', master: true, modulos: [], empresaId: null };
 const ORIGEM = {
   id: '11111111-1111-4111-8111-111111111111',
   nome: 'PDV Valinhos',

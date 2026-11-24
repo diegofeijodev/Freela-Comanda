@@ -2,7 +2,7 @@ import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query 
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { AuthUser } from '../../common/auth/auth-user';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { AdminOnly } from '../../common/decorators/permissao.decorator';
+import { AdminOnly, Modulos } from '../../common/decorators/permissao.decorator';
 import { ParseUuidPipe } from '../../common/ids/parse-uuid.pipe';
 import { ItemEstoqueDto, MovimentacaoDto, NovoItemEstoqueDto } from './dto/estoque.dto';
 import { EstoqueService } from './estoque.service';
@@ -11,6 +11,7 @@ import { EstoqueService } from './estoque.service';
 @ApiTags('Estoque')
 @ApiBearerAuth()
 @AdminOnly()
+@Modulos('estoque', 'objetivo', 'notas', 'importar', 'cupom')
 @Controller('v1')
 export class EstoqueController {
   constructor(private readonly svc: EstoqueService) {}

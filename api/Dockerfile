@@ -9,4 +9,4 @@ COPY . .
 # Teto de heap no build: no EC2 (dividido com o Freela) o tsc falha com mensagem clara em vez de empurrar a máquina para o swap.
 RUN npx prisma generate && NODE_OPTIONS=--max-old-space-size=1536 npm run build
 EXPOSE 3016
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/src/main"]
+CMD ["sh", "-c", "npx prisma migrate deploy && node dist/src/scripts/migrar-empresas/main.js && node dist/src/main"]
