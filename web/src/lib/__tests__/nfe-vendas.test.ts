@@ -31,9 +31,14 @@ describe("XML de venda lido no navegador (tabela de A.4, linha a linha)", () => 
       documento: {
         arquivo: "a.xml", chave: chave(LOJA, "65", 50), modelo: 65, serie: 1, numero: 50, emitente_cnpj: LOJA, tp_amb: 1,
         dh_emi: "2026-11-20T20:15:00-03:00", valor_total: "15.00",
-        itens: [{ produto: "CALDO 300ML", quantidade: "2.0000", valor_unitario: "8.00", valor_bruto: "16.00", desconto: "1.00", outros: "0", frete: "0", cfop: "5102" }],
+        itens: [{ produto: "CALDO 300ML", quantidade: "2.0000", valor_unitario: "8.00", valor_bruto: "16.00", desconto: "1.00", outros: "0", frete: "0", seguro: "0", cfop: "5102" }],
       },
     });
+  });
+  it("vOutro, vFrete e vSeg vão no item (o servidor confere a soma × vNF)", () => {
+    const itens = `<det nItem="1"><prod><xProd>CALDO</xProd><CFOP>5102</CFOP><qCom>1</qCom><vUnCom>10.00</vUnCom><vProd>10.00</vProd><vFrete>2.00</vFrete><vSeg>0.50</vSeg><vOutro>1.00</vOutro></prod></det>`;
+    const r = lerXmlVenda("a.xml", nfeProc({ itens }));
+    expect(r.tipo === "documento" && r.documento.itens[0]).toMatchObject({ outros: "1.00", frete: "2.00", seguro: "0.50" });
   });
   it("a NFC-e fictícia do cupom do Comanda (homologação) → documento com tp_amb 2 (o servidor ignora com o motivo)", () => {
     const r = lerXmlVenda("nfce.xml", fx("nfce-65-homologacao.xml"));

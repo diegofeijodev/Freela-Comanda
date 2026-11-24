@@ -88,10 +88,11 @@ function nota(arquivo: string, doc: Document, inf: Element): LidoXml {
     const desc = decimal(txt(p, "vDesc"), "0");
     const outros = decimal(txt(p, "vOutro"), "0");
     const frete = decimal(txt(p, "vFrete"), "0");
+    const seguro = decimal(txt(p, "vSeg"), "0");
     const produto = (txt(p, "xProd") ?? "").replace(/\s+/g, " ").trim();
-    if (!produto || !q || !vu || !vp || !desc || !outros || !frete) return ignorado(arquivo, `${MOTIVO_XML.ilegivel} (item sem produto, quantidade ou valor)`);
+    if (!produto || !q || !vu || !vp || !desc || !outros || !frete || !seguro) return ignorado(arquivo, `${MOTIVO_XML.ilegivel} (item sem produto, quantidade ou valor)`);
     const cfop = txt(p, "CFOP");
-    itens.push({ produto, quantidade: q, valor_unitario: vu, valor_bruto: vp, desconto: desc, outros, frete, cfop: cfop && /^\d{4}$/.test(cfop) ? cfop : null });
+    itens.push({ produto, quantidade: q, valor_unitario: vu, valor_bruto: vp, desconto: desc, outros, frete, seguro, cfop: cfop && /^\d{4}$/.test(cfop) ? cfop : null });
   }
   const vNF = decimal(txt(one(inf, "ICMSTot"), "vNF"));
   if (!itens.length || !vNF) return ignorado(arquivo, `${MOTIVO_XML.ilegivel} (sem itens ou sem total)`);

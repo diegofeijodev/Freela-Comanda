@@ -22,7 +22,10 @@ const ORIGEM = {
 const LOJA = '12345678000195';
 
 function chave(cnpj: string, numero: number): string {
-  const base = `352611${cnpj}65001${String(numero).padStart(9, '0')}112345678`;
+  return chaveCom(cnpj, numero, '12345678');
+}
+function chaveCom(cnpj: string, numero: number, cnf: string): string {
+  const base = `352611${cnpj}65001${String(numero).padStart(9, '0')}1${cnf}`;
   let soma = 0;
   let peso = 2;
   for (let i = base.length - 1; i >= 0; i--) {
@@ -79,7 +82,7 @@ function montar(
     cnpjLoja: jest.fn(async () => LOJA),
     empresas: jest.fn(async () => new Map()),
     registrados: jest.fn(async () => o.registrados ?? new Map()),
-    doComanda: jest.fn(async () => new Set()),
+    doComanda: jest.fn(async () => new Map<string, string>()),
     vendasDosDocumentos: jest.fn(async (cs: string[]) => ({
       documentos: cs.length,
       linhas: 3,
@@ -362,6 +365,45 @@ describe('confirmar XML', () => {
     expect(ordem).toContain('cancelar');
     expect(tx.vendas.createMany).not.toHaveBeenCalled();
     expect(r.resultado).toMatchObject({ inseridas: 0, canceladas: { documentos: 1, linhas: 3, valor_centavos: 8750 } });
+  });
+
+  it('cancelamento de cupom que nunca veio por XML, com vendas de planilha nos dias dele: a prévia avisa com as fontes (a planilha não é corrigida)', async () => {
+    const c = chave(LOJA, 40);
+    const { svc, fatos } = montar({
+      porFonte: [
+        { chave: 'padrao', nome: NOME_PADRAO, tipo: 'padrao', vendas: 40, valor_centavos: 120000 },
+        { chave: 'cupom', nome: NOME_CUPOM, tipo: 'cupom', vendas: 2, valor_centavos: 3200 },
+        { chave: `xml:${ORIGEM.id}`, nome: 'XML de PDV Valinhos', tipo: 'xml', vendas: 9, valor_centavos: 9900 },
+      ],
+    });
+    const p = await svc.previa(
+      xml([], [{ arquivo: 'canc-40.xml', chave: c, dh_evento: '2026-11-21T10:00:00-03:00' }]) as VendasImportacaoDto,
+      '2026-11-24',
+    );
+    expect(fatos.porFonte).toHaveBeenCalledWith('2026-11-21', '2026-11-21');
+    expect(p.documentos?.cancelamentos_sem_venda_xml).toEqual({
+      documentos: 1,
+      ini: '2026-11-21',
+      fim: '2026-11-21',
+      fontes: [{ fonte: NOME_PADRAO, tipo: 'padrao', vendas: 40, valor_centavos: 120000 }],
+    });
+  });
+
+  it('cancelamento de cupom já importado por XML: sem o aviso da planilha', async () => {
+    const c = chave(LOJA, 20);
+    const { svc, fatos } = montar({ registrados: new Map([[c, 'autorizada']]) });
+    const p = await svc.previa(xml([], [{ arquivo: 'canc.xml', chave: c, dh_evento: null }]) as VendasImportacaoDto, '2026-11-24');
+    expect(fatos.porFonte).not.toHaveBeenCalled();
+    expect(p.documentos?.cancelamentos_sem_venda_xml).toEqual({ documentos: 0, ini: null, fim: null, fontes: [] });
+  });
+
+  it('dois documentos novos com o mesmo pedido e chaves diferentes = 400 VALIDATION_ERROR com os arquivos', async () => {
+    const { svc } = montar();
+    const a = doc(61);
+    const b = { ...doc(61), arquivo: 'NFCe-61-b.xml', chave: chaveCom(LOJA, 61, '99999999') };
+    const e = await erro(svc.previa(xml([a, b]) as VendasImportacaoDto, '2026-11-24'));
+    expect(e).toMatchObject({ status: 400, code: 'VALIDATION_ERROR' });
+    expect(e.message).toContain('NFCe-61.xml e NFCe-61-b.xml');
   });
 
   it('sem CNPJ da loja = 400 LOJA_SEM_CNPJ', async () => {

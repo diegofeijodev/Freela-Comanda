@@ -5,8 +5,8 @@ import { useRef, type ReactNode } from "react";
 import { CheckCircle2, CircleAlert, Loader2, TriangleAlert } from "lucide-react";
 import type { ItemCardapio, PreviaVendas } from "@/lib/erp-api";
 import {
-  botaoImportar, contaPeriodo, contaTotal, contaVendasNovas, inteiro, periodoCurto, plural, quandoFoi, reais, textoJaExistentes,
-  textoSobreposicao,
+  botaoImportar, contaCuponsNovos, contaPeriodo, contaTotal, contaVendasNovas, inteiro, periodoCurto, plural, quandoFoi, reais,
+  textoCancelamentosDoComanda, textoCancelamentoSemVendaXml, textoJaExistentes, textoOutraEmpresa, textoSobreposicao,
 } from "@/lib/importar-vendas";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -116,7 +116,7 @@ export function PreviaImportacao({
   const set = (x: Partial<EscolhasPrevia>) => onEscolhas({ ...escolhas, ...x });
   const botao = botaoImportar(p, { modo: escolhas.modo, sobreposicaoMarcada: escolhas.sobreposicaoMarcada, atualizando: carregando });
   const nada = p.linhas.novas === 0 && !(d && d.arquivos_cancelamento > 0);
-  const semValidas = p.linhas.validas === 0 && !(d && (d.arquivos_cancelamento > 0 || d.ja_importados > 0 || d.vendas_novas > 0));
+  const semValidas = p.linhas.validas === 0 && !(d && (d.arquivos_cancelamento > 0 || d.ja_importados > 0 || d.vendas_novas > 0 || d.com_problema.length > 0));
   const canc = d?.cancelamentos_de_importados;
   const ja = p.linhas.ja_existentes > 0 ? textoJaExistentes(p, sistema) : null;
 
@@ -129,21 +129,7 @@ export function PreviaImportacao({
       <div className={cn("grid gap-4 md:grid-cols-2", carregando && "opacity-60")}>
         <div className="space-y-3">
           {d ? (
-            <Numero
-              titulo="Cupons de venda novos"
-              valor={plural(d.vendas_novas, "cupom", "cupons")}
-              conta={`= ${plural(d.arquivos_lidos, "arquivo lido", "arquivos lidos")}${[
-                [d.ja_importados, "já importados antes"],
-                [d.ja_cancelados, "já cancelados antes"],
-                [d.do_proprio_comanda, "emitidos pelo próprio Comanda"],
-                [d.cancelados_no_envio, "cancelados (a venda e o cancelamento vieram juntos)"],
-                [d.arquivos_cancelamento, "arquivos de cancelamento"],
-                [d.repetidos_no_envio, "repetidos neste envio"],
-                [d.ignorados.reduce((s, g) => s + g.arquivos.length, 0), "ignorados"],
-                [d.nfe_fora.length, "notas fiscais (NF-e) fora da importação"],
-                [d.outros_cnpjs.filter((o) => !o.incluido).reduce((s, o) => s + o.documentos, 0), "de outra empresa, fora da importação"],
-              ].filter(([n]) => (n as number) > 0).map(([n, t]) => ` − ${inteiro(n as number)} ${t}`).join("")}`}
-            />
+            <Numero titulo="Cupons de venda novos" valor={plural(d.vendas_novas, "cupom", "cupons")} conta={contaCuponsNovos(d)} />
           ) : (
             <Numero titulo="Vendas novas" valor={plural(p.linhas.novas, "linha", "linhas")} conta={contaVendasNovas(p.linhas)} />
           )}
@@ -207,16 +193,40 @@ export function PreviaImportacao({
           )}
           {d && d.ja_importados > 0 && <Aviso tom="neutro">{plural(d.ja_importados, "cupom já foi importado", "cupons já foram importados")} antes: {d.ja_importados === 1 ? "fica" : "ficam"} como {d.ja_importados === 1 ? "está" : "estão"}.</Aviso>}
           {d && d.do_proprio_comanda > 0 && <Aviso tom="neutro">{plural(d.do_proprio_comanda, "cupom foi emitido", "cupons foram emitidos")} aqui no Comanda: já {d.do_proprio_comanda === 1 ? "está" : "estão"} nas vendas e não {d.do_proprio_comanda === 1 ? "entra" : "entram"} de novo.</Aviso>}
-          {d && d.outros_cnpjs.map((o) => (
-            <Aviso key={o.cnpj} tom="ambar" titulo="Cupons de outra empresa sua.">
-              <p>{plural(o.documentos, "cupom foi emitido", "cupons foram emitidos")} por {o.nome_em_empresas} ({o.cnpj}), cadastrada em Empresas. Eles só entram se forem vendas desta loja.</p>
-              <div className="mt-2 flex items-start gap-2">
-                <Checkbox id={`cnpj-${o.cnpj}`} checked={escolhas.cnpjsIncluidos.includes(o.cnpj)} className="mt-1"
-                  onCheckedChange={(v) => set({ cnpjsIncluidos: v === true ? [...escolhas.cnpjsIncluidos, o.cnpj] : escolhas.cnpjsIncluidos.filter((c) => c !== o.cnpj) })} />
-                <Label htmlFor={`cnpj-${o.cnpj}`}>Incluir os {inteiro(o.documentos)} cupons de {o.nome_em_empresas}</Label>
-              </div>
+          {d && d.cancelamentos_do_comanda.arquivos > 0 && (
+            <Aviso tom={d.cancelamentos_do_comanda.ainda_autorizados > 0 ? "ambar" : "neutro"} titulo="Cancelamento de cupom do Comanda não aplicado."
+              acao={d.cancelamentos_do_comanda.ainda_autorizados > 0 ? <Link href="/cupom" target="_blank" className="inline-flex min-h-11 items-center text-primary underline underline-offset-2">Abrir Cupom fiscal</Link> : undefined}>
+              {textoCancelamentosDoComanda(d.cancelamentos_do_comanda)}
             </Aviso>
-          ))}
+          )}
+          {d && textoCancelamentoSemVendaXml(d.cancelamentos_sem_venda_xml) && (
+            <Aviso tom="ambar" titulo="A planilha não é corrigida pelo cancelamento.">
+              {textoCancelamentoSemVendaXml(d.cancelamentos_sem_venda_xml)}
+            </Aviso>
+          )}
+          {d && d.outros_cnpjs.map((o) => {
+            const t = textoOutraEmpresa(o);
+            return (
+              <Aviso key={o.cnpj} tom="ambar" titulo={o.documentos ? "Cupons de outra empresa sua." : "Cancelamentos de outra empresa sua."}>
+                <p>{t.texto}</p>
+                <div className="mt-2 flex items-start gap-2">
+                  <Checkbox id={`cnpj-${o.cnpj}`} checked={escolhas.cnpjsIncluidos.includes(o.cnpj)} className="mt-1"
+                    onCheckedChange={(v) => set({ cnpjsIncluidos: v === true ? [...escolhas.cnpjsIncluidos, o.cnpj] : escolhas.cnpjsIncluidos.filter((c) => c !== o.cnpj) })} />
+                  <Label htmlFor={`cnpj-${o.cnpj}`}>{t.rotulo}</Label>
+                </div>
+              </Aviso>
+            );
+          })}
+          {d && d.com_problema.length > 0 && (
+            <details className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+              <summary className="min-h-11 cursor-pointer font-medium">{plural(d.com_problema.length, "cupom com problema fica", "cupons com problema ficam")} de fora</summary>
+              <ul className="mt-2 space-y-1">
+                {d.com_problema.slice(0, 200).map((x) => <li key={x.arquivo} className="break-words">{x.arquivo}: {x.motivo}</li>)}
+              </ul>
+              {d.com_problema.length > 200 && <p>e mais {inteiro(d.com_problema.length - 200)}</p>}
+              <p className="mt-1">Exporte esses XML de novo no sistema de origem; se continuar, mande um deles para o suporte.</p>
+            </details>
+          )}
           {d && d.nfe_fora.length + escolhas.nfeIncluidas.length > 0 && (
             <Aviso tom="ambar" titulo={`${plural(d.nfe_fora.length, "nota fiscal (NF-e) ficou", "notas fiscais (NF-e) ficaram")} de fora.`}>
               <p>Nota fiscal de saída pode ser venda, mas também remessa, transferência ou bonificação, que não são venda. Marque só as que são venda.</p>

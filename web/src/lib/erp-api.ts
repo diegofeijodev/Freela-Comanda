@@ -919,7 +919,7 @@ export type DocumentoVendaXml = {
   tp_amb: 1 | 2;
   dh_emi: string;
   valor_total: string;
-  itens: { produto: string; quantidade: string; valor_unitario: string; valor_bruto: string; desconto: string; outros: string; frete: string; cfop: string | null }[];
+  itens: { produto: string; quantidade: string; valor_unitario: string; valor_bruto: string; desconto: string; outros: string; frete: string; seguro: string; cfop: string | null }[];
 };
 export type LinhaPdfVendas = {
   pedido: string | null;
@@ -950,6 +950,13 @@ export type CorpoImportarVendas = {
   cnpjs_incluidos?: string[];
   nfe_incluidas?: string[];
 };
+export type OutraEmpresaXml = { cnpj: string; nome_em_empresas: string; documentos: number; cancelamentos: number; incluido: boolean };
+export type CancelamentosSemVendaXml = {
+  documentos: number;
+  ini: string | null;
+  fim: string | null;
+  fontes: { fonte: string; tipo: TipoFonteVendas; vendas: number; valor_centavos: number }[];
+};
 export type PreviaVendas = {
   periodo: { ini: string; fim: string; dias: number } | null;
   linhas: { lidas: number; validas: number; com_problema: number; ja_existentes: number; somadas_no_arquivo: number; novas: number };
@@ -973,13 +980,19 @@ export type PreviaVendas = {
     ja_importados: number;
     ja_cancelados: number;
     do_proprio_comanda: number;
+    /** Cancelamentos de cupons do próprio Comanda: não aplicados por arquivo. */
+    cancelamentos_do_comanda: { arquivos: number; ainda_autorizados: number };
     cancelados_no_envio: number;
     repetidos_no_envio: number;
     arquivos_cancelamento: number;
     nfe_fora: { chave: string; serie: number; numero: number; dh_emi: string; valor_centavos: number; cfops: string[] }[];
-    outros_cnpjs: { cnpj: string; nome_em_empresas: string; documentos: number; incluido: boolean }[];
+    outros_cnpjs: OutraEmpresaXml[];
     ignorados: { motivo: string; arquivos: string[] }[];
+    /** Documentos novos cuja soma dos itens não bate com o total (ficam de fora). */
+    com_problema: { arquivo: string; motivo: string }[];
     cancelamentos_de_importados: { documentos: number; linhas: number; valor_centavos: number; ini: string | null; fim: string | null };
+    /** Cancelamentos de cupons que nunca vieram por XML e as vendas de planilha nos dias deles. */
+    cancelamentos_sem_venda_xml: CancelamentosSemVendaXml;
   };
 };
 export type ResultadoImportarVendas = {

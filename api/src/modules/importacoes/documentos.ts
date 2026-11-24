@@ -19,6 +19,8 @@ export type ItemDocumento = {
   desconto: Prisma.Decimal;
   outros: Prisma.Decimal;
   frete: Prisma.Decimal;
+  /** vSeg: só entra na conferência da soma × vNF (a venda é vProd − vDesc, com taxa = vOutro e frete = vFrete). */
+  seguro: Prisma.Decimal;
   cfop: string | null;
 };
 export type DocumentoXml = {
@@ -113,6 +115,7 @@ export function conferirEnvioXml(corpo: {
         desconto: decimal(it.desconto ?? '0', o),
         outros: decimal(it.outros ?? '0', o),
         frete: decimal(it.frete ?? '0', o),
+        seguro: decimal(it.seguro ?? '0', o),
         cfop,
       };
     });
@@ -159,8 +162,8 @@ export type FatosXml = {
   empresas: ReadonlyMap<string, string>;
   /** Situação em `vendas_documentos` das chaves do envio (ausente = nunca importada). */
   registrados: ReadonlyMap<string, 'autorizada' | 'cancelada'>;
-  /** Chaves de cupons emitidos pelo próprio Comanda (`nfce_cupons.chave`). */
-  doComanda: ReadonlySet<string>;
+  /** Cupons emitidos pelo próprio Comanda (`nfce_cupons.chave` → `situacao`). */
+  doComanda: ReadonlyMap<string, string>;
   /** CNPJs de Empresas marcados na prévia ("Incluir os N cupons de …"); só valem os que estão em `empresas`. */
   cnpjsIncluidos: ReadonlySet<string>;
   /** Chaves de NF-e (modelo 55) marcadas na prévia. */
@@ -168,13 +171,17 @@ export type FatosXml = {
 };
 
 export type NfeFora = { chave: string; serie: number; numero: number; dh_emi: string; valor_centavos: number; cfops: string[] };
-export type OutroCnpj = { cnpj: string; nome_em_empresas: string; documentos: number; incluido: boolean };
+/** CNPJ cadastrado em Empresas (não a loja): os cupons e os cancelamentos dele só entram se a pessoa marcar "Incluir". */
+export type OutroCnpj = { cnpj: string; nome_em_empresas: string; documentos: number; cancelamentos: number; incluido: boolean };
 export type ContagemXml = {
   arquivos_lidos: number;
   vendas_novas: number;
   ja_importados: number;
   ja_cancelados: number;
+  /** Cupons de venda emitidos pelo próprio Comanda (já estão nas vendas). */
   do_proprio_comanda: number;
+  /** Cancelamentos de cupons do próprio Comanda: não são aplicados aqui (o cupom do Comanda se cancela em Cupom fiscal). */
+  cancelamentos_do_comanda: { arquivos: number; ainda_autorizados: number };
   cancelados_no_envio: number;
   repetidos_no_envio: number;
   arquivos_cancelamento: number;
@@ -184,11 +191,18 @@ export type ContagemXml = {
   outros_cnpjs: OutroCnpj[];
   /** Por motivo (do navegador e do servidor), com os nomes dos arquivos. */
   ignorados: { motivo: string; arquivos: string[] }[];
+  /** Documentos novos cuja soma dos itens não bate com o total (vNF): ficam de fora, com o motivo. */
+  com_problema: { arquivo: string; motivo: string }[];
 };
 export type ClassificacaoXml = {
   novos: DocumentoXml[];
   /** Cancelamentos a aplicar: `importado` = a venda já estava no Comanda (sai das vendas); senão, só registra o documento cancelado. */
   cancelar: { chave: string; dh_evento: Date | null; importado: boolean }[];
+  /**
+   * Cancelamentos a aplicar de cupons cuja venda NUNCA veio por XML (nem antes, nem neste envio). Se as vendas desse caixa entraram por
+   * planilha, a planilha não é corrigida (o pedido do PDV não aparece no cupom): a prévia avisa.
+   */
+  sem_venda_xml: { chave: string; dh_evento: Date | null }[];
   contagem: ContagemXml;
 };
 
@@ -241,6 +255,29 @@ export const vendasDoDocumento = (d: DocumentoXml, prefixo: string): LinhaVenda[
 
 const centavosDe = (d: Prisma.Decimal) => d.mul(100).toDecimalPlaces(0, Prisma.Decimal.ROUND_HALF_UP).toNumber();
 
+/** Decimal → "R$ 1.234,56" (frases do servidor). */
+const reaisTexto = (d: Prisma.Decimal) => {
+  const [i, c] = d.toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP).toFixed(2).split('.') as [string, string];
+  return `R$ ${i.replace(/\B(?=(\d{3})+(?!\d))/g, '.')},${c}`;
+};
+
+/** Até R$ 0,02 por item: o rateio do desconto e do frete arredonda item a item. */
+const TOLERANCIA_POR_ITEM = new Prisma.Decimal('0.02');
+
+/**
+ * Confere a soma dos itens com o total do documento (vNF) no servidor: Σ(vProd − vDesc + vOutro + vFrete + vSeg). Diferença acima da
+ * tolerância = o resumo veio errado (leitura incompleta, item faltando): o documento fica de fora, com o motivo. Não modela impostos que
+ * somam no vNF da NF-e (ST, IPI): uma NF-e com eles fica de fora (anotado no desenho).
+ */
+export function divergenciaDoTotal(d: DocumentoXml): string | null {
+  const soma = d.itens.reduce(
+    (s, it) => s.add(it.valor_bruto).sub(it.desconto).add(it.outros).add(it.frete).add(it.seguro),
+    new Prisma.Decimal(0),
+  );
+  if (soma.sub(d.valor_total).abs().lte(TOLERANCIA_POR_ITEM.mul(d.itens.length))) return null;
+  return `a soma dos itens (${reaisTexto(soma)}) não bate com o total ${d.modelo === 65 ? 'do cupom' : 'da nota'} (${reaisTexto(d.valor_total)})`;
+}
+
 /** Classifica cada arquivo do envio em exatamente um grupo (a identidade da conta está em `fechaContagemXml`). */
 export function classificarXml(env: EnvioXml, f: FatosXml): ClassificacaoXml {
   const c: ContagemXml = {
@@ -249,12 +286,14 @@ export function classificarXml(env: EnvioXml, f: FatosXml): ClassificacaoXml {
     ja_importados: 0,
     ja_cancelados: 0,
     do_proprio_comanda: 0,
+    cancelamentos_do_comanda: { arquivos: 0, ainda_autorizados: 0 },
     cancelados_no_envio: 0,
     repetidos_no_envio: 0,
     arquivos_cancelamento: 0,
     nfe_fora: [],
     outros_cnpjs: [],
     ignorados: [],
+    com_problema: [],
   };
   const ignorar = (motivo: string, arquivo: string) => {
     const g = c.ignorados.find((x) => x.motivo === motivo);
@@ -262,28 +301,50 @@ export function classificarXml(env: EnvioXml, f: FatosXml): ClassificacaoXml {
     else c.ignorados.push({ motivo, arquivos: [arquivo] });
   };
   for (const g of env.ignorados) ignorar(g.motivo, g.arquivo);
-  const emitenteAceito = (cnpj: string) => cnpj === f.cnpjLoja || (f.empresas.has(cnpj) && f.cnpjsIncluidos.has(cnpj));
+  const outros = new Map<string, OutroCnpj>();
+  /** O grupo "outra empresa sua" do CNPJ (cadastrado em Empresas). `incluido` é por CNPJ: vale para os cupons e os cancelamentos. */
+  const outro = (cnpj: string) => {
+    let o = outros.get(cnpj);
+    if (!o) {
+      o = { cnpj, nome_em_empresas: f.empresas.get(cnpj)!, documentos: 0, cancelamentos: 0, incluido: f.cnpjsIncluidos.has(cnpj) };
+      outros.set(cnpj, o);
+    }
+    return o;
+  };
+  const daLoja = (cnpj: string) => cnpj === f.cnpjLoja;
+  const deEmpresa = (cnpj: string) => !daLoja(cnpj) && f.empresas.has(cnpj);
+  const documentosDoEnvio = new Set(env.documentos.map((d) => d.chave));
 
   // cancelamentos primeiro: a venda que chegou no mesmo envio nem entra
   const cancelar: ClassificacaoXml['cancelar'] = [];
+  const semVendaXml: ClassificacaoXml['sem_venda_xml'] = [];
   const canceladasNoEnvio = new Set<string>();
+  const aplicar = (k: CancelamentoXml, importado: boolean) => {
+    cancelar.push({ chave: k.chave, dh_evento: k.dh_evento, importado });
+    if (!importado && !documentosDoEnvio.has(k.chave)) semVendaXml.push({ chave: k.chave, dh_evento: k.dh_evento });
+    c.arquivos_cancelamento++;
+  };
   for (const k of env.cancelamentos) {
     const emit = k.chave.slice(6, 20);
+    const registrado = f.registrados.get(k.chave);
     if (canceladasNoEnvio.has(k.chave)) c.repetidos_no_envio++;
-    else if (f.doComanda.has(k.chave)) c.do_proprio_comanda++;
-    else if (!emitenteAceito(emit)) ignorar(MOTIVO_CANCELAMENTO_OUTRO_CNPJ, k.arquivo);
-    else if (f.registrados.get(k.chave) === 'cancelada') c.ja_cancelados++;
-    else {
-      canceladasNoEnvio.add(k.chave);
-      cancelar.push({ chave: k.chave, dh_evento: k.dh_evento, importado: f.registrados.get(k.chave) === 'autorizada' });
-      c.arquivos_cancelamento++;
-    }
+    else if (f.doComanda.has(k.chave)) {
+      c.cancelamentos_do_comanda.arquivos++;
+      if (f.doComanda.get(k.chave) !== 'cancelado') c.cancelamentos_do_comanda.ainda_autorizados++;
+    } else if (registrado === 'cancelada') c.ja_cancelados++;
+    // a venda já entrou (o emitente foi aceito quando ela entrou): o cancelamento sai, seja qual for o emitente e a marcação de agora
+    else if (registrado === 'autorizada') aplicar(k, true);
+    else if (daLoja(emit)) aplicar(k, false);
+    else if (deEmpresa(emit)) {
+      const o = outro(emit);
+      o.cancelamentos++;
+      if (o.incluido) aplicar(k, false);
+    } else ignorar(MOTIVO_CANCELAMENTO_OUTRO_CNPJ, k.arquivo);
     canceladasNoEnvio.add(k.chave);
   }
 
   const novos: DocumentoXml[] = [];
   const vistos = new Set<string>();
-  const outros = new Map<string, OutroCnpj>();
   for (const d of env.documentos) {
     if (vistos.has(d.chave)) {
       c.repetidos_no_envio++;
@@ -292,17 +353,9 @@ export function classificarXml(env: EnvioXml, f: FatosXml): ClassificacaoXml {
     vistos.add(d.chave);
     if (d.tp_amb === 2) ignorar(MOTIVO_HOMOLOGACAO, d.arquivo);
     else if (f.doComanda.has(d.chave)) c.do_proprio_comanda++;
-    else if (d.emitente_cnpj !== f.cnpjLoja && !f.empresas.has(d.emitente_cnpj)) ignorar(motivoOutroCnpj(d.emitente_cnpj), d.arquivo);
-    else if (d.emitente_cnpj !== f.cnpjLoja && !f.cnpjsIncluidos.has(d.emitente_cnpj)) {
-      const o = outros.get(d.emitente_cnpj) ?? {
-        cnpj: d.emitente_cnpj,
-        nome_em_empresas: f.empresas.get(d.emitente_cnpj)!,
-        documentos: 0,
-        incluido: false,
-      };
-      o.documentos++;
-      outros.set(d.emitente_cnpj, o);
-    } else if (d.modelo === 55 && !f.nfeIncluidas.has(d.chave)) {
+    else if (!daLoja(d.emitente_cnpj) && !deEmpresa(d.emitente_cnpj)) ignorar(motivoOutroCnpj(d.emitente_cnpj), d.arquivo);
+    else if (deEmpresa(d.emitente_cnpj) && !f.cnpjsIncluidos.has(d.emitente_cnpj)) outro(d.emitente_cnpj).documentos++;
+    else if (d.modelo === 55 && !f.nfeIncluidas.has(d.chave)) {
       c.nfe_fora.push({
         chave: d.chave,
         serie: d.serie,
@@ -315,27 +368,67 @@ export function classificarXml(env: EnvioXml, f: FatosXml): ClassificacaoXml {
     else if (f.registrados.get(d.chave) === 'cancelada') c.ja_cancelados++;
     else if (canceladasNoEnvio.has(d.chave)) c.cancelados_no_envio++;
     else {
-      if (d.emitente_cnpj !== f.cnpjLoja) {
-        const o = outros.get(d.emitente_cnpj) ?? {
-          cnpj: d.emitente_cnpj,
-          nome_em_empresas: f.empresas.get(d.emitente_cnpj)!,
-          documentos: 0,
-          incluido: true,
-        };
-        o.documentos++;
-        outros.set(d.emitente_cnpj, o);
+      const problema = divergenciaDoTotal(d);
+      if (problema) c.com_problema.push({ arquivo: d.arquivo, motivo: problema });
+      else {
+        if (deEmpresa(d.emitente_cnpj)) outro(d.emitente_cnpj).documentos++;
+        novos.push(d);
+        c.vendas_novas++;
       }
-      novos.push(d);
-      c.vendas_novas++;
     }
   }
   c.outros_cnpjs = [...outros.values()];
-  return { novos, cancelar, contagem: c };
+  return { novos, cancelar, sem_venda_xml: semVendaXml, contagem: c };
+}
+
+/** O dia de cada cancelamento em Brasília; sem o dia do evento, o mês inteiro da chave (AAMM, posições 3 a 6). */
+export function periodoDosCancelamentos(cs: readonly { chave: string; dh_evento: Date | null }[]): { ini: string; fim: string } | null {
+  let ini: string | null = null;
+  let fim: string | null = null;
+  for (const k of cs) {
+    let a: string;
+    let b: string;
+    if (k.dh_evento) a = b = todaySp(k.dh_evento);
+    else {
+      const ano = 2000 + Number(k.chave.slice(2, 4));
+      const mes = Number(k.chave.slice(4, 6));
+      a = `${ano}-${String(mes).padStart(2, '0')}-01`;
+      b = new Date(Date.UTC(ano, mes, 0)).toISOString().slice(0, 10);
+    }
+    if (ini === null || a < ini) ini = a;
+    if (fim === null || b > fim) fim = b;
+  }
+  return ini && fim ? { ini, fim } : null;
+}
+
+/**
+ * As linhas de venda dos documentos novos e, para cada pedido, a chave do documento (liga `vendas.documento_id`). O documento de outra
+ * empresa incluída leva o CNPJ no pedido (a mesma série-número de dois CNPJs não colide). Dois documentos novos com o mesmo pedido e
+ * chaves diferentes = o envio tem um arquivo errado: recusa com os dois nomes (a venda de um iria para o documento do outro).
+ */
+export function vendasDosNovos(novos: readonly DocumentoXml[], prefixo: string, cnpjLoja: string) {
+  const documentoDaVenda = new Map<string, string>();
+  const arquivoDoPedido = new Map<string, string>();
+  const linhas = novos.flatMap((d) => {
+    const ls = linhasDoDocumento(d, prefixo, d.emitente_cnpj === cnpjLoja ? '' : ` ${d.emitente_cnpj}`);
+    const pedido = ls[0]!.pedido;
+    const ja = documentoDaVenda.get(pedido);
+    if (ja !== undefined && ja !== d.chave) {
+      throw new EnvioInvalido(
+        `Os arquivos ${arquivoDoPedido.get(pedido)} e ${d.arquivo} têm o mesmo número (${pedidoDoDocumento(d, '')}) com chaves de acesso diferentes. Tire o arquivo errado e escolha de novo.`,
+      );
+    }
+    documentoDaVenda.set(pedido, d.chave);
+    arquivoDoPedido.set(pedido, d.arquivo);
+    return ls;
+  });
+  return { linhas, documentoDaVenda };
 }
 
 /** A conta do cartão "Cupons de venda novos" fecha: cada arquivo lido está em exatamente um grupo. */
 export function fechaContagemXml(c: ContagemXml): boolean {
-  const fora = c.outros_cnpjs.filter((o) => !o.incluido).reduce((s, o) => s + o.documentos, 0);
+  // do CNPJ não incluído, os cupons e os cancelamentos ficam de fora; do incluído, já estão em vendas_novas/arquivos_cancelamento
+  const fora = c.outros_cnpjs.filter((o) => !o.incluido).reduce((s, o) => s + o.documentos + o.cancelamentos, 0);
   const ign = c.ignorados.reduce((s, g) => s + g.arquivos.length, 0);
   return (
     c.arquivos_lidos ===
@@ -343,7 +436,9 @@ export function fechaContagemXml(c: ContagemXml): boolean {
       c.ja_importados +
       c.ja_cancelados +
       c.do_proprio_comanda +
+      c.cancelamentos_do_comanda.arquivos +
       c.cancelados_no_envio +
+      c.com_problema.length +
       c.repetidos_no_envio +
       c.arquivos_cancelamento +
       c.nfe_fora.length +

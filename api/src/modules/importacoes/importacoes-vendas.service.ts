@@ -5,7 +5,7 @@ import type { AuthUser } from '../../common/auth/auth-user';
 import { PrismaService } from '../../common/database/prisma.service';
 import { normalizarCnpj } from '../../common/fiscal/cnpj';
 import { dayToDb, isDateString, todaySp } from '../../common/time/dates';
-import { classificarXml, conferirEnvioXml, EnvioInvalido, linhasDoDocumento, type ClassificacaoXml } from './documentos';
+import { classificarXml, conferirEnvioXml, EnvioInvalido, periodoDosCancelamentos, vendasDosNovos, type ClassificacaoXml } from './documentos';
 import type { Formato, OrigemDto, OrigemEdicaoDto, VendasConfirmarDto, VendasImportacaoDto } from './dto/vendas-importacao.dto';
 import { FatosVendas, type Db } from './fatos-vendas';
 import { ONDE_PLANILHA_PADRAO } from './importacoes.service';
@@ -60,6 +60,13 @@ export type ResultadoImportacao = {
 type PreviaXml = Previa & {
   documentos?: ClassificacaoXml['contagem'] & {
     cancelamentos_de_importados: { documentos: number; linhas: number; valor_centavos: number; ini: string | null; fim: string | null };
+    /** Cancelamentos de cupons que nunca vieram por XML e, nos dias deles, as vendas de planilha/sistema (que o cancelamento não corrige). */
+    cancelamentos_sem_venda_xml: {
+      documentos: number;
+      ini: string | null;
+      fim: string | null;
+      fontes: { fonte: string; tipo: Fonte['tipo']; vendas: number; valor_centavos: number }[];
+    };
   };
 };
 
@@ -311,13 +318,13 @@ export class ImportacoesVendasService {
         cnpjsIncluidos: new Set((dto.cnpjs_incluidos ?? []).map(normalizarCnpj)),
         nfeIncluidas: new Set(dto.nfe_incluidas ?? []),
       });
-      const documentoDaVenda = new Map<string, string>();
-      validas = cls.novos.flatMap((d) => {
-        // documento de outra empresa incluída leva o CNPJ no pedido: a mesma série-número de dois CNPJs não colide
-        const ls = linhasDoDocumento(d, prefixo, d.emitente_cnpj === cnpjLoja ? '' : ` ${d.emitente_cnpj}`);
-        for (const l of ls) documentoDaVenda.set(l.pedido, d.chave);
-        return ls;
-      });
+      let documentoDaVenda: Map<string, string>;
+      try {
+        ({ linhas: validas, documentoDaVenda } = vendasDosNovos(cls.novos, prefixo, cnpjLoja));
+      } catch (e) {
+        if (e instanceof EnvioInvalido) throw erro400('VALIDATION_ERROR', e.message);
+        throw e;
+      }
       lidas = validas.length;
       xml = { ...cls, documentoDaVenda };
     }
@@ -348,9 +355,26 @@ export class ImportacoesVendasService {
     );
     if (xml) {
       const importados = xml.cancelar.filter((c) => c.importado).map((c) => c.chave);
-      previa.documentos = { ...xml.contagem, cancelamentos_de_importados: await f.vendasDosDocumentos(importados) };
+      previa.documentos = {
+        ...xml.contagem,
+        cancelamentos_de_importados: await f.vendasDosDocumentos(importados),
+        cancelamentos_sem_venda_xml: await this.cancelamentosSemVendaXml(f, xml.sem_venda_xml),
+      };
     }
     return { origem, fonte, validas, previa, xml, mapeamento, separador, dePara };
+  }
+
+  /**
+   * Cancelamento de cupom cuja venda nunca veio por XML: se nos dias dele há vendas de planilha (padrão ou de um sistema), avisa que a
+   * planilha não é corrigida. Não dá para saber se é o mesmo caixa (o pedido do PDV não aparece no cupom): o aviso é condicional.
+   */
+  private async cancelamentosSemVendaXml(f: FatosVendas, cs: ClassificacaoXml['sem_venda_xml']) {
+    const periodo = periodoDosCancelamentos(cs);
+    if (!periodo) return { documentos: 0, ini: null, fim: null, fontes: [] };
+    const fontes = (await f.porFonte(periodo.ini, periodo.fim))
+      .filter((x) => x.tipo === 'padrao' || x.tipo === 'sistema')
+      .map((x) => ({ fonte: x.nome, tipo: x.tipo, vendas: x.vendas, valor_centavos: x.valor_centavos }));
+    return { documentos: cs.length, ini: periodo.ini, fim: periodo.fim, fontes };
   }
 
   /**

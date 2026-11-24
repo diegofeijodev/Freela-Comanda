@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-  acharCabecalho, botaoImportar, celulaTexto, colunasDoCabecalho, contaTotal, contaVendasNovas, deduzirSeparador, exemplosDaColuna,
-  linhasParaEnvio, numeroDigitado, problemaDaLinha, somaPdf, sugerirMapeamento, textoJaExistentes, textoSobreposicao,
+  acharCabecalho, botaoImportar, celulaTexto, colunasDoCabecalho, contaCuponsNovos, contaTotal, contaVendasNovas, deduzirSeparador,
+  exemplosDaColuna, linhasParaEnvio, numeroDigitado, problemaDaLinha, somaPdf, sugerirMapeamento, textoCancelamentosDoComanda,
+  textoCancelamentoSemVendaXml, textoJaExistentes, textoOutraEmpresa, textoSobreposicao,
 } from "../importar-vendas";
 import type { PreviaVendas } from "../erp-api";
 
@@ -102,16 +103,60 @@ describe("frases da prévia (cada número com a conta)", () => {
     expect(botaoImportar(previa({ linhas: { ...previa().linhas, novas: 0 } }), o).acao).toBe("nada");
   });
   it("XML só com cancelamentos (P18): o botão tira os cancelados", () => {
-    const documentos = {
-      arquivos_lidos: 2, vendas_novas: 0, ja_importados: 0, ja_cancelados: 0, do_proprio_comanda: 0, cancelados_no_envio: 0, repetidos_no_envio: 0,
-      arquivos_cancelamento: 2, nfe_fora: [], outros_cnpjs: [], ignorados: [],
-      cancelamentos_de_importados: { documentos: 2, linhas: 3, valor_centavos: 8750, ini: "2026-11-05", fim: "2026-11-12" },
-    };
+    const documentos = { ...docs(), arquivos_lidos: 2, arquivos_cancelamento: 2,
+      cancelamentos_de_importados: { documentos: 2, linhas: 3, valor_centavos: 8750, ini: "2026-11-05", fim: "2026-11-12" } };
     const p = previa({ linhas: { ...previa().linhas, novas: 0 }, documentos });
     expect(botaoImportar(p, { modo: "acrescentar", sobreposicaoMarcada: false, atualizando: false })).toMatchObject({ rotulo: "Tirar 2 cupons cancelados", acao: "importar" });
   });
 });
 
+
+/** O grupo `documentos` da prévia de XML, zerado. */
+const docs = (): NonNullable<PreviaVendas["documentos"]> => ({
+  arquivos_lidos: 0, vendas_novas: 0, ja_importados: 0, ja_cancelados: 0, do_proprio_comanda: 0,
+  cancelamentos_do_comanda: { arquivos: 0, ainda_autorizados: 0 }, cancelados_no_envio: 0, repetidos_no_envio: 0, arquivos_cancelamento: 0,
+  nfe_fora: [], outros_cnpjs: [], ignorados: [], com_problema: [],
+  cancelamentos_de_importados: { documentos: 0, linhas: 0, valor_centavos: 0, ini: null, fim: null },
+  cancelamentos_sem_venda_xml: { documentos: 0, ini: null, fim: null, fontes: [] },
+});
+const semNbsp = (s: string) => s.replace(/\u00a0/g, " ");
+
+describe("XML: a conta dos arquivos e os avisos de cancelamento (revisão de 24/11)", () => {
+  it("a conta dos cupons novos tira cada grupo, inclusive os com problema e os cancelamentos do Comanda", () => {
+    const d = {
+      ...docs(), arquivos_lidos: 20, vendas_novas: 10, ja_importados: 2, cancelamentos_do_comanda: { arquivos: 1, ainda_autorizados: 0 },
+      arquivos_cancelamento: 2, com_problema: [{ arquivo: "a.xml", motivo: "x" }, { arquivo: "b.xml", motivo: "y" }],
+      ignorados: [{ motivo: "inutilização de numeração", arquivos: ["i.xml"] }],
+      outros_cnpjs: [{ cnpj: "98765432000110", nome_em_empresas: "Cana Express", documentos: 1, cancelamentos: 1, incluido: false }],
+    };
+    expect(contaCuponsNovos(d)).toBe(
+      "= 20 arquivos lidos − 2 já importados antes − 1 cancelamento de cupom do próprio Comanda (não aplicado) − 2 arquivos de cancelamento − 1 ignorado − 2 com problema (a soma dos itens não bate com o total) − 2 de outra empresa, fora da importação");
+  });
+  it("outra empresa sua: cupons, só cancelamentos, ou os dois (CNPJ formatado)", () => {
+    const o = { cnpj: "98765432000110", nome_em_empresas: "Cana Express Ltda", documentos: 8, cancelamentos: 0, incluido: false };
+    expect(textoOutraEmpresa(o)).toEqual({
+      texto: "8 cupons foram emitidos por Cana Express Ltda (98.765.432/0001-10), cadastrada em Empresas. Eles só entram se forem vendas desta loja.",
+      rotulo: "Incluir os 8 cupons de Cana Express Ltda",
+    });
+    expect(textoOutraEmpresa({ ...o, documentos: 0, cancelamentos: 2 })).toEqual({
+      texto: "Chegou o cancelamento de 2 cupons de Cana Express Ltda (98.765.432/0001-10), cadastrada em Empresas, que nunca entraram aqui. Se eram vendas desta loja, inclua para o cancelamento ficar registrado (o cupom que chegar depois não entra).",
+      rotulo: "Incluir os 2 cancelamentos de Cana Express Ltda",
+    });
+    expect(textoOutraEmpresa({ ...o, documentos: 1, cancelamentos: 1 }).rotulo).toBe("Incluir 1 cupom e 1 cancelamento de Cana Express Ltda");
+  });
+  it("cancelamento de cupom do próprio Comanda: não aplicado, e quantos o Comanda ainda tem como autorizados", () => {
+    expect(textoCancelamentosDoComanda({ arquivos: 2, ainda_autorizados: 1 })).toBe(
+      "2 arquivos de cancelamento são de cupons emitidos aqui no Comanda: o Comanda não cancela cupom dele por arquivo. 1 desses cupons continua autorizado aqui: se ele foi cancelado de verdade, confira em Cupom fiscal.");
+    expect(textoCancelamentosDoComanda({ arquivos: 1, ainda_autorizados: 0 })).toBe(
+      "1 arquivo de cancelamento é de cupom emitido aqui no Comanda: o Comanda não cancela cupom dele por arquivo. O cupom já está cancelado aqui.");
+  });
+  it("cancelamento de cupom que não veio por XML com vendas de planilha nos dias dele: a planilha não é corrigida", () => {
+    const c = { documentos: 3, ini: "2026-11-20", fim: "2026-11-21", fontes: [{ fonte: "Planilha padrão do Comanda", tipo: "padrao" as const, vendas: 40, valor_centavos: 120000 }] };
+    expect(semNbsp(textoCancelamentoSemVendaXml(c)!)).toBe(
+      "3 cupons cancelados não vieram por XML. De 20/11 a 21/11 há vendas de Planilha padrão do Comanda (40 vendas, R$ 1.200,00): se esses cupons são do mesmo caixa, as vendas deles continuam lá, porque o Comanda não liga o cupom ao pedido da planilha. Para corrigir, importe de novo o relatório desses dias com Substituir.");
+    expect(textoCancelamentoSemVendaXml({ ...c, fontes: [] })).toBeNull();
+  });
+});
 
 describe("conferência do PDF", () => {
   const l = (valor: string, quantidade = "1", produto = "Caldo") => ({ id: "x", pedido: null, data: null, hora: null, produto, quantidade, valor });

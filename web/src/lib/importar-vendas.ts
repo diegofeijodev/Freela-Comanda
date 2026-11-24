@@ -1,6 +1,7 @@
 // Importar vendas de outros sistemas (desenho 24/11, A.5; UX 2.3): o que a tela calcula sozinha, puro e testado no vitest.
 // Os números da prévia vêm do servidor; aqui só a leitura da planilha, a sugestão de colunas e os textos.
-import type { PreviaVendas } from "./erp-api";
+import { formatarCnpj } from "./certificado";
+import type { CancelamentosSemVendaXml, OutraEmpresaXml, PreviaVendas } from "./erp-api";
 import type { Celula } from "./parse";
 
 export const CAMPOS_VENDA = ["data", "produto", "quantidade", "valor_total", "pedido", "hora", "preco_unitario", "desconto", "taxa", "frete"] as const;
@@ -179,6 +180,66 @@ export function textoJaExistentes(p: PreviaVendas, sistema: string): { titulo: s
     ? ` Exemplo: o pedido ${ex.exemplo.pedido} de ${diaMes(ex.exemplo.data)} já existe vindo de ${ex.fonte}. Se forem vendas diferentes, defina letras antes do pedido para ${sistema}.`
     : "";
   return { titulo: `${plural(p.linhas.ja_existentes, "linha já está", "linhas já estão")} no Comanda e não entram.`, texto: `${partes.join(" e ")}.${exemplo}` };
+}
+
+// ---------- XML (UX 2.6.1/2.6.2): a conta dos arquivos e os avisos de cancelamento
+
+type DocumentosPrevia = NonNullable<PreviaVendas["documentos"]>;
+
+/** "= 1.515 arquivos lidos − 12 já importados antes − …": cada arquivo lido está em exatamente um grupo (a conta do servidor fecha). */
+export function contaCuponsNovos(d: DocumentosPrevia): string {
+  const fora = d.outros_cnpjs.filter((o) => !o.incluido).reduce((s, o) => s + o.documentos + o.cancelamentos, 0);
+  const grupos: [number, string, string][] = [
+    [d.ja_importados, "já importado antes", "já importados antes"],
+    [d.ja_cancelados, "já cancelado antes", "já cancelados antes"],
+    [d.do_proprio_comanda, "emitido pelo próprio Comanda", "emitidos pelo próprio Comanda"],
+    [d.cancelamentos_do_comanda.arquivos, "cancelamento de cupom do próprio Comanda (não aplicado)", "cancelamentos de cupons do próprio Comanda (não aplicados)"],
+    [d.cancelados_no_envio, "cancelado (a venda e o cancelamento vieram juntos)", "cancelados (a venda e o cancelamento vieram juntos)"],
+    [d.arquivos_cancelamento, "arquivo de cancelamento", "arquivos de cancelamento"],
+    [d.repetidos_no_envio, "repetido neste envio", "repetidos neste envio"],
+    [d.ignorados.reduce((s, g) => s + g.arquivos.length, 0), "ignorado", "ignorados"],
+    [d.com_problema.length, "com problema (a soma dos itens não bate com o total)", "com problema (a soma dos itens não bate com o total)"],
+    [d.nfe_fora.length, "nota fiscal (NF-e) fora da importação", "notas fiscais (NF-e) fora da importação"],
+    [fora, "de outra empresa, fora da importação", "de outra empresa, fora da importação"],
+  ];
+  return `= ${plural(d.arquivos_lidos, "arquivo lido", "arquivos lidos")}${grupos.filter(([n]) => n > 0).map(([n, um, varios]) => ` − ${plural(n, um, varios)}`).join("")}`;
+}
+
+/** P12: cupons e/ou cancelamentos de um CNPJ cadastrado em Empresas (a caixa "Incluir" vale para os dois). */
+export function textoOutraEmpresa(o: OutraEmpresaXml): { texto: string; rotulo: string } {
+  const quem = `${o.nome_em_empresas} (${formatarCnpj(o.cnpj)}), cadastrada em Empresas`;
+  if (o.documentos === 0) {
+    return {
+      texto: `Chegou o cancelamento de ${plural(o.cancelamentos, "cupom", "cupons")} de ${quem}, que nunca ${o.cancelamentos === 1 ? "entrou" : "entraram"} aqui. Se ${o.cancelamentos === 1 ? "era venda" : "eram vendas"} desta loja, inclua para o cancelamento ficar registrado (o cupom que chegar depois não entra).`,
+      rotulo: `Incluir ${o.cancelamentos === 1 ? "o cancelamento" : `os ${inteiro(o.cancelamentos)} cancelamentos`} de ${o.nome_em_empresas}`,
+    };
+  }
+  const texto = o.cancelamentos === 0
+    ? `${plural(o.documentos, "cupom foi emitido", "cupons foram emitidos")} por ${quem}. ${o.documentos === 1 ? "Ele só entra se for venda" : "Eles só entram se forem vendas"} desta loja.`
+    : `${plural(o.documentos, "cupom", "cupons")} e ${plural(o.cancelamentos, "cancelamento", "cancelamentos")} de cupons de ${quem}. Só entram se forem vendas desta loja.`;
+  const rotulo = o.cancelamentos === 0
+    ? `Incluir ${o.documentos === 1 ? "o cupom" : `os ${inteiro(o.documentos)} cupons`} de ${o.nome_em_empresas}`
+    : `Incluir ${plural(o.documentos, "cupom", "cupons")} e ${plural(o.cancelamentos, "cancelamento", "cancelamentos")} de ${o.nome_em_empresas}`;
+  return { texto, rotulo };
+}
+
+/** Cancelamentos de cupons do próprio Comanda vindos no arquivo: não são aplicados (o cupom do Comanda se cancela em Cupom fiscal). */
+export function textoCancelamentosDoComanda(c: DocumentosPrevia["cancelamentos_do_comanda"]): string {
+  const um = c.arquivos === 1;
+  const base = `${plural(c.arquivos, "arquivo de cancelamento é de cupom emitido", "arquivos de cancelamento são de cupons emitidos")} aqui no Comanda: o Comanda não cancela cupom dele por arquivo.`;
+  if (c.ainda_autorizados === 0) return `${base} ${um ? "O cupom já está cancelado aqui." : "Os cupons já estão cancelados aqui."}`;
+  const ativos = c.ainda_autorizados === 1 ? "1 desses cupons continua autorizado aqui: se ele foi cancelado" : `${inteiro(c.ainda_autorizados)} desses cupons continuam autorizados aqui: se eles foram cancelados`;
+  return `${base} ${ativos} de verdade, confira em Cupom fiscal.`;
+}
+
+/**
+ * Cancelamento de cupom cuja venda nunca veio por XML, com vendas de planilha nos dias dele: a planilha não é corrigida (o pedido do PDV
+ * não aparece no cupom, então não dá para saber se é o mesmo caixa). Null = nada a avisar.
+ */
+export function textoCancelamentoSemVendaXml(c: CancelamentosSemVendaXml): string | null {
+  if (!c.documentos || !c.fontes.length || !c.ini || !c.fim) return null;
+  const fontes = c.fontes.map((f) => `${f.fonte} (${plural(f.vendas, "venda", "vendas")}, ${reais(f.valor_centavos)})`).join(" e ");
+  return `${plural(c.documentos, "cupom cancelado não veio", "cupons cancelados não vieram")} por XML. ${c.ini === c.fim ? `Em ${diaMes(c.ini)}` : `De ${diaMes(c.ini)} a ${diaMes(c.fim)}`} há vendas de ${fontes}: se ${c.documentos === 1 ? "esse cupom é" : "esses cupons são"} do mesmo caixa, as vendas ${c.documentos === 1 ? "dele continuam" : "deles continuam"} lá, porque o Comanda não liga o cupom ao pedido da planilha. Para corrigir, importe de novo o relatório desses dias com Substituir.`;
 }
 
 export type Botao = { rotulo: string; destrutivo: boolean; acao: "importar" | "dialogo" | "nada"; falta?: string };

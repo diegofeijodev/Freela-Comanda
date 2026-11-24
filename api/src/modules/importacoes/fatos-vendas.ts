@@ -116,11 +116,11 @@ export class FatosVendas {
     return out;
   }
 
-  /** Chaves que são de cupons emitidos pelo próprio Comanda. */
+  /** Cupons emitidos pelo próprio Comanda entre as chaves: chave → situação (`cancelado` = já cancelado aqui). */
   async doComanda(chaves: readonly string[]) {
-    if (!chaves.length) return new Set<string>();
-    const rs = await this.db.nfce_cupons.findMany({ where: { chave: { in: [...chaves] } }, select: { chave: true } });
-    return new Set(rs.map((r) => r.chave));
+    if (!chaves.length) return new Map<string, string>();
+    const rs = await this.db.nfce_cupons.findMany({ where: { chave: { in: [...chaves] } }, select: { chave: true, situacao: true } });
+    return new Map(rs.map((r) => [r.chave, r.situacao]));
   }
 
   /** As vendas dos documentos que um cancelamento vai tirar (P8: quantas linhas, quanto e de quando a quando). */
