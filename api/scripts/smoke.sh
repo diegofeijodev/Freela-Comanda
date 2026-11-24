@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Smoke da API contra um banco recém-semeado (use scripts/smoke-capped.sh — ele cria o banco descartável e sobe a API).
 # Cobre: permissões admin × loja (o papel das políticas RLS), as funções de regra (inventário cego, fechamento, lista de
-# compras, recebimento, entrada de nota), contas/caixa/DRE, importações, usuários e a leitura de PDF sem chave.
+# compras, recebimento, entrada de nota), contas/caixa/DRE, importações, usuários e a leitura de PDF sem chave. No fim: o roteiro
+# ponta a ponta (E1–E9: nota → estoque → ficha → venda/baixa → CMV → DRE; ponto; empresas), a Cana (K1–K6) e o multiempresa.
 set -uo pipefail
 BASE=${BASE:-http://localhost:3096}
 PGDB=${PGDB:-erpfreela_smoke}
@@ -943,6 +944,251 @@ CODE=$(curl -s -o "$OUT" -w '%{http_code}' -H "authorization: Bearer $ADM" -F "a
 check "V6 relatório em PDF sem chave de IA: a frase de hoje" "Leitura de PDF não configurada: cadastre a chave de uma IA em Configurações." "$(j .error.message)"
 CODE=$(curl -s -o "$OUT" -w '%{http_code}' -H "authorization: Bearer $ADM" -F "arquivo=@$TXT" "$BASE$IV/vendas/ler-pdf"); BODY=$(cat "$OUT")
 check "V6 arquivo que não é PDF: 400" "400 O arquivo não é um PDF." "$CODE $(j .error.message)"
+
+# ========== Roteiro ponta a ponta (desenho 2026-11-24, Parte C) e Cana (Parte B). Ficam no FIM de propósito: o 1º POST /v1/empresas
+# toma o `public` e regrava configuracoes (CNPJ), que os blocos de certificado, SEFAZ, cupom e V usam. Nomes e datas próprios.
+dias() { TZ=America/Sao_Paulo date -d "$1 days" +%F; }
+br() { echo "${1:8:2}/${1:5:2}"; }
+sql_falha() { docker exec erp-freela-postgres psql -U erpfreela -d "$PGDB" -tAc "$1" >/dev/null 2>&1; echo $?; }
+reqE() { # reqE EMPRESA_ID MÉTODO CAMINHO TOKEN [CORPO_JSON] — com o cabeçalho X-Empresa-Id (o seletor do master)
+  local args=(-s -o "$OUT" -w '%{http_code}' -X "$2" "$BASE$3" -H "x-empresa-id: $1")
+  [ -n "${4:-}" ] && args+=(-H "authorization: Bearer $4")
+  [ -n "${5:-}" ] && args+=(-H 'content-type: application/json' -d "$5")
+  CODE=$(curl "${args[@]}")
+  BODY=$(cat "$OUT")
+}
+MES=${HOJE:0:7}
+
+# ---------- E1–E6: nota (CX C/12) → estoque → preço → ficha → venda/baixa → de-para tardio → inventário/CMV → conta da nota no DRE
+req POST /v1/itens-estoque "$ADM" '{"nome":"Smoke E Copo"}'; EI=$(j .id)
+req PATCH "/v1/itens-estoque/$EI" "$ADM" '{"unidade":"un","preco_unitario":1.5}'; check "E: insumo novo a R\$ 1,50" 1.5 "$(j .preco_unitario)"
+req POST /v1/itens-cardapio "$ADM" '{"nome":"Smoke E Prato"}'; EP=$(j .id)
+req POST "/v1/itens-cardapio/$EP/ingredientes" "$ADM" "{\"item_estoque_id\":\"$EI\",\"quantidade\":0.5}"; check "E: ficha com o insumo" 201 "$CODE"
+ficha_e() { req GET /v1/fichas/resumo "$ADM"; echo "$BODY" | jq -r --arg id "$EP" '.[] | select(.id==$id) | .custo_ingredientes'; }
+check "E2: custo da ficha antes da nota = 0,5 × 1,50" 0.75 "$(ficha_e)"
+nota_e() { # nota_e CHAVE NÚMERO ITENS(json) FORMA PARCELAS(json)
+  jq -nc --arg ch "$1" --arg n "$2" --argjson it "$3" --arg fp "$4" --argjson pa "$5" --arg d "$HOJE" \
+    '{chave:$ch,numero:$n,serie:"1",fornecedor_nome:"Distribuidora E Smoke",fornecedor_cnpj:"12.345.678/0001-99",data_emissao:$d,data_entrada:$d,
+      valor_total:([$it[] | .quantidade * .valor_unitario] | add),forma_pagamento:$fp,origem:"xml",atualizar_preco:true,itens:$it,parcelas:$pa}'
+}
+EK1=$(chave_dv "3526111234567800019955001000008801100008801")
+req POST /v1/notas "$ADM" "$(nota_e "$EK1" 8801 "[{\"codigo\":\"E01\",\"descricao\":\"COPO CX C/12\",\"unidade\":\"CX\",\"quantidade\":2,\"valor_unitario\":24,\"item_estoque_id\":\"$EI\",\"fator\":12}]" boleto "[{\"vencimento\":\"$(dias 30)\",\"valor\":48}]")"
+check "E1: nota com CX C/12 (a prazo, 1 parcela)" "201 1" "$CODE $(j .contas)"; EN1=$(j .id)
+check "E1: entrada = 2 CX × 12 = 24 un, custo = R\$ 24 ÷ 12 = R\$ 2,00" "24 2" "$(sql "select quantidade::float || ' ' || custo_unitario::float from movimentacoes where item_estoque_id='$EI' and tipo='entrada_compra'")"
+check "E1: preço do insumo por unidade (não por caixa)" 2 "$(sql "select preco_unitario::float from itens_estoque where id='$EI'")"
+check "E2: custo da ficha depois da nota = 0,5 × 2,00" 1 "$(ficha_e)"
+req POST /v1/importacoes/vendas "$ADM" "{\"arquivo\":\"e3.csv\",\"modo\":\"acrescentar\",\"linhas\":[{\"pedido\":\"E3-1\",\"data\":\"$HOJE\",\"produto_relatorio\":\"SMOKE E PRATO\",\"item_cardapio\":\"smoke e prato\",\"quantidade\":\"2\",\"valor_total\":\"30\"}]}"
+check "E3: venda importada" 1 "$(j .inseridas)"
+check "E3: baixa = −2 × 0,5 un, ao preço novo (R\$ 2,00)" "-1 2" "$(sql "select m.quantidade::float || ' ' || m.custo_unitario::float from movimentacoes m join vendas v on v.id=m.venda_id where v.pedido='E3-1'")"
+req POST /v1/importacoes/vendas "$ADM" "{\"arquivo\":\"e6.csv\",\"modo\":\"acrescentar\",\"linhas\":[{\"pedido\":\"E6-1\",\"data\":\"$HOJE\",\"produto_relatorio\":\"SMOKE E TARDIO\",\"quantidade\":\"4\",\"valor_total\":\"60\"}]}"
+check "E6: venda sem item do cardápio entra sem baixa" "1 0" "$(j .inseridas) $(sql "select count(*) from movimentacoes m join vendas v on v.id=m.venda_id where v.pedido='E6-1'")"
+req PUT /v1/de-para "$ADM" "{\"produto_relatorio\":\"SMOKE E TARDIO\",\"item_cardapio_id\":\"$EP\"}"; check "E6: de-para tardio religa a venda" 1 "$(j .vendas)"
+check "E6: a baixa nasce pela ficha (−4 × 0,5)" -2 "$(sql "select sum(m.quantidade)::float from movimentacoes m join vendas v on v.id=m.venda_id where v.pedido='E6-1'")"
+EK2=$(chave_dv "3526111234567800019955001000008802100008802")
+req POST /v1/notas "$ADM" "$(nota_e "$EK2" 8802 "[{\"codigo\":\"E02\",\"descricao\":\"COPO UN\",\"unidade\":\"UN\",\"quantidade\":12,\"valor_unitario\":2.5,\"item_estoque_id\":\"$EI\",\"fator\":1}]" pix '[]')"
+check "E4: 2ª nota (12 un a R\$ 2,50, à vista)" "201 true" "$CODE $(j .a_vista)"
+req POST /v1/inventarios "$ADM" "{\"data\":\"$HOJE\",\"periodicidade\":\"semanal\"}"; check "E4: abre o inventário de hoje" 201 "$CODE"; INV3=$(j .id)
+req GET "/v1/inventarios/$INV3/contagem" "$LOJA"; LST=$BODY
+check "E4: o insumo novo está na contagem (cega)" true "$(echo "$LST" | jq 'any(.[]; .nome=="Smoke E Copo") and ([.[] | has("teorico_snapshot")] | any | not)')"
+for id in $(echo "$LST" | jq -r '.[].id'); do
+  q=4; [ "$(echo "$LST" | jq -r --arg id "$id" '.[] | select(.id==$id) | .nome')" == "Smoke E Copo" ] && q=30
+  for _ in 1 2 3; do req POST "/v1/inventario-itens/$id/contagem" "$LOJA" "{\"quantidade\":$q}"; [ "$(j .resultado)" == recontar ] || break; done
+done
+req POST "/v1/inventarios/$INV3/fechar" "$ADM"; check "E4: fecha o inventário de hoje" 200 "$CODE"
+req GET /v1/inventarios/cmv "$ADM"
+check "E4: CMV do copo = (0 + 36 − 30) × R\$ 2,1667 = R\$ 13,00" 13 "$(echo "$BODY" | jq --arg inv "$INV3" --arg it "$EI" '.[] | select(.inventario_id==$inv and .item_estoque_id==$it) | (.cmv_valor*100|round/100)')"
+check "E4: as parcelas: entradas 24 + 12, consumo 0 + 36 − 30 = 6, custo médio (24 × 2 + 12 × 2,50) ÷ 36" "36 6 2.1667" \
+  "$(sql "select entradas::float || ' ' || consumo_qtd::float || ' ' || round(custo_unit,4)::float from v_cmv_periodo where inventario_id='$INV3' and item_estoque_id='$EI'")"
+PL_CMV=$(sql "select p.id from plano_contas p join dre_subgrupos s on s.nome = p.subgrupo where s.is_cmv and p.conta = 'COMPRA DE CARNES'")
+CC_E=$(sql "select id from centros_custo order by nome limit 1")
+CE=$(sql "select id from contas_pagar where nota_id='$EN1'")
+req POST /v1/contas-pagar/liquidar "$ADM" "{\"ids\":[\"$CE\"],\"pago_em\":\"$HOJE\",\"plano_conta_id\":\"$PL_CMV\",\"centro_custo_id\":\"$CC_E\"}"; check "E5: liquida a conta da nota" 1 "$(j .liquidadas)"
+req GET "/v1/dre/pagos?mes=$MES" "$ADM"
+check "E5: a conta da nota entra nas despesas do mês do pagamento, numa classe de CMV" 48 "$(echo "$BODY" | jq --arg p "$PL_CMV" '[.[] | select(.plano_conta_id==$p) | .valor_pago] | add')"
+
+# ---------- Cana (desenho Parte B, contrato §22): K1–K6 no public
+CANA=/v1/cana
+MOV0=$(sql "select count(*) from movimentacoes")
+LOJA_ID=$(sql "select id from users where email='loja@erpfreela.local'")
+req POST $CANA/lancamentos "$LOJA" "{\"tipo\":\"recebimento\",\"data\":\"$HOJE\",\"duzias\":12}"; check "K1: colaborador sem a tela Cana não lança: 403" 403 "$CODE"
+req GET $CANA/lancamentos/recentes "$LOJA"; check "K1: nem vê os próprios: 403" 403 "$CODE"
+req PATCH "/v1/usuarios/$LOJA_ID/modulos" "$ADM" '{"modulos":["painel","fichas","inventario","compras","ponto","cana"]}'
+check "K1: o admin libera a tela Cana" true "$(echo "$BODY" | jq '.modulos | index("cana") != null')"
+K_CH=00000000-0000-4000-8000-00000000ca01
+K_REC="{\"tipo\":\"recebimento\",\"data\":\"$HOJE\",\"duzias\":12,\"fornecedor\":\" Sítio  Boa Vista \",\"chave_idempotencia\":\"$K_CH\"}"
+req POST $CANA/lancamentos "$LOJA" "$K_REC"
+check "K1: a loja lança o recebimento de hoje" "201 12 Sítio Boa Vista false" "$CODE $(j .duzias) $(j .fornecedor) $(j .repetido)"; KL1=$(j .id)
+req POST $CANA/lancamentos "$LOJA" "$K_REC"
+check "K1 (7.13): a mesma chave de novo = 200 com o da 1ª vez, sem lançar outro" "200 $KL1 true 1" "$CODE $(j .id) $(j .repetido) $(sql "select count(*) from cana_lancamentos where chave_idempotencia='$K_CH'")"
+req POST $CANA/lancamentos "$LOJA" "{\"tipo\":\"recebimento\",\"data\":\"$HOJE\",\"duzias\":120,\"chave_idempotencia\":\"$K_CH\"}"
+check "K1 (7.13): a mesma chave com outro número: 409" "409 CANA_CHAVE_REPETIDA" "$CODE $(j .error.code)"
+req POST $CANA/lancamentos "$ADM" "$K_REC"; check "K1 (7.13): a chave de outra pessoa não devolve o lançamento dela: 409" 409 "$CODE"
+req POST $CANA/lancamentos "$LOJA" "{\"tipo\":\"recebimento\",\"data\":\"$(dias -3)\",\"duzias\":5}"
+check "K1: a loja com data de 3 dias atrás: 400 CANA_DATA_FORA" "400 CANA_DATA_FORA A loja lança só hoje ou ontem." "$CODE $(j .error.code) $(j .error.message)"
+req POST $CANA/lancamentos "$ADM" "{\"tipo\":\"recebimento\",\"data\":\"$(dias 1)\",\"duzias\":5}"; check "K1: data no futuro (admin): 400" "400 Data no futuro." "$CODE $(j .error.message)"
+req POST $CANA/lancamentos "$LOJA" "{\"tipo\":\"producao\",\"data\":\"$HOJE\",\"litros_caldo\":0}"
+check "K1: produção sem litros: 400 com a frase" "400 Digite quantos litros de caldo saíram (maior que zero)." "$CODE $(j .error.message)"
+for r in parametros produtos "lancamentos?ini=$HOJE&fim=$HOJE" semanas semanas/atual; do req GET "$CANA/$r" "$LOJA"; check "K1: loja barrada em GET $CANA/$r" 403 "$CODE"; done
+for r in "PUT parametros" "PUT produtos/$KL1" "POST lancamentos/$KL1/anular" "POST lancamentos/$KL1/corrigir"; do
+  req "${r%% *}" "$CANA/${r#* }" "$LOJA" '{}'; check "K1: loja barrada em ${r%% *} $CANA/${r#* }" 403 "$CODE"
+done
+req GET $CANA/parametros "$ADM"; check "K4: nada vem preenchido" "null null 0" "$(j .litros_por_duzia_esperado) $(j .rendimento_frozen) $(j '.historico|length')"
+req POST /v1/itens-cardapio "$ADM" '{"nome":"Caldo de cana 300 ml"}'; KC=$(j .id)
+req POST /v1/itens-cardapio "$ADM" '{"nome":"Frozen de cana 400 ml"}'; KF=$(j .id)
+req POST /v1/itens-cardapio "$ADM" '{"nome":"Garapa jarra"}'
+req GET $CANA/produtos "$ADM"
+check "K4: os produtos com nome de caldo são sugeridos, nenhum configurado" "true false 0" \
+  "$(echo "$BODY" | jq --arg c "$KC" '.[] | select(.item_cardapio_id==$c) | .parece_cana') $(echo "$BODY" | jq --arg p "$EP" '.[] | select(.item_cardapio_id==$p) | .parece_cana') $(echo "$BODY" | jq '[.[] | select(.config != null)] | length')"
+req PUT "$CANA/produtos/$KC" "$ADM" '{"ml_por_unidade":300,"frozen":false,"ativo":true}'; check "K4: configura o caldo de 300 ml" "300 Admin Demo" "$(j .ml_por_unidade) $(j .atualizado_por_nome)"
+req PUT "$CANA/produtos/$KF" "$ADM" '{"ml_por_unidade":400,"frozen":true,"ativo":true}'; check "K4: configura o frozen de 400 ml" true "$(j .frozen)"
+req PUT "$CANA/produtos/$KC" "$ADM" '{"ml_por_unidade":0,"frozen":false,"ativo":true}'; check "K4: ml zero: 400" 400 "$CODE"
+req PUT "$CANA/produtos/00000000-0000-4000-8000-000000000000" "$ADM" '{"ml_por_unidade":300,"frozen":false,"ativo":true}'; check "K4: produto inexistente: 404" 404 "$CODE"
+req PUT $CANA/parametros "$ADM" '{"litros_por_duzia_esperado":5.5,"rendimento_frozen":1.25}'
+check "K4: salva os números, com quem e o histórico" "5.5 1.25 Admin Demo 1" "$(j .litros_por_duzia_esperado) $(j .rendimento_frozen) $(j .atualizado_por_nome) $(j '.historico|length')"
+C1=$(dias -8); C2=$(dias -1)
+lanca() { req POST $CANA/lancamentos "$ADM" "$1"; }
+lanca "{\"tipo\":\"contagem\",\"data\":\"$C1\",\"duzias\":4,\"litros_caldo\":3}"; check "K4: contagem de partida (admin, 8 dias atrás)" 201 "$CODE"; KC1=$(j .id)
+lanca "{\"tipo\":\"recebimento\",\"data\":\"$(dias -7)\",\"duzias\":4}"
+lanca "{\"tipo\":\"recebimento\",\"data\":\"$(dias -5)\",\"duzias\":4}"
+lanca "{\"tipo\":\"recebimento\",\"data\":\"$(dias -3)\",\"duzias\":40}"; KERR=$(j .id)
+lanca "{\"tipo\":\"recebimento\",\"data\":\"$C1\",\"duzias\":100}"
+lanca "{\"tipo\":\"producao\",\"data\":\"$(dias -6)\",\"litros_caldo\":25,\"duzias\":5}"
+lanca "{\"tipo\":\"producao\",\"data\":\"$(dias -2)\",\"litros_caldo\":25}"; check "K4: produção" 201 "$CODE"
+lanca "{\"tipo\":\"contagem\",\"data\":\"$C2\",\"duzias\":60,\"litros_caldo\":5}"; KERR2=$(j .id)
+lanca "{\"tipo\":\"contagem\",\"data\":\"$C2\",\"duzias\":6,\"litros_caldo\":5}"
+check "K2: 2ª contagem no mesmo dia (admin): 409 com a frase" "409 CANA_CONTAGEM_DO_DIA Já existe uma contagem em $(br "$C2"). Anule a anterior para lançar outra." "$CODE $(j .error.code) $(j .error.message)"
+req POST $CANA/lancamentos "$LOJA" "{\"tipo\":\"contagem\",\"data\":\"$C2\",\"duzias\":6,\"litros_caldo\":5}"
+check "K2: a mesma coisa pela loja: a frase da loja (7.15)" "409 Já existe uma contagem em $(br "$C2"). Se ela está errada, avise o gerente: só ele corrige." "$CODE $(j .error.message)"
+req POST "$CANA/lancamentos/$KERR2/anular" "$ADM" '{"motivo":" ab "}'; check "K2: anular sem motivo: 400" "400 CANA_MOTIVO_OBRIGATORIO Escreva o motivo (pelo menos 3 letras)." "$CODE $(j .error.code) $(j .error.message)"
+req POST "$CANA/lancamentos/$KERR2/anular" "$ADM" '{"motivo":"Número errado"}'; check "K2: anula com motivo (fica no livro)" "200 Número errado Admin Demo" "$CODE $(j .anulado_motivo) $(j .anulado_por_nome)"
+req POST "$CANA/lancamentos/$KERR2/anular" "$ADM" '{"motivo":"de novo"}'; check "K2: já anulado: 409" "409 CANA_JA_ANULADO" "$CODE $(j .error.code)"
+lanca "{\"tipo\":\"contagem\",\"data\":\"$C2\",\"duzias\":6,\"litros_caldo\":5}"; check "K2: com a anterior anulada, a contagem entra" 201 "$CODE"; KC2=$(j .id)
+req POST "$CANA/lancamentos/$KERR/corrigir" "$ADM" "{\"motivo\":\"Número errado\",\"data\":\"$(dias -3)\",\"duzias\":0}"
+check "K2 (7.14): corrigir com número inválido: 400 e o antigo continua valendo" "400 0" "$CODE $(sql "select count(*) from cana_lancamentos where id='$KERR' and anulado_em is not null")"
+req POST "$CANA/lancamentos/$KERR/corrigir" "$ADM" "{\"motivo\":\"Número errado\",\"data\":\"$(dias -3)\",\"duzias\":4}"
+check "K2 (7.14): corrigir anula o antigo e lança o novo com substitui_id, numa transação" "201 $KERR 4 Corrigido: Número errado" "$CODE $(j .substitui_id) $(j .duzias) $(sql "select anulado_motivo from cana_lancamentos where id='$KERR'")"
+req POST "$CANA/lancamentos/$KERR/corrigir" "$ADM" "{\"motivo\":\"de novo\",\"data\":\"$(dias -3)\",\"duzias\":4}"; check "K2: corrigir o já corrigido: 409" 409 "$CODE"
+check "K3: o banco recusa apagar lançamento" 1 "$(sql_falha "delete from cana_lancamentos where id='$KC1'")"
+check "K3: o banco recusa mudar o número" 1 "$(sql_falha "update cana_lancamentos set duzias = 5 where id='$KC1'")"
+check "K3: o banco recusa desfazer a anulação" 1 "$(sql_falha "update cana_lancamentos set anulado_em = null, anulado_por = null, anulado_por_nome = null, anulado_motivo = null where id='$KERR2'")"
+check "K3: o banco recusa mudar o histórico dos números" 1 "$(sql_falha "delete from cana_parametros_historico")"
+req POST /v1/importacoes/vendas "$ADM" "{\"arquivo\":\"cana.csv\",\"modo\":\"acrescentar\",\"linhas\":[
+{\"pedido\":\"K-1\",\"data\":\"$(dias -5)\",\"produto_relatorio\":\"CALDO DE CANA 300\",\"item_cardapio\":\"caldo de cana 300 ml\",\"quantidade\":\"60\",\"valor_total\":\"600\"},
+{\"pedido\":\"K-2\",\"data\":\"$C2\",\"produto_relatorio\":\"CALDO DE CANA 300\",\"item_cardapio\":\"caldo de cana 300 ml\",\"quantidade\":\"40\",\"valor_total\":\"400\"},
+{\"pedido\":\"K-3\",\"data\":\"$(dias -4)\",\"produto_relatorio\":\"FROZEN 400\",\"item_cardapio\":\"frozen de cana 400 ml\",\"quantidade\":\"40\",\"valor_total\":\"800\"},
+{\"pedido\":\"K-4\",\"data\":\"$C1\",\"produto_relatorio\":\"CALDO DE CANA 300\",\"item_cardapio\":\"caldo de cana 300 ml\",\"quantidade\":\"1000\",\"valor_total\":\"10000\"},
+{\"pedido\":\"K-5\",\"data\":\"$(dias -4)\",\"produto_relatorio\":\"GARAPA JARRA\",\"item_cardapio\":\"garapa jarra\",\"quantidade\":\"12\",\"valor_total\":\"120\"},
+{\"pedido\":\"K-6\",\"data\":\"$(dias -4)\",\"produto_relatorio\":\"CALDO CANA 500\",\"quantidade\":\"8\",\"valor_total\":\"80\"}]}"
+check "K4: as vendas da semana entram pela importação (qualquer origem serve)" 6 "$(j .inseridas)"
+req GET $CANA/semanas "$ADM"
+check "K4: uma semana fechada, da contagem de partida até a de ontem" "2 1 $KC1 $KC2" "$(j .contagens) $(j '.semanas|length') $(j '.semanas[0].contagem_inicial.id') $(j '.semanas[0].contagem_final.id')"
+check "K4: os 4 números da lista (cana moída, produzido, vendido, perda)" "10 50 42.8 5.2" "$(j '.semanas[0].cana_moida') $(j '.semanas[0].caldo_produzido') $(j '.semanas[0].caldo_vendido') $(j '.semanas[0].perda')"
+req GET "$CANA/semanas/$KC2" "$ADM"
+check "K4: cana moída = 4 + 12 (3 recebimentos) − 6 = 10 dúzias" "4 12 3 6 10" "$(j .cana.inicio) $(j .cana.recebida.duzias) $(j .cana.recebida.lancamentos) $(j .cana.fim) $(j .cana.moida)"
+check "K4: caldo vendido = 30 L em copos + 16 L de frozen ÷ 1,25 = 42,8; perda = 3 + 50 − 42,8 − 5 = 5,2" "50 30 12.8 42.8 3 5 5.2" \
+  "$(j .caldo.produzido.litros) $(j .caldo.vendido.em_copos) $(j .caldo.vendido.em_frozen) $(j .caldo.vendido.litros) $(j .caldo.inicio.litros) $(j .caldo.fim.litros) $(j .caldo.perda)"
+check "K4: 5 L por dúzia (esperado 5,5 → −5 L, −9,09%); rendimento 42,8 ÷ 10 = 4,28" "5 5.5 -5 -9.09 4.28" \
+  "$(j .moagem.litros_por_duzia) $(j .moagem.esperado) $(j .moagem.diferenca_litros) $(j .moagem.diferenca_pct) $(j .rendimento.litros_vendidos_por_duzia)"
+check "K5: venda e recebimento no dia da contagem anterior ficam fora; venda no dia da contagem atual, dentro" "100 $(dias -7) $(dias -3)" \
+  "$(echo "$BODY" | jq --arg c "$KC" '.por_produto[] | select(.item_cardapio_id==$c) | .quantidade') $(j .cana.recebida.ini) $(j .cana.recebida.fim)"
+check "K4: avisos: a garapa vendida sem ml e o CALDO CANA 500 sem item do cardápio" "Garapa jarra|CALDO CANA 500" \
+  "$(j '.avisos[] | select(.codigo=="produto_sem_ml") | .dados.produtos[0].nome')|$(j '.avisos[] | select(.codigo=="venda_sem_cardapio") | .dados.produtos[0].produto_relatorio')"
+check "K4: calculada com a configuração de hoje" configuracao_de_hoje "$(j .calculada_com)"
+req PUT $CANA/parametros "$ADM" '{"litros_por_duzia_esperado":5.5,"rendimento_frozen":null}'
+req GET "$CANA/semanas/$KC2" "$ADM"; check "K4: sem o rendimento do frozen, os 40 frozen ficam fora, com o aviso" "30 40" "$(j .caldo.vendido.litros) $(j '.avisos[] | select(.codigo=="frozen_sem_rendimento") | .dados.vendidos')"
+req PUT $CANA/parametros "$ADM" '{"litros_por_duzia_esperado":5.5,"rendimento_frozen":1.25}'; check "K4: cada Salvar entra no histórico" 3 "$(j '.historico|length')"
+req GET "$CANA/semanas/$KC1" "$ADM"; check "K4: a contagem de partida não fecha semana: 404" 404 "$CODE"
+req GET "$CANA/semanas/atual" "$ADM"
+check "K4: em andamento desde a de ontem: o recebimento da loja de hoje, sem perda nem cana moída" "true $KC2 12 null null" \
+  "$(j .apuracao.em_andamento) $(j .apuracao.contagem_inicial.id) $(j .apuracao.cana.recebida.duzias) $(j .apuracao.caldo.perda) $(j .apuracao.cana.moida)"
+req GET "$CANA/lancamentos?ini=$C1&fim=$HOJE" "$ADM"
+check "K: a lista do admin traz tudo, com os 2 anulados e a correção" "11 2 $KERR" \
+  "$(j length) $(echo "$BODY" | jq '[.[] | select(.anulado_em != null)] | length') $(echo "$BODY" | jq -r '.[] | select(.substitui_id != null) | .substitui_id')"
+req GET $CANA/lancamentos/recentes "$LOJA"
+check "K (7.16): a loja vê só o que ela lançou, com hoje e ontem do servidor" "$HOJE $C2 1 $KL1 false false" \
+  "$(j .hoje) $(j .ontem) $(j '.lancamentos|length') $(j '.lancamentos[0].id') $(j '.lancamentos[0].anulado') $(j '.lancamentos[0].corrigido')"
+check "K (7.15): as contagens de hoje e ontem aparecem sem número nenhum" '[{"data":"'"$C2"'","keys":["data","em","por_nome"]}]' \
+  "$(echo "$BODY" | jq -c '[.contagens_lancadas[] | {data, keys: keys}]')"
+check "K (7.16): nenhuma conta, motivo ou id de quem lançou na resposta da loja" false "$(echo "$BODY" | jq '[.. | objects | has("anulado_motivo") or has("perda") or has("moida") or has("lancado_por") or has("duzias_esperadas")] | any')"
+check "K (7.16): os fornecedores já usados" '["Sítio Boa Vista"]' "$(echo "$BODY" | jq -c .fornecedores)"
+check "K6: a Cana não mexe no estoque (movimentações iguais)" "$MOV0" "$(sql "select count(*) from movimentacoes")"
+
+# ---------- E9: Ponto (terminal liberado + PIN; batida nunca some)
+req POST /v1/ponto/terminais "$LOJA" '{"nome":"x"}'; check "E9: a loja não libera terminal" 403 "$CODE"
+req GET /v1/ponto/colaboradores "$LOJA"; check "E9: a loja não alcança os cadastros do ponto" 403 "$CODE"
+req POST /v1/ponto/colaboradores "$ADM" '{"nome":"Smoke Sem Empregador","pin":"1234"}'; check "E9: cadastra o colaborador (sem devolver o PIN)" "201 false" "$CODE $(echo "$BODY" | jq 'has("pin_hash") or has("pin")')"; P1=$(j .id)
+req POST /v1/ponto/terminais "$ADM" '{"nome":"Caixa Smoke"}'; check "E9: o admin libera o terminal (o token só agora)" "201 true" "$CODE $(echo "$BODY" | jq '(.token|length) > 20')"; TT=$(j .token)
+check "E9: o banco guarda só o hash do token" 0 "$(sql "select count(*) from ponto_terminais where token_hash='$TT'")"
+req GET /v1/ponto/terminal "$LOJA"; check "E9: a loja sem o cabeçalho do terminal: 403" "403 TERMINAL_NAO_AUTORIZADO" "$CODE $(j .error.code)"
+reqT() { # reqT MÉTODO CAMINHO [CORPO] — a loja no computador liberado
+  local args=(-s -o "$OUT" -w '%{http_code}' -X "$1" "$BASE$2" -H "authorization: Bearer $LOJA" -H "x-ponto-terminal: $TT")
+  [ -n "${3:-}" ] && args+=(-H 'content-type: application/json' -d "$3")
+  CODE=$(curl "${args[@]}")
+  BODY=$(cat "$OUT")
+}
+reqT GET /v1/ponto/terminal; check "E9: com o terminal, a loja vê os colaboradores ativos" true "$(echo "$BODY" | jq --arg id "$P1" 'any(.colaboradores[]; .id==$id)')"
+reqT POST /v1/ponto/terminal/identificar "{\"colaborador_id\":\"$P1\",\"pin\":\"9999\"}"; check "E9: PIN errado: 400 (nunca 401)" "400 PIN_INCORRETO" "$CODE $(j .error.code)"
+reqT POST /v1/ponto/terminal/marcar "{\"colaborador_id\":\"$P1\",\"pin\":\"1234\",\"tipo\":\"entrada\"}"; check "E9: marca a entrada" "201 entrada $HOJE" "$CODE $(j .marcacao.tipo) $(j .marcacao.data)"; PM=$(j .marcacao.id)
+req GET "/v1/ponto/espelho/$P1?mes=$MES" "$ADM"; check "E9: a batida aparece no espelho" 1 "$(echo "$BODY" | jq --arg d "$HOJE" '[.dias[] | select(.data==$d) | .marcacoes[]] | length')"
+req POST "/v1/ponto/marcacoes/$PM/anular" "$ADM" '{"motivo":""}'; check "E9: anular sem motivo: 400" 400 "$CODE"
+req POST "/v1/ponto/marcacoes/$PM/corrigir" "$ADM" '{"hora":"00:01","tipo":"entrada","motivo":"Bateu atrasado"}'
+check "E9: corrigir = anula a original e lança a manual com substitui_id" "200 $PM manual" "$CODE $(j .substitui_id) $(j .origem)"; PM2=$(j .id)
+req POST "/v1/ponto/marcacoes/$PM2/anular" "$ADM" '{"motivo":"Lançada por engano"}'; check "E9: anula com motivo" "true Lançada por engano" "$(j .anulada) $(j .anulada_motivo)"
+req POST "/v1/ponto/marcacoes/$PM2/anular" "$ADM" '{"motivo":"de novo"}'; check "E9: já anulada: 409" "409 ANULADA" "$CODE $(j .error.code)"
+req GET "/v1/ponto/marcacoes?colaborador_id=$P1&mes=$MES" "$ADM"; check "E9: nada some: as 2 batidas continuam no livro, anuladas" "2 2" "$(j length) $(echo "$BODY" | jq '[.[] | select(.anulada)] | length')"
+
+# ---------- E7: Empresas (só master; §19/§21) e o multiempresa: dado de uma empresa não aparece na outra
+EMP=/v1/empresas
+req GET $EMP "$LOJA"; check "E7: a loja não alcança Empresas (GET)" 403 "$CODE"
+req POST $EMP "$LOJA" '{"razao_social":"X","cnpj":"11222333000181"}'; check "E7: a loja não alcança Empresas (POST)" 403 "$CODE"
+req POST $EMP "$ADM" '{"razao_social":"Smoke Valinhos Ltda","cnpj":"11.222.333/0001-80"}'; check "E7: CNPJ com dígito errado: 400" 400 "$CODE"
+req POST $EMP "$ADM" '{"razao_social":"Smoke Valinhos Ltda","nome_fantasia":"Smoke Valinhos","cnpj":"11.222.333/0001-81"}'
+check "E7: a 1ª empresa fica com os dados que já existiam (public) e é a principal" "201 public true" "$CODE $(j .schema_banco) $(j .principal)"; EA=$(j .id)
+check "E7: Configurações espelha a principal" "11222333000181 Smoke Valinhos Ltda" "$(sql "select cnpj || ' ' || razao_social from configuracoes where id=1")"
+check "E7: os usuários comuns de antes passam a ser da principal" "$EA" "$(sql "select empresa_id from users where id='$LOJA_ID'")"
+req POST $EMP "$ADM" '{"razao_social":"Outra","cnpj":"11222333000181"}'; check "E7: CNPJ repetido: 409 DUPLICADO" "409 DUPLICADO" "$CODE $(j .error.code)"
+req POST $EMP "$ADM" '{"razao_social":"Smoke Itupeva Ltda","nome_fantasia":"Smoke Itupeva","cnpj":"11.444.777/0001-61"}'; EB=$(j .id); SB=$(j .schema_banco)
+check "E7: a 2ª nasce num schema próprio, com todas as migrações (a cana inclusive)" "201 false empresa_ 4" \
+  "$CODE $(j .principal) ${SB:0:8} $(sql "select count(*) from information_schema.tables where table_schema='$SB' and table_name like 'cana_%'")"
+check "E7: o espelho de Configurações da 2ª fica no schema dela; o public continua com a 1ª" "11444777000161 11222333000181" "$(sql "select cnpj from $SB.configuracoes") $(sql "select cnpj from configuracoes")"
+req DELETE "$EMP/$EA" "$ADM"; check "E7: excluir a principal: 409 PRINCIPAL" "409 PRINCIPAL" "$CODE $(j .error.code)"
+reqE "$EB" GET /v1/itens-estoque "$ADM"; check "ME: a 2ª começa sem insumos (nada do public)" "200 0" "$CODE $(j length)"
+reqE "$EB" POST /v1/itens-estoque "$ADM" '{"nome":"Smoke Só Itupeva"}'; check "ME: insumo criado na 2ª" 201 "$CODE"
+check "ME: o insumo da 2ª fica só no schema dela" "0 1" "$(sql "select count(*) from itens_estoque where nome='Smoke Só Itupeva'") $(sql "select count(*) from $SB.itens_estoque where nome='Smoke Só Itupeva'")"
+req GET /v1/itens-estoque "$ADM"; check "ME: o master sem o cabeçalho vê a principal" "false true" "$(echo "$BODY" | jq 'any(.[]; .nome=="Smoke Só Itupeva")') $(echo "$BODY" | jq 'any(.[]; .nome=="Smoke E Copo")')"
+reqE nao-e-uuid GET /v1/itens-estoque "$ADM"; check "ME: cabeçalho malformado: 403 EMPRESA" "403 EMPRESA" "$CODE $(j .error.code)"
+reqE 00000000-0000-4000-8000-000000000000 GET /v1/itens-estoque "$ADM"; check "ME: empresa inexistente: 403 EMPRESA" "403 EMPRESA" "$CODE $(j .error.code)"
+reqE "$EB" GET $CANA/parametros "$ADM"; check "ME: a configuração da cana é por empresa (a 2ª nasce em branco)" "null null" "$(j .litros_por_duzia_esperado) $(j .rendimento_frozen)"
+reqE "$EB" POST /v1/usuarios "$ADM" '{"nome":"Caixa Itupeva","email":"caixa-itupeva@smoke.local","senha":"123456","perfil":"loja","modulos":["cana"]}'
+check "ME: o master cria a colaboradora na 2ª, presa a ela" "201 $EB" "$CODE $(sql "select empresa_id from users where email='caixa-itupeva@smoke.local'")"
+req POST /v1/auth/login "" '{"email":"caixa-itupeva@smoke.local","senha":"123456"}'; LB=$(j .access_token)
+req GET /v1/auth/me "$LB"; check "ME: o /me da colaboradora traz a 2ª" "$EB loja" "$(j .empresa.id) $(j .user.perfil)"
+PUB_CANA=$(sql "select count(*) from cana_lancamentos")
+reqE "$EA" POST $CANA/lancamentos "$LB" "{\"tipo\":\"contagem\",\"data\":\"$HOJE\",\"duzias\":2,\"litros_caldo\":1}"
+check "ME: a colaboradora da 2ª lança a contagem; o cabeçalho da 1ª é ignorado e vai para a 2ª" "201 1 $PUB_CANA" \
+  "$CODE $(sql "select count(*) from $SB.cana_lancamentos") $(sql "select count(*) from cana_lancamentos")"
+reqE "$EA" POST $CANA/lancamentos "$LB" "{\"tipo\":\"contagem\",\"data\":\"$HOJE\",\"duzias\":3,\"litros_caldo\":1}"; check "K2 na 2ª: a contagem do dia já existe: 409" "409 CANA_CONTAGEM_DO_DIA" "$CODE $(j .error.code)"
+req GET $CANA/semanas/atual "$LB"; check "ME: a colaboradora não vê a conta da semana" 403 "$CODE"
+req GET $CANA/lancamentos/recentes "$LB"; check "ME: a colaboradora vê o que lançou na 2ª" "1 contagem" "$(j '.lancamentos|length') $(j '.lancamentos[0].tipo')"
+reqE "$EB" POST $CANA/lancamentos "$ADM" "{\"tipo\":\"contagem\",\"data\":\"$(dias -2)\",\"duzias\":5,\"litros_caldo\":2}"; check "K4 na 2ª: contagem de partida" 201 "$CODE"
+reqE "$EB" POST $CANA/lancamentos "$ADM" "{\"tipo\":\"recebimento\",\"data\":\"$(dias -1)\",\"duzias\":3}"
+reqE "$EB" POST $CANA/lancamentos "$ADM" "{\"tipo\":\"producao\",\"data\":\"$(dias -1)\",\"litros_caldo\":10}"
+reqE "$EB" GET $CANA/semanas "$ADM"
+check "K4 na 2ª: só as contagens dela; cana moída 5 + 3 − 2 = 6, produzido 10, vendido 0, perda 2 + 10 − 0 − 1 = 11" "2 1 6 10 0 11" \
+  "$(j .contagens) $(j '.semanas|length') $(j '.semanas[0].cana_moida') $(j '.semanas[0].caldo_produzido') $(j '.semanas[0].caldo_vendido') $(j '.semanas[0].perda')"
+check "K3 na 2ª: o banco recusa apagar lançamento" 1 "$(sql_falha "delete from $SB.cana_lancamentos")"
+check "ME: nada da cana da 2ª no public (e vice-versa)" "$PUB_CANA 4" "$(sql "select count(*) from cana_lancamentos") $(sql "select count(*) from $SB.cana_lancamentos")"
+req DELETE "$EMP/$EB" "$ADM"; check "E7: excluir empresa com usuários: 409 EM_USO" "409 EM_USO" "$CODE $(j .error.code)"
+
+# ---------- E8: Empresas → Ponto (o empregador no espelho: a do colaborador; sem ela, a principal)
+req GET "/v1/ponto/espelho/$P1?mes=$MES" "$ADM"; check "E8: sem empregador, o espelho traz a principal" "Smoke Valinhos Ltda|11.222.333/0001-81" "$(j .empresa.razao_social)|$(j .empresa.cnpj)"
+req POST /v1/ponto/colaboradores "$ADM" "{\"nome\":\"Smoke De Itupeva\",\"pin\":\"1234\",\"empresa_id\":\"$EB\"}"
+check "E8: multiempresa: o empregador é a empresa da requisição (outra empresa = 404)" "404 Empresa não encontrada" "$CODE $(j .error.message)"
+req POST /v1/ponto/colaboradores "$ADM" "{\"nome\":\"Smoke De Valinhos\",\"pin\":\"1234\",\"empresa_id\":\"$EA\"}"; P2=$(j .id)
+req GET "/v1/ponto/espelho/$P2?mes=$MES" "$ADM"; check "E8: com empregador, o espelho traz a empresa dele" "Smoke Valinhos Ltda|11.222.333/0001-81" "$(j .empresa.razao_social)|$(j .empresa.cnpj)"
+reqE "$EB" POST /v1/ponto/colaboradores "$ADM" '{"nome":"Smoke Na Itupeva","pin":"1234"}'; P3=$(j .id)
+reqE "$EB" GET "/v1/ponto/espelho/$P3?mes=$MES" "$ADM"; check "E8: dentro da 2ª, o espelho traz a própria 2ª" "Smoke Itupeva Ltda" "$(j .empresa.razao_social)"
+check "E8: o colaborador da 2ª não aparece no public" 0 "$(sql "select count(*) from ponto_colaboradores where nome='Smoke Na Itupeva'")"
 
 rm -f "$PDF" "$TXT" "$JPG" "$OUT"
 
