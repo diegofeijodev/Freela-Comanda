@@ -1,13 +1,23 @@
 import type { PrismaService } from '../../../common/database/prisma.service';
 import { dayToDb } from '../../../common/time/dates';
-import { ImportacoesService } from '../importacoes.service';
+import { ImportacoesService, TRAVA_IMPORTACAO_VENDAS } from '../importacoes.service';
 
 // A venda do cupom fiscal (`vendas.nfce_cupom_id` preenchido) é lançada pelo cupom autorizado e só sai pelo cancelamento (desenho §3.3):
 // o "Substituir" da importação de vendas e o `mapear` do de-para só mexem nas vendas que vieram da importação (`nfce_cupom_id` nulo).
 
 function montar() {
+  const ordem: string[] = [];
   const tx = {
-    importacoes: { create: jest.fn(async () => ({ id: 'imp-1' })) },
+    $executeRaw: jest.fn(async (...a: unknown[]) => {
+      ordem.push(`trava:${(a.slice(1) as string[]).join(',')}`);
+      return 1;
+    }),
+    importacoes: {
+      create: jest.fn(async () => {
+        ordem.push('importacao');
+        return { id: 'imp-1' };
+      }),
+    },
     itens_cardapio: { findMany: jest.fn(async () => [{ id: 'item-1', nome: 'Espetinho de carne' }]) },
     de_para_produtos: {
       findMany: jest.fn(async () => [{ produto_relatorio: 'ESPETO CARNE', item_cardapio_id: 'item-1' }]),
@@ -24,7 +34,7 @@ function montar() {
     de_para_produtos: { findUnique: jest.fn(async () => ({ produto_relatorio: 'ESPETO CARNE', item_cardapio_id: null })) },
     $transaction: jest.fn(async (cb: (t: typeof tx) => Promise<unknown>) => cb(tx)),
   };
-  return { svc: new ImportacoesService(prisma as unknown as PrismaService), tx };
+  return { svc: new ImportacoesService(prisma as unknown as PrismaService), tx, ordem };
 }
 
 const linha = (data: string, pedido: string) => ({
@@ -51,6 +61,12 @@ describe('importação de vendas e a venda do cupom fiscal', () => {
       },
     });
     expect(r.apagadas).toBe(4);
+  });
+
+  it('a rota antiga pega a mesma trava do confirmar novo, antes de gravar (duas importações de vendas nunca correm juntas)', async () => {
+    const { svc, ordem } = montar();
+    await svc.vendas({ modo: 'acrescentar', linhas: [linha('2026-11-17', '10')] }, 'u-1');
+    expect(ordem.slice(0, 2)).toEqual([`trava:${TRAVA_IMPORTACAO_VENDAS}`, 'importacao']);
   });
 
   it('"Acrescentar" não apaga nada', async () => {

@@ -117,7 +117,19 @@ describe('prévia: avisos', () => {
     expect(p.linhas.novas).toBe(1);
     expect(p.linhas.ja_existentes).toBe(1);
     expect(p.valor_centavos).toBe(2200);
-    expect(p.substituir).toEqual({ vendas: 7, valor_centavos: 9900, ini: '2026-11-21', fim: '2026-11-21' });
+    expect(p.substituir).toEqual({ vendas: 7, valor_centavos: 9900, ini: '2026-11-21', fim: '2026-11-21', bloqueado: false });
+  });
+
+  it('R3 com linha com problema: o Substituir fica bloqueado (a venda da linha ruim sairia e não voltaria)', () => {
+    const linhas = [
+      { p: '1002', d: '21/11/2026', x: 'Caldo 300', q: '2', t: '22,00' },
+      { p: '1004', d: '31/02/2026', x: 'Pastel', q: '1', t: '8,50' },
+    ];
+    const com = montarPrevia(ler(linhas), fatos({ modo: 'substituir', substituir: { vendas: 7, valor_centavos: 9900 } }));
+    expect(com.substituir).toMatchObject({ vendas: 7, bloqueado: true });
+    // nada a apagar: não há o que perder, Substituir = acrescentar
+    const zero = montarPrevia(ler(linhas), fatos({ modo: 'substituir', substituir: { vendas: 0, valor_centavos: 0 } }));
+    expect(zero.substituir).toMatchObject({ vendas: 0, bloqueado: false });
   });
 
   it('R7: arquivo já importado passa adiante (não barra)', () => {

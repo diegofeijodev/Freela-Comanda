@@ -163,7 +163,13 @@ export function PreviaImportacao({
               )}
             </Aviso>
           )}
-          {escolhas.modo === "substituir" && p.substituir && p.substituir.vendas > 0 && (
+          {escolhas.modo === "substituir" && p.substituir?.bloqueado && (
+            <Aviso tom="ambar" titulo="Substituir não roda com linhas com problema."
+              acao={<Button variant="outline" className="h-11" onClick={() => set({ modo: "acrescentar" })}>Só acrescentar as novas</Button>}>
+              O arquivo tem {plural(p.linhas.com_problema, "linha", "linhas")} com problema. Com Substituir, as {inteiro(p.substituir.vendas)} vendas de {sistema} entre {periodoCurto({ ini: p.substituir.ini, fim: p.substituir.fim })} sairiam, e as vendas dessas linhas não voltariam. Corrija o arquivo (ou as colunas) e escolha de novo, ou só acrescente as novas. Nada foi apagado.
+            </Aviso>
+          )}
+          {escolhas.modo === "substituir" && p.substituir && p.substituir.vendas > 0 && !p.substituir.bloqueado && (
             <Aviso tom="vermelho" titulo="Vai apagar vendas.">
               Vai apagar {plural(p.substituir.vendas, "venda", "vendas")} ({reais(p.substituir.valor_centavos)}) de {sistema} entre {periodoCurto({ ini: p.substituir.ini, fim: p.substituir.fim })} e pôr as do arquivo no lugar. As vendas de outros sistemas, de XML e dos cupons do Comanda não são tocadas.
             </Aviso>

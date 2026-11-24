@@ -98,8 +98,12 @@ describe("frases da prévia (cada número com a conta)", () => {
     const o = { modo: "acrescentar" as const, sobreposicaoMarcada: false, atualizando: false };
     expect(botaoImportar(previa(), o)).toMatchObject({ rotulo: "Importar 2.301 vendas", acao: "importar" });
     expect(botaoImportar(previa({ sobreposicao: [{ fonte: "x", tipo: "cupom", vendas: 1, valor_centavos: 1 }] }), o)).toMatchObject({ rotulo: "Marque a caixa do aviso", acao: "nada" });
-    expect(botaoImportar(previa({ substituir: { vendas: 1980, valor_centavos: 1, ini: "2026-11-01", fim: "2026-11-23" } }), { ...o, modo: "substituir" })).toMatchObject({
+    expect(botaoImportar(previa({ substituir: { vendas: 1980, valor_centavos: 1, ini: "2026-11-01", fim: "2026-11-23", bloqueado: false } }), { ...o, modo: "substituir" })).toMatchObject({
       rotulo: "Substituir 1.980 vendas e importar 2.301", destrutivo: true, acao: "dialogo" });
+    // revisão de 24/11: com linha com problema, o Substituir não roda (a venda da linha ruim sairia e não voltaria)
+    expect(botaoImportar(previa({ substituir: { vendas: 1980, valor_centavos: 1, ini: "2026-11-01", fim: "2026-11-23", bloqueado: true } }), { ...o, modo: "substituir" })).toEqual({
+      rotulo: "Substituir não roda com linhas com problema", destrutivo: false, acao: "nada",
+      falta: "Corrija as 87 linhas com problema (ou as colunas) ou escolha “Só acrescentar as novas”." });
     expect(botaoImportar(previa({ linhas: { ...previa().linhas, novas: 0 } }), o).acao).toBe("nada");
   });
   it("XML só com cancelamentos (P18): o botão tira os cancelados", () => {

@@ -972,7 +972,8 @@ export type PreviaVendas = {
   ja_existentes_de_outra_fonte: { fonte: string; tipo: TipoFonteVendas; linhas: number; exemplo: { pedido: string; data: string } }[];
   ja_existentes_pedido_dia: number;
   sobreposicao: { fonte: string; tipo: TipoFonteVendas; vendas: number; valor_centavos: number }[];
-  substituir: { vendas: number; valor_centavos: number; ini: string; fim: string } | null;
+  /** `bloqueado` = há linhas com problema e vendas a apagar: o confirmar recusa (409 SUBSTITUIR_COM_PROBLEMA). */
+  substituir: { vendas: number; valor_centavos: number; ini: string; fim: string; bloqueado: boolean } | null;
   arquivo_ja_importado: { em: string; por: string | null; vendas: number | null } | null;
   documentos?: {
     arquivos_lidos: number;

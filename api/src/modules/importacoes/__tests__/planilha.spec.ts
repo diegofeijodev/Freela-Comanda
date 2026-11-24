@@ -163,6 +163,26 @@ describe('mapeamento de colunas', () => {
   });
 });
 
+describe('dinheiro em centavos (revisão de 24/11)', () => {
+  it('valor, desconto, taxa e frete arredondados a centavos (meio para cima); quantidade e preço unitário como vieram', () => {
+    const r = aplicarMapeamento(
+      [{ d: '20/11/2026', x: 'Caldo', q: '1,5', t: '12,345', u: '8,2345', ds: '0,005', tx: '1,004', f: '2,995' }],
+      { data: 'd', produto: 'x', quantidade: 'q', valor_total: 't', preco_unitario: 'u', desconto: 'ds', taxa: 'tx', frete: 'f' },
+      'virgula',
+      { hoje: '2026-11-24', prefixo: '' },
+    );
+    const v = r.validas[0]!;
+    expect([v.valor_total, v.desconto, v.taxa, v.frete, v.quantidade, v.preco_unitario].map(txt)).toEqual([
+      '12.35',
+      '0.01',
+      '1',
+      '3',
+      '1.5',
+      '8.2345',
+    ]);
+  });
+});
+
 describe('linhas repetidas no arquivo', () => {
   it('soma pedido + produto + data (Decimal) e conta quantas foram somadas', () => {
     const r = aplicarMapeamento(

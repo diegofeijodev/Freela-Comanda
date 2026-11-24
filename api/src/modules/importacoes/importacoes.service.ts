@@ -15,6 +15,9 @@ const OPCOES_TX = { timeout: 300_000, maxWait: 10_000 } as const;
  * Vendas da "Planilha padrão do Comanda" (R4): nem do cupom fiscal, nem de XML, e sem sistema de origem (importação antiga, sem
  * `importacao_id`, ou importação sem `origem_id`). As 4.474 vendas de produção de antes de 25/11 são todas daqui.
  */
+/** A trava das importações de vendas (`pg_advisory_xact_lock(hashtext(...))`): a rota antiga e o confirmar novo nunca correm juntos. */
+export const TRAVA_IMPORTACAO_VENDAS = 'importacao_vendas';
+
 export const ONDE_PLANILHA_PADRAO = {
   nfce_cupom_id: null,
   documento_id: null,
@@ -100,6 +103,7 @@ export class ImportacoesService {
     const vs = vendasDasLinhas(dto.linhas);
     if (!vs.length) throw new BadRequestException({ code: 'VALIDATION_ERROR', message: 'Nenhuma venda válida no arquivo' });
     return this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${TRAVA_IMPORTACAO_VENDAS}))`;
       const imp = await this.registro(tx, 'vendas', dto, usuarioId);
       const cards = await tx.itens_cardapio.findMany({ select: { id: true, nome: true } });
       const cardPorNome = new Map(cards.map((c) => [c.nome.toLowerCase(), c.id]));

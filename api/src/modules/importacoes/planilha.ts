@@ -49,6 +49,9 @@ export const MAPEAMENTO_PADRAO: Mapeamento = {
   frete: 'frete',
 };
 
+/** Dinheiro da linha em centavos (meio para cima): "12,345" não vira 12,345 no banco nem soma frações na prévia. */
+const emCentavos = (d: Prisma.Decimal) => d.toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP);
+
 /** Uma venda (linha do arquivo já convertida). Valores em Decimal; `linha` = nº da linha no arquivo (cabeçalho = 1). */
 export type LinhaVenda = {
   linha: number;
@@ -193,11 +196,11 @@ export function aplicarMapeamento(
       hora: horaCol ?? dt.hora,
       produto_relatorio: produto,
       quantidade: q,
-      valor_total: v,
+      valor_total: emCentavos(v),
       preco_unitario: pu,
-      desconto: desc ?? new Prisma.Decimal(0),
-      taxa: taxa ?? new Prisma.Decimal(0),
-      frete: frete ?? new Prisma.Decimal(0),
+      desconto: emCentavos(desc ?? new Prisma.Decimal(0)),
+      taxa: emCentavos(taxa ?? new Prisma.Decimal(0)),
+      frete: emCentavos(frete ?? new Prisma.Decimal(0)),
     });
   });
   return { validas, problemas };

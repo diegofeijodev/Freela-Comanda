@@ -8,7 +8,7 @@ import { dayToDb, isDateString, todaySp } from '../../common/time/dates';
 import { classificarXml, conferirEnvioXml, EnvioInvalido, periodoDosCancelamentos, vendasDosNovos, type ClassificacaoXml } from './documentos';
 import type { Formato, OrigemDto, OrigemEdicaoDto, VendasConfirmarDto, VendasImportacaoDto } from './dto/vendas-importacao.dto';
 import { FatosVendas, type Db } from './fatos-vendas';
-import { ONDE_PLANILHA_PADRAO } from './importacoes.service';
+import { ONDE_PLANILHA_PADRAO, TRAVA_IMPORTACAO_VENDAS } from './importacoes.service';
 import {
   agregarVendas,
   aplicarMapeamento,
@@ -29,8 +29,6 @@ const LOTE = 500;
 const lotes = <T>(a: T[], n = LOTE) => Array.from({ length: Math.ceil(a.length / n) }, (_, i) => a.slice(i * n, i * n + n));
 // Um mês de cupons numa transação só: tudo ou nada (mesmo teto da importação de hoje).
 const OPCOES_TX = { timeout: 300_000, maxWait: 10_000 } as const;
-/** Serializa as importações de vendas (prévia × confirmar, duplo clique, dois admins): `pg_advisory_xact_lock(hashtext(...))`. */
-const TRAVA = 'importacao_vendas';
 
 type Origem = {
   id: string;
@@ -82,6 +80,10 @@ type Calculo = {
 };
 
 const erro400 = (code: string, message: string) => new BadRequestException({ code, message });
+const nomeRepetido = (nome: string) =>
+  new ConflictException({ code: 'ORIGEM_REPETIDA', message: `Já existe um sistema chamado “${nome}”. Escolha ele na lista ou use outro nome.` });
+/** P2002 = o índice único `vendas_origens_nome_key` (lower(nome)) pegou dois cadastros ao mesmo tempo. */
+const ehUnico = (e: unknown) => e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002';
 const semAcento = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
 
 /** Mapeamento vindo do corpo ou da origem: só campos conhecidos e nomes de coluna em texto. */
@@ -170,30 +172,30 @@ export class ImportacoesVendasService {
     const alvo = semAcento(nome);
     const todas = await db.vendas_origens.findMany({ select: { id: true, nome: true } });
     const igual = todas.find((o) => o.id !== exceto && semAcento(o.nome) === alvo);
-    if (igual) {
-      throw new ConflictException({
-        code: 'ORIGEM_REPETIDA',
-        message: `Já existe um sistema chamado “${igual.nome}”. Escolha ele na lista ou use outro nome.`,
-      });
-    }
+    if (igual) throw nomeRepetido(igual.nome);
   }
 
   async criarOrigem(dto: OrigemDto, usuarioId: string) {
     const nome = dto.nome.replace(/\s+/g, ' ').trim();
     if (!nome) throw erro400('VALIDATION_ERROR', 'Dê um nome ao sistema.');
-    return this.prisma.$transaction(async (tx) => {
-      await this.nomeLivre(tx, nome);
-      return tx.vendas_origens.create({
-        data: {
-          nome,
-          formato_padrao: dto.formato_padrao,
-          separador_decimal: dto.separador_decimal ?? 'virgula',
-          prefixo_pedido: (dto.prefixo_pedido ?? '').trim(),
-          criado_por: usuarioId,
-          atualizado_por: usuarioId,
-        },
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        await this.nomeLivre(tx, nome);
+        return tx.vendas_origens.create({
+          data: {
+            nome,
+            formato_padrao: dto.formato_padrao,
+            separador_decimal: dto.separador_decimal ?? 'virgula',
+            prefixo_pedido: (dto.prefixo_pedido ?? '').trim(),
+            criado_por: usuarioId,
+            atualizado_por: usuarioId,
+          },
+        });
       });
-    });
+    } catch (e) {
+      if (ehUnico(e)) throw nomeRepetido(nome);
+      throw e;
+    }
   }
 
   /**
@@ -201,6 +203,15 @@ export class ImportacoesVendasService {
    * recusado: a chave das vendas (pedido + produto + data) mudaria e o mesmo arquivo entraria de novo (R1).
    */
   async editarOrigem(id: string, dto: OrigemEdicaoDto, usuarioId: string) {
+    try {
+      return await this.editarOrigemNaTransacao(id, dto, usuarioId);
+    } catch (e) {
+      if (ehUnico(e)) throw nomeRepetido((dto.nome ?? '').replace(/\s+/g, ' ').trim());
+      throw e;
+    }
+  }
+
+  private editarOrigemNaTransacao(id: string, dto: OrigemEdicaoDto, usuarioId: string) {
     return this.prisma.$transaction(async (tx) => {
       const o = await tx.vendas_origens.findUnique({ where: { id } });
       if (!o) throw new NotFoundException({ code: 'ORIGEM_NAO_ENCONTRADA', message: 'Sistema de origem não encontrado.' });
@@ -263,6 +274,12 @@ export class ImportacoesVendasService {
     if (dto.origem_id) {
       origem = (await f.origem(dto.origem_id)) as Origem | null;
       if (!origem) throw new NotFoundException({ code: 'ORIGEM_NAO_ENCONTRADA', message: 'Sistema de origem não encontrado.' });
+      if (!origem.ativo) {
+        throw new ConflictException({
+          code: 'ORIGEM_INATIVA',
+          message: `O sistema “${origem.nome}” está parado. Em “Editar sistemas”, toque em “Voltar a usar” antes de importar.`,
+        });
+      }
     } else if (formato !== 'planilha')
       throw erro400('VALIDATION_ERROR', 'A planilha padrão só aceita planilha. Escolha o sistema de onde vem o arquivo.');
     if (formato === 'xml' && dto.modo === 'substituir') {
@@ -408,7 +425,8 @@ export class ImportacoesVendasService {
   }
 
   private async confirmarNaTransacao(tx: Db, dto: VendasConfirmarDto, user: AuthUser, hoje: string, corpo: string) {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${TRAVA}))`;
+    // serializa as importações de vendas (duplo clique, dois admins, a rota antiga)
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${TRAVA_IMPORTACAO_VENDAS}))`;
     const ja = await tx.importacoes.findUnique({ where: { chave_idempotencia: dto.chave_idempotencia } });
     if (ja) return this.repetida(ja, corpo);
 
@@ -418,6 +436,13 @@ export class ImportacoesVendasService {
       throw new ConflictException({
         code: 'IMPORTACAO_SOBREPOSICAO',
         message: 'Neste período já há vendas vindas de outro lugar. Confira o aviso e marque a caixa para importar.',
+      });
+    }
+    if (dto.modo === 'substituir' && p.substituir?.bloqueado) {
+      const n = p.linhas.com_problema;
+      throw new ConflictException({
+        code: 'SUBSTITUIR_COM_PROBLEMA',
+        message: `O arquivo tem ${n === 1 ? '1 linha' : `${n} linhas`} com problema: com Substituir, as vendas ${n === 1 ? 'dela' : 'delas'} sairiam e não voltariam. Corrija o arquivo (ou as colunas) ou escolha “Só acrescentar as novas”.`,
       });
     }
     const cancelamentos = c.xml?.cancelar ?? [];

@@ -256,6 +256,12 @@ export function botaoImportar(p: PreviaVendas, o: { modo: "acrescentar" | "subst
     const cupons = p.documentos.vendas_novas;
     return { rotulo: canc ? `Importar ${plural(cupons, "cupom", "cupons")} e tirar ${inteiro(canc)} ${canc === 1 ? "cancelado" : "cancelados"}` : `Importar ${plural(cupons, "cupom", "cupons")}`, destrutivo: false, acao: "importar" };
   }
+  if (o.modo === "substituir" && p.substituir?.bloqueado) {
+    return {
+      rotulo: "Substituir não roda com linhas com problema", destrutivo: false, acao: "nada",
+      falta: `Corrija ${p.linhas.com_problema === 1 ? "a linha" : `as ${inteiro(p.linhas.com_problema)} linhas`} com problema (ou as colunas) ou escolha “Só acrescentar as novas”.`,
+    };
+  }
   if (o.modo === "substituir" && p.substituir && p.substituir.vendas > 0) {
     return { rotulo: `Substituir ${inteiro(p.substituir.vendas)} vendas e importar ${inteiro(novas)}`, destrutivo: true, acao: "dialogo" };
   }

@@ -54,7 +54,11 @@ export type Previa = {
   ja_existentes_de_outra_fonte: { fonte: string; tipo: TipoFonte; linhas: number; exemplo: { pedido: string; data: string } }[];
   ja_existentes_pedido_dia: number;
   sobreposicao: { fonte: string; tipo: TipoFonte; vendas: number; valor_centavos: number }[];
-  substituir: { vendas: number; valor_centavos: number; ini: string; fim: string } | null;
+  /**
+   * O que o Substituir apagaria. `bloqueado` = há linhas com problema e vendas a apagar: a venda de uma linha ruim sairia e não voltaria
+   * (a data ou o produto ilegível nem deixa saber qual é), então o confirmar recusa (409 SUBSTITUIR_COM_PROBLEMA).
+   */
+  substituir: { vendas: number; valor_centavos: number; ini: string; fim: string; bloqueado: boolean } | null;
   arquivo_ja_importado: { em: string; por: string | null; vendas: number | null } | null;
 };
 
@@ -184,7 +188,10 @@ export function montarPrevia(e: { lidas: number; validas: readonly LinhaVenda[];
     sobreposicao: f.porFonte
       .filter((p) => p.chave !== f.propria.chave && p.vendas > 0)
       .map((p) => ({ fonte: p.nome, tipo: p.tipo, vendas: p.vendas, valor_centavos: p.valor_centavos })),
-    substituir: f.substituir && periodo ? { ...f.substituir, ini: periodo.ini, fim: periodo.fim } : null,
+    substituir:
+      f.substituir && periodo
+        ? { ...f.substituir, ini: periodo.ini, fim: periodo.fim, bloqueado: f.substituir.vendas > 0 && e.problemas.length > 0 }
+        : null,
     arquivo_ja_importado: f.arquivoJaImportado,
   };
 }

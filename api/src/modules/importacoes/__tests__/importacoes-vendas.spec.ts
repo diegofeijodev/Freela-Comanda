@@ -37,7 +37,13 @@ function chaveCom(cnpj: string, numero: number, cnf: string): string {
 }
 
 function montar(
-  o: { porFonte?: unknown[]; existentes?: Map<string, unknown>; registrados?: Map<string, string>; guardada?: unknown } = {},
+  o: {
+    porFonte?: unknown[];
+    existentes?: Map<string, unknown>;
+    registrados?: Map<string, string>;
+    guardada?: unknown;
+    origem?: Partial<typeof ORIGEM>;
+  } = {},
 ) {
   const ordem: string[] = [];
   const marca =
@@ -78,7 +84,7 @@ function montar(
     arquivoJaImportado: jest.fn(async () => null),
     dePara: jest.fn(async () => new Map()),
     cardapio: jest.fn(async () => []),
-    origem: jest.fn(async (id: string) => (id === ORIGEM.id ? ORIGEM : null)),
+    origem: jest.fn(async (id: string) => (id === ORIGEM.id ? { ...ORIGEM, ...o.origem } : null)),
     cnpjLoja: jest.fn(async () => LOJA),
     empresas: jest.fn(async () => new Map()),
     registrados: jest.fn(async () => o.registrados ?? new Map()),
@@ -239,6 +245,39 @@ describe('confirmar', () => {
     });
   });
 
+  it('Substituir com linha com problema e vendas a apagar = 409 SUBSTITUIR_COM_PROBLEMA, nada gravado; a prévia mostra bloqueado', async () => {
+    const porFonte = [{ chave: `sistema:${ORIGEM.id}`, nome: ORIGEM.nome, tipo: 'sistema', vendas: 4, valor_centavos: 9900 }];
+    const ruim = { Nº: '1003', Data: '31/02/2026', Descrição: 'Pastel', Qtde: '1', Total: '8,50' };
+    const corpo = (extra: Partial<VendasConfirmarDto> = {}) =>
+      planilha({ modo: 'substituir', linhas_brutas: [...planilha().linhas_brutas!, ruim], ...extra });
+    const { svc, ordem, tx } = montar({ porFonte });
+    const p = await svc.previa(corpo() as VendasImportacaoDto, '2026-11-24');
+    expect(p.substituir).toMatchObject({ vendas: 4, bloqueado: true });
+    const e = await erro(svc.confirmar(corpo(), ADMIN, '2026-11-24'));
+    expect(e).toMatchObject({ status: 409, code: 'SUBSTITUIR_COM_PROBLEMA' });
+    expect(e.message).toBe(
+      'O arquivo tem 1 linha com problema: com Substituir, as vendas dela sairiam e não voltariam. Corrija o arquivo (ou as colunas) ou escolha “Só acrescentar as novas”.',
+    );
+    expect(tx.vendas.deleteMany).not.toHaveBeenCalled();
+    expect(ordem.filter((x) => ESCRITAS.includes(x))).toEqual([]);
+    // acrescentar com a mesma linha ruim segue (a linha fica de fora, nada é apagado)
+    const ok = montar({ porFonte });
+    const r = await ok.svc.confirmar(corpo({ modo: 'acrescentar' }), ADMIN, '2026-11-24');
+    expect(r.resultado).toMatchObject({ inseridas: 2, apagadas: 0 });
+  });
+
+  it('sistema parado (ativo = false) não aceita importação: 409 ORIGEM_INATIVA na prévia e no confirmar', async () => {
+    const { svc, ordem } = montar({ origem: { ativo: false } });
+    const esperado = {
+      status: 409,
+      code: 'ORIGEM_INATIVA',
+      message: 'O sistema “PDV Valinhos” está parado. Em “Editar sistemas”, toque em “Voltar a usar” antes de importar.',
+    };
+    expect(await erro(svc.previa(planilha() as VendasImportacaoDto, '2026-11-24'))).toMatchObject(esperado);
+    expect(await erro(svc.confirmar(planilha(), ADMIN, '2026-11-24'))).toMatchObject(esperado);
+    expect(ordem.filter((x) => ESCRITAS.includes(x))).toEqual([]);
+  });
+
   it('R5: período com venda de outra fonte e sem confirmar_sobreposicao = 409, nada gravado', async () => {
     const { svc, ordem } = montar({ porFonte: [{ chave: 'cupom', nome: NOME_CUPOM, tipo: 'cupom', vendas: 2, valor_centavos: 3200 }] });
     expect(await erro(svc.confirmar(planilha(), ADMIN, '2026-11-24'))).toMatchObject({ status: 409, code: 'IMPORTACAO_SOBREPOSICAO' });
@@ -296,6 +335,29 @@ describe('confirmar', () => {
       ),
     );
     expect(e).toMatchObject({ status: 400, code: 'VALIDATION_ERROR' });
+  });
+});
+
+describe('sistemas de origem: nome repetido na corrida (índice lower(nome)) vira 409, não 500', () => {
+  const p2002 = () => new Prisma.PrismaClientKnownRequestError('unique', { code: 'P2002', clientVersion: 'x' });
+  it('criar', async () => {
+    const { svc, prisma } = montar();
+    prisma.$transaction.mockRejectedValueOnce(p2002());
+    expect(await erro(svc.criarOrigem({ nome: 'PDV Centro', formato_padrao: 'planilha' }, 'u-1'))).toMatchObject({
+      status: 409,
+      code: 'ORIGEM_REPETIDA',
+      message: 'Já existe um sistema chamado “PDV Centro”. Escolha ele na lista ou use outro nome.',
+    });
+  });
+  it('renomear', async () => {
+    const { svc, prisma } = montar();
+    prisma.$transaction.mockRejectedValueOnce(p2002());
+    expect(await erro(svc.editarOrigem(ORIGEM.id, { nome: 'PDV Centro' }, 'u-1'))).toMatchObject({ status: 409, code: 'ORIGEM_REPETIDA' });
+  });
+  it('outro erro do banco não vira 409', async () => {
+    const { svc, prisma } = montar();
+    prisma.$transaction.mockRejectedValueOnce(new Error('caiu'));
+    await expect(svc.criarOrigem({ nome: 'PDV Centro', formato_padrao: 'planilha' }, 'u-1')).rejects.toThrow('caiu');
   });
 });
 
