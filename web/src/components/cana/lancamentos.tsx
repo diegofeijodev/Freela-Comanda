@@ -22,6 +22,8 @@ const MOTIVOS = ["Lançado em dobro", "Número errado", "Data errada"];
 const FILTROS: { v: TipoCana | ""; r: string }[] = [{ v: "", r: "Todos" }, { v: "recebimento", r: "Recebimentos" }, { v: "producao", r: "Produções" }, { v: "contagem", r: "Contagens" }];
 const menosDias = (hoje: string, n: number) => { const d = new Date(`${hoje}T12:00:00Z`); d.setUTCDate(d.getUTCDate() - n); return d.toISOString().slice(0, 10); };
 
+const plural = (n: number, um: string, mais: string) => `${n} ${n === 1 ? um : mais}`;
+
 function quantidade(l: CanaLancamento) {
   return resumoLancamento(l).split(" · ").slice(1).join(" · ");
 }
@@ -113,8 +115,9 @@ export function CanaLancamentosAba() {
       {lista.data && (
         <p className="text-sm text-muted-foreground">
           {hoje && `${dataCurta(ini)} a ${dataCurta(hoje)}: `}
-          {soma("recebimento", () => 1)} recebimentos = {duzias(soma("recebimento", (l) => l.duzias ?? 0))} · {soma("producao", () => 1)} produções ={" "}
-          {litros(soma("producao", (l) => l.litros_caldo ?? 0))} · {soma("contagem", () => 1)} contagens
+          {plural(soma("recebimento", () => 1), "recebimento", "recebimentos")} = {duzias(soma("recebimento", (l) => l.duzias ?? 0))} ·{" "}
+          {plural(soma("producao", () => 1), "produção", "produções")} = {litros(soma("producao", (l) => l.litros_caldo ?? 0))} ·{" "}
+          {plural(soma("contagem", () => 1), "contagem", "contagens")}
           {nAnulados ? ` (sem contar ${nAnulados} ${nAnulados === 1 ? "lançamento anulado" : "lançamentos anulados"})` : ""}
         </p>
       )}

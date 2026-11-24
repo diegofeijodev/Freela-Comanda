@@ -1018,11 +1018,19 @@ K_CH=00000000-0000-4000-8000-00000000ca01
 K_REC="{\"tipo\":\"recebimento\",\"data\":\"$HOJE\",\"duzias\":12,\"fornecedor\":\" Sítio  Boa Vista \",\"chave_idempotencia\":\"$K_CH\"}"
 req POST $CANA/lancamentos "$LOJA" "$K_REC"
 check "K1: a loja lança o recebimento de hoje" "201 12 Sítio Boa Vista false" "$CODE $(j .duzias) $(j .fornecedor) $(j .repetido)"; KL1=$(j .id)
+check "K1 (7.16): a resposta do lançar, para a loja, é o recorte de recentes" '["anulado","corrigido","data","duzias","fornecedor","id","lancado_em","litros_caldo","litros_frozen","observacao","repetido","tipo"]' "$(echo "$BODY" | jq -c keys)"
 req POST $CANA/lancamentos "$LOJA" "$K_REC"
 check "K1 (7.13): a mesma chave de novo = 200 com o da 1ª vez, sem lançar outro" "200 $KL1 true 1" "$CODE $(j .id) $(j .repetido) $(sql "select count(*) from cana_lancamentos where chave_idempotencia='$K_CH'")"
 req POST $CANA/lancamentos "$LOJA" "{\"tipo\":\"recebimento\",\"data\":\"$HOJE\",\"duzias\":120,\"chave_idempotencia\":\"$K_CH\"}"
 check "K1 (7.13): a mesma chave com outro número: 409" "409 CANA_CHAVE_REPETIDA" "$CODE $(j .error.code)"
 req POST $CANA/lancamentos "$ADM" "$K_REC"; check "K1 (7.13): a chave de outra pessoa não devolve o lançamento dela: 409" 409 "$CODE"
+K_CH2=00000000-0000-4000-8000-00000000ca02
+K_REC2="{\"tipo\":\"recebimento\",\"data\":\"$HOJE\",\"duzias\":1,\"chave_idempotencia\":\"$K_CH2\"}"
+req POST $CANA/lancamentos "$LOJA" "$K_REC2"; KL2=$(j .id)
+req POST "$CANA/lancamentos/$KL2/anular" "$ADM" '{"motivo":"Segredo do gerente"}'
+req POST $CANA/lancamentos "$LOJA" "$K_REC2"
+check "K1 (7.13/7.16): a mesma chave depois de o gerente anular: 200 e anulado, sem o motivo nem quem anulou" "200 $KL2 true false" \
+  "$CODE $(j .id) $(j .anulado) $(echo "$BODY" | jq 'has("anulado_motivo") or has("anulado_por_nome") or has("lancado_por") or (tostring | test("Segredo"))')"
 req POST $CANA/lancamentos "$LOJA" "{\"tipo\":\"recebimento\",\"data\":\"$(dias -3)\",\"duzias\":5}"
 check "K1: a loja com data de 3 dias atrás: 400 CANA_DATA_FORA" "400 CANA_DATA_FORA A loja lança só hoje ou ontem." "$CODE $(j .error.code) $(j .error.message)"
 req POST $CANA/lancamentos "$ADM" "{\"tipo\":\"recebimento\",\"data\":\"$(dias 1)\",\"duzias\":5}"; check "K1: data no futuro (admin): 400" "400 Data no futuro." "$CODE $(j .error.message)"
@@ -1102,11 +1110,11 @@ req GET "$CANA/semanas/atual" "$ADM"
 check "K4: em andamento desde a de ontem: o recebimento da loja de hoje, sem perda nem cana moída" "true $KC2 12 null null" \
   "$(j .apuracao.em_andamento) $(j .apuracao.contagem_inicial.id) $(j .apuracao.cana.recebida.duzias) $(j .apuracao.caldo.perda) $(j .apuracao.cana.moida)"
 req GET "$CANA/lancamentos?ini=$C1&fim=$HOJE" "$ADM"
-check "K: a lista do admin traz tudo, com os 2 anulados e a correção" "11 2 $KERR" \
+check "K: a lista do admin traz tudo, com os 3 anulados e a correção" "12 3 $KERR" \
   "$(j length) $(echo "$BODY" | jq '[.[] | select(.anulado_em != null)] | length') $(echo "$BODY" | jq -r '.[] | select(.substitui_id != null) | .substitui_id')"
 req GET $CANA/lancamentos/recentes "$LOJA"
-check "K (7.16): a loja vê só o que ela lançou, com hoje e ontem do servidor" "$HOJE $C2 1 $KL1 false false" \
-  "$(j .hoje) $(j .ontem) $(j '.lancamentos|length') $(j '.lancamentos[0].id') $(j '.lancamentos[0].anulado') $(j '.lancamentos[0].corrigido')"
+check "K (7.16): a loja vê só o que ela lançou (o anulado marcado), com hoje e ontem do servidor" "$HOJE $C2 2 false false true" \
+  "$(j .hoje) $(j .ontem) $(j '.lancamentos|length') $(echo "$BODY" | jq -r --arg a "$KL1" --arg b "$KL2" '[(.lancamentos[] | select(.id==$a) | .anulado, .corrigido), (.lancamentos[] | select(.id==$b) | .anulado)] | join(" ")')"
 check "K (7.15): as contagens de hoje e ontem aparecem sem número nenhum" '[{"data":"'"$C2"'","keys":["data","em","por_nome"]}]' \
   "$(echo "$BODY" | jq -c '[.contagens_lancadas[] | {data, keys: keys}]')"
 check "K (7.16): nenhuma conta, motivo ou id de quem lançou na resposta da loja" false "$(echo "$BODY" | jq '[.. | objects | has("anulado_motivo") or has("perda") or has("moida") or has("lancado_por") or has("duzias_esperadas")] | any')"
@@ -1173,11 +1181,16 @@ req GET $CANA/lancamentos/recentes "$LB"; check "ME: a colaboradora vê o que la
 reqE "$EB" POST $CANA/lancamentos "$ADM" "{\"tipo\":\"contagem\",\"data\":\"$(dias -2)\",\"duzias\":5,\"litros_caldo\":2}"; check "K4 na 2ª: contagem de partida" 201 "$CODE"
 reqE "$EB" POST $CANA/lancamentos "$ADM" "{\"tipo\":\"recebimento\",\"data\":\"$(dias -1)\",\"duzias\":3}"
 reqE "$EB" POST $CANA/lancamentos "$ADM" "{\"tipo\":\"producao\",\"data\":\"$(dias -1)\",\"litros_caldo\":10}"
+reqE "$EB" POST $CANA/lancamentos "$ADM" "{\"tipo\":\"recebimento\",\"data\":\"$(dias -1)\",\"duzias\":30}"; KB_ERR=$(j .id)
+reqE "$EB" POST "$CANA/lancamentos/$KB_ERR/corrigir" "$ADM" "{\"motivo\":\"Número errado\",\"data\":\"$(dias -1)\",\"duzias\":3}"
+check "K2 na 2ª: corrigir anula e lança numa transação, no schema da empresa" "201 $KB_ERR" "$CODE $(j .substitui_id)"; KB_NOVO=$(j .id)
+reqE "$EB" POST "$CANA/lancamentos/$KB_NOVO/anular" "$ADM" '{"motivo":"Lançado em dobro"}'; check "K2 na 2ª: anular (o trinco da linha no schema da empresa)" "200 Lançado em dobro" "$CODE $(j .anulado_motivo)"
+check "K2 na 2ª: os 2 anulados ficam no livro da 2ª; nada no public" "2 0" "$(sql "select count(*) from $SB.cana_lancamentos where anulado_em is not null") $(sql "select count(*) from cana_lancamentos where id in ('$KB_ERR','$KB_NOVO')")"
 reqE "$EB" GET $CANA/semanas "$ADM"
 check "K4 na 2ª: só as contagens dela; cana moída 5 + 3 − 2 = 6, produzido 10, vendido 0, perda 2 + 10 − 0 − 1 = 11" "2 1 6 10 0 11" \
   "$(j .contagens) $(j '.semanas|length') $(j '.semanas[0].cana_moida') $(j '.semanas[0].caldo_produzido') $(j '.semanas[0].caldo_vendido') $(j '.semanas[0].perda')"
 check "K3 na 2ª: o banco recusa apagar lançamento" 1 "$(sql_falha "delete from $SB.cana_lancamentos")"
-check "ME: nada da cana da 2ª no public (e vice-versa)" "$PUB_CANA 4" "$(sql "select count(*) from cana_lancamentos") $(sql "select count(*) from $SB.cana_lancamentos")"
+check "ME: nada da cana da 2ª no public (e vice-versa)" "$PUB_CANA 6" "$(sql "select count(*) from cana_lancamentos") $(sql "select count(*) from $SB.cana_lancamentos")"
 req DELETE "$EMP/$EB" "$ADM"; check "E7: excluir empresa com usuários: 409 EM_USO" "409 EM_USO" "$CODE $(j .error.code)"
 
 # ---------- E8: Empresas → Ponto (o empregador no espelho: a do colaborador; sem ela, a principal)

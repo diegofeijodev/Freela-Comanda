@@ -22,6 +22,20 @@ export function exigirModuloCana(u: AuthUser) {
   if (!ehAdmin(u) && !u.modulos.includes('cana')) throw new ForbiddenException({ code: 'FORBIDDEN', message: 'Acesso negado' });
 }
 
+const paraLoja = (l: Lancamento, corrigido: boolean) => ({
+  id: l.id,
+  tipo: l.tipo,
+  data: l.data,
+  duzias: l.duzias,
+  litros_caldo: l.litros_caldo,
+  litros_frozen: l.litros_frozen,
+  fornecedor: l.fornecedor,
+  observacao: l.observacao,
+  lancado_em: l.lancado_em,
+  anulado: l.anulado_em !== null,
+  corrigido,
+});
+
 export interface SemanaApurada extends Apuracao {
   contagem_inicial: { id: string; data: string; lancado_por_nome: string };
   contagem_final: { id: string; data: string; lancado_por_nome: string } | null;
@@ -158,6 +172,15 @@ export class CanaService {
     }
   }
 
+  /**
+   * O que a loja pode ver de um lançamento dela (o mesmo recorte de `recentes`): sem o motivo nem quem anulou, sem o número novo de uma
+   * correção. Vale também para a resposta do lançar: a mesma chave depois de o gerente anular não pode devolver o motivo dele.
+   */
+  async recorteDaLoja(l: Lancamento) {
+    const corrigido = (await this.prisma.cana_lancamentos.count({ where: { substitui_id: l.id } })) > 0;
+    return paraLoja(l, corrigido);
+  }
+
   /** Loja: só o que ELA lançou nos últimos 7 dias, sem conta nenhuma, sem o motivo e sem o número novo de uma correção. */
   async recentes(u: AuthUser) {
     const hoje = todaySp();
@@ -184,19 +207,7 @@ export class CanaService {
     return {
       hoje,
       ontem,
-      lancamentos: meus.map((l) => ({
-        id: l.id,
-        tipo: l.tipo,
-        data: l.data,
-        duzias: l.duzias,
-        litros_caldo: l.litros_caldo,
-        litros_frozen: l.litros_frozen,
-        fornecedor: l.fornecedor,
-        observacao: l.observacao,
-        lancado_em: l.lancado_em,
-        anulado: l.anulado_em !== null,
-        corrigido: l.substituido_por !== null,
-      })),
+      lancamentos: meus.map((l) => paraLoja(l, l.substituido_por !== null)),
       contagens_lancadas: contagens.map((c) => ({ data: c.data, por_nome: c.lancado_por_nome, em: c.lancado_em })),
       fornecedores: fornecedores.map((f) => f.fornecedor!),
     };

@@ -59,14 +59,15 @@ export class CanaController {
     return this.svc.listar(ini, fim, tipo as TipoCana | undefined);
   }
 
-  /** 201 com o lançamento; a mesma chave de repetição (mesmo usuário e números) = 200 com o da 1ª vez (`repetido: true`). */
+  /** 201 com o lançamento; a mesma chave de repetição (mesmo usuário e números) = 200 com o da 1ª vez (`repetido: true`). A loja recebe o recorte. */
   @Staff()
   @Post('lancamentos')
   async lancar(@CurrentUser() u: AuthUser, @Body() dto: LancamentoCanaDto, @Res({ passthrough: true }) res: FastifyReply) {
     exigirModuloCana(u);
     const { lancamento, repetido } = await this.svc.lancar(u, dto);
     if (repetido) res.status(200);
-    return { ...lancamento, repetido };
+    // A loja recebe o mesmo recorte de `recentes` (contagem cega); o admin, a linha inteira.
+    return { ...(u.perfil === 'admin' ? lancamento : await this.svc.recorteDaLoja(lancamento)), repetido };
   }
 
   @HttpCode(200)

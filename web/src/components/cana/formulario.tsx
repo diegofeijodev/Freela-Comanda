@@ -47,7 +47,7 @@ function CampoNumero({ id, rotulo, ajuda, unidade, valor, erro, onChange, passos
 }
 
 /** Mensagem do "Lançado: …" (caixa verde). Só o que a pessoa digitou. */
-export function mensagemLancado(l: CanaLancamento, hoje: string, ontem: string) {
+export function mensagemLancado(l: Pick<CanaLancamento, "tipo" | "data" | "duzias" | "litros_caldo" | "litros_frozen" | "lancado_em">, hoje: string, ontem: string) {
   const quando = `${dataCurta(l.data)}${l.data === hoje ? " (hoje)" : l.data === ontem ? " (ontem)" : ""}`;
   const as = `às ${horaSp(l.lancado_em)}`;
   if (l.tipo === "recebimento") return `Lançado: ${duzias(l.duzias ?? 0)} de cana ${(l.duzias ?? 0) < 2 ? "recebida" : "recebidas"} em ${quando}, ${as}.`;

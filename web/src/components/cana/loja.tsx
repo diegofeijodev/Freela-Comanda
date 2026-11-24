@@ -5,6 +5,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { CheckCircle2 } from "lucide-react";
 import { canaRecentes, type TipoCana } from "@/lib/erp-api";
+import { errCode } from "@/lib/db";
 import { horaSp, quandoLoja, resumoLancamento } from "@/lib/cana";
 import { PageHeader, Tag } from "@/components/ui-kit";
 import { Button } from "@/components/ui/button";
@@ -49,7 +50,7 @@ export function CanaLoja() {
   const params = useSearchParams();
   const lancar = params.get("lancar");
   const tipo = TIPOS.includes(lancar as TipoCana) ? (lancar as TipoCana) : null;
-  const { data, isLoading, isError, refetch } = useQuery({ queryKey: ["cana-recentes"], queryFn: canaRecentes });
+  const { data, isLoading, isError, error, refetch } = useQuery({ queryKey: ["cana-recentes"], queryFn: canaRecentes });
   const [lancado, setLancado] = useState<string | null>(null);
   const [novoId, setNovoId] = useState<string | null>(null);
   const caixa = useRef<HTMLDivElement>(null);
@@ -69,6 +70,15 @@ export function CanaLoja() {
             router.push(pathname);
           }}
         />
+      </div>
+    );
+
+  // Colaborador sem a tela `cana` (abriu /cana pela URL): o servidor recusa; nada de botões que só dariam 403.
+  if (isError && errCode(error) === "FORBIDDEN")
+    return (
+      <div className="mx-auto max-w-md">
+        <PageHeader title="Cana" />
+        <p className="rounded-lg border p-3 text-sm">Esta tela não foi liberada para você. Peça ao administrador para liberar “Cana (lançar)”.</p>
       </div>
     );
 

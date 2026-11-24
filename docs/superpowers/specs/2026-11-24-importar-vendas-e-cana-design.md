@@ -1188,6 +1188,12 @@ escolha; cada uma dá para voltar atrás.
 - "Cana moída zero" ganhou o aviso próprio `cana_moida_zero` (o desenho só tinha o negativo); os cartões que dividem mostram "—".
 - O web segue o padrão do repositório (`useQuery` + `useState`); o desenho pedia react-hook-form + zod, que as telas não usam. "Sair sem lançar?"
   usa o `confirm` do navegador.
+- A resposta do `POST /lancamentos` para a loja é o mesmo recorte de `recentes` (sem motivo, quem anulou ou o id de quem lançou): a mesma chave
+  depois de o gerente anular não devolve o motivo dele. Colaborador sem a tela `cana` que abre `/cana` pela URL vê "Esta tela não foi liberada".
+- **UX que ficou de fora (dá para fazer depois, nada de regra):** as parcelas das contas como link para a lista filtrada; a tabela de lançamentos e o
+  `Sheet` lateral no computador (hoje cartões em todas as larguras e o formulário no lugar da lista); a barra "Salvar os 2" na Configuração; o link
+  "Ver a contagem de dd/mm" no `CANA_CONTAGEM_DO_DIA` do admin; o filtro "a semana escolhida" e "Escolher datas" no período dos Lançamentos (há
+  7/30/90 dias e 1 ano); a sugestão "Média real" (7.21).
 
 **Parte C: o que mudou das checagens de C.3 (desenho anterior ao multiempresa)**
 
