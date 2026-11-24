@@ -270,10 +270,13 @@ export function botaoImportar(p: PreviaVendas, o: { modo: "acrescentar" | "subst
 
 // ---------- conferência do PDF lido pela IA (UX 2.5)
 
-/** Número digitado na conferência ("12,90", "12.90", "1.234,56") → texto com ponto para o servidor; ilegível = null. */
+/** "1.234" (ponto seguido de exatamente 3 dígitos, sem vírgula): milhar ou decimal? Não dá para saber (a planilha faz o mesmo). */
+export const numeroAmbiguo = (s: string) => /^\d+\.\d{3}$/.test(s.replace(/[R$\s]/g, ""));
+
+/** Número digitado na conferência ("12,90", "12.90", "1.234,56") → texto com ponto para o servidor; ilegível ou ambíguo = null. */
 export function numeroDigitado(s: string): string | null {
   const t = s.replace(/[R$\s]/g, "");
-  if (!t) return null;
+  if (!t || numeroAmbiguo(t)) return null;
   let c = t;
   if (c.includes(",")) c = c.replace(/\./g, "").replace(",", ".");
   return /^\d+(\.\d+)?$/.test(c) ? c : null;
@@ -284,8 +287,15 @@ export const numeroParaCampo = (n: number | null) => (n == null ? "" : String(n)
 export type LinhaConferencia = { id: string; pedido: string | null; data: string | null; hora: string | null; produto: string; quantidade: string; valor: string };
 
 /** O que falta numa linha da conferência ("Falta a quantidade. Digite ou tire a linha."); null = a linha está boa. */
+const fraseAmbiguo = (s: string) => {
+  const t = s.replace(/[R$\s]/g, "");
+  return `Escreva “${t}” sem o ponto (${t.replace(".", "")}) ou com vírgula (${t.replace(".", ",")}): com ponto não dá para saber se é milhar ou centavos.`;
+};
+
 export function problemaDaLinha(l: LinhaConferencia): string | null {
   if (!l.produto.trim()) return "Digite o nome do produto.";
+  if (numeroAmbiguo(l.quantidade)) return fraseAmbiguo(l.quantidade);
+  if (numeroAmbiguo(l.valor)) return fraseAmbiguo(l.valor);
   const q = numeroDigitado(l.quantidade);
   if (!q || Number(q) <= 0) return l.quantidade.trim() ? "Digite a quantidade (maior que zero)." : "Falta a quantidade. Digite ou tire a linha.";
   if (!numeroDigitado(l.valor)) return l.valor.trim() ? "Digite o valor (R$)." : "Falta o valor. Digite ou tire a linha.";

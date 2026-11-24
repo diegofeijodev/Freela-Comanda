@@ -2,7 +2,8 @@ import { deflateRawSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import { FRASE_ZIP, lerZip, TETO_ARQUIVOS, ZipErro } from "../zip-leitura";
 
-type Entrada = { nome: string; dados?: Uint8Array; metodo?: 0 | 8; flags?: number };
+/** `declarado` = o tamanho descompactado que o diretório diz (um .zip malicioso mente). */
+type Entrada = { nome: string; dados?: Uint8Array; metodo?: 0 | 8; flags?: number; declarado?: number };
 
 /** Monta um .zip mínimo (local headers + diretório central + fim), como o PDV gera. */
 function zip(entradas: Entrada[], total?: number): ArrayBuffer {
@@ -17,11 +18,11 @@ function zip(entradas: Entrada[], total?: number): ArrayBuffer {
     const dados = metodo === 8 ? new Uint8Array(deflateRawSync(cru)) : cru;
     const lh = new DataView(new ArrayBuffer(30));
     lh.setUint32(0, 0x04034b50, true); lh.setUint16(6, e.flags ?? 0, true); lh.setUint16(8, metodo, true);
-    lh.setUint32(18, dados.length, true); lh.setUint32(22, cru.length, true); lh.setUint16(26, nome.length, true);
+    lh.setUint32(18, dados.length, true); lh.setUint32(22, e.declarado ?? cru.length, true); lh.setUint16(26, nome.length, true);
     partes.push(new Uint8Array(lh.buffer), nome, dados);
     const ch = new DataView(new ArrayBuffer(46));
     ch.setUint32(0, 0x02014b50, true); ch.setUint16(8, e.flags ?? 0, true); ch.setUint16(10, metodo, true);
-    ch.setUint32(20, dados.length, true); ch.setUint32(24, cru.length, true); ch.setUint16(28, nome.length, true); ch.setUint32(42, off, true);
+    ch.setUint32(20, dados.length, true); ch.setUint32(24, e.declarado ?? cru.length, true); ch.setUint16(28, nome.length, true); ch.setUint32(42, off, true);
     dir.push(new Uint8Array(ch.buffer), nome);
     off += 30 + nome.length + dados.length;
   }
@@ -55,6 +56,21 @@ describe("leitor de .zip (sem dependência nova)", () => {
     await expect(lerZip(zip([{ nome: "a.xml", dados: txt("<a/>") }], TETO_ARQUIVOS + 1))).rejects.toThrow(FRASE_ZIP.teto);
     const r = await lerZip(zip([{ nome: "g.xml", dados: new Uint8Array(1024 * 1024 + 1) }, { nome: "p.xml", dados: txt("<p/>") }]));
     expect([r.grandes, r.arquivos.map((a) => a.nome)]).toEqual([["g.xml"], ["p.xml"]]);
+  });
+  it("o tamanho declarado mente (bomba de zip): descompacta em fluxo e para no teto real; o arquivo vai para 'grandes'", async () => {
+    const tetos = { porXml: 1000, total: 100_000 };
+    const r = await lerZip(zip([
+      { nome: "bomba.xml", dados: new Uint8Array(50_000), metodo: 8, declarado: 10 },
+      { nome: "guardado.xml", dados: new Uint8Array(5_000), metodo: 0, declarado: 10 },
+      { nome: "ok.xml", dados: txt("<ok/>"), metodo: 8 },
+    ]), tetos);
+    expect([r.grandes, r.arquivos.map((a) => a.nome)]).toEqual([["bomba.xml", "guardado.xml"], ["ok.xml"]]);
+  });
+  it("o teto do total conta os bytes reais, não os declarados", async () => {
+    const tetos = { porXml: 1000, total: 1500 };
+    const doisDe800 = [0, 1].map((i) => ({ nome: `${i}.xml`, dados: new Uint8Array(800), metodo: 8 as const, declarado: 1 }));
+    await expect(lerZip(zip(doisDe800), tetos)).rejects.toThrow(FRASE_ZIP.teto);
+    expect((await lerZip(zip(doisDe800.slice(0, 1)), tetos)).arquivos).toHaveLength(1);
   });
   it("arquivo que não é .zip = ZipErro ilegível", async () => {
     const e = await lerZip(txt("não sou zip").buffer as ArrayBuffer).catch((x) => x);

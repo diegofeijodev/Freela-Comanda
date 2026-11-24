@@ -168,6 +168,13 @@ describe("conferência do PDF", () => {
     expect([numeroDigitado("12,90"), numeroDigitado("12.90"), numeroDigitado("1.234,56"), numeroDigitado("R$ 3"), numeroDigitado("abc"), numeroDigitado("")])
       .toEqual(["12.90", "12.90", "1234.56", "3", null, null]);
   });
+  it("ponto seguido de exatamente 3 dígitos, sem vírgula, é ambíguo (milhar ou decimal?) = null, como na planilha", () => {
+    expect(["1.234", "12.345", "0.500", "1.2345", "1.23", "1.234,5"].map(numeroDigitado)).toEqual([null, null, null, "1.2345", "1.23", "1234.5"]);
+    expect([problemaDaLinha(l("1.234")), problemaDaLinha(l("10", "2.500"))]).toEqual([
+      "Escreva “1.234” sem o ponto (1234) ou com vírgula (1,234): com ponto não dá para saber se é milhar ou centavos.",
+      "Escreva “2.500” sem o ponto (2500) ou com vírgula (2,500): com ponto não dá para saber se é milhar ou centavos.",
+    ]);
+  });
   it("o que falta em cada linha", () => {
     expect([problemaDaLinha(l("10")), problemaDaLinha(l("10", "")), problemaDaLinha(l("10", "0")), problemaDaLinha(l("")), problemaDaLinha(l("1", "1", " "))]).toEqual([
       null, "Falta a quantidade. Digite ou tire a linha.", "Digite a quantidade (maior que zero).", "Falta o valor. Digite ou tire a linha.", "Digite o nome do produto.",
