@@ -11,6 +11,8 @@ const SEQUENCE_AVULSA = 'CREATE SEQUENCE "nfce_id_lote_seq" AS BIGINT MINVALUE 1
 
 /** Lê as migrações versionadas: a lista fixa do importador não pode se afastar delas. */
 const MIGR = join(__dirname, '../../../../prisma/migrations');
+/** `CREATE TABLE "nome" (` (estilo Prisma) ou `CREATE TABLE nome (` (SQL à mão), até o `);` sozinho na linha. */
+const CREATE_TABLE = /CREATE TABLE "?([a-z_]+)"? \(\n([\s\S]*?)\n\);/g;
 const sql = readdirSync(MIGR)
   .filter((d) => !d.endsWith('.toml'))
   .sort()
@@ -20,7 +22,8 @@ const sql = readdirSync(MIGR)
 describe('esquema.ts × migrações', () => {
   it('colunas de cada tabela = CREATE TABLE da migração init (e users)', () => {
     const criadas = new Map<string, string[]>();
-    for (const m of sql.matchAll(/CREATE TABLE "([a-z_]+)" \(\n([\s\S]*?)\n\);/g)) {
+    // Com ou sem aspas: as migrações do ponto e de empresas criaram tabelas sem aspas (Tarefa 0 do desenho de 24/11).
+    for (const m of sql.matchAll(CREATE_TABLE)) {
       criadas.set(
         m[1]!,
         [...m[2]!.matchAll(/^\s+"([a-z_0-9]+)" /gm)].map((c) => c[1]!),
@@ -42,6 +45,25 @@ describe('esquema.ts × migrações', () => {
     }
   });
 
+  it('chave estrangeira sem aspas (inline ou ALTER TABLE) só em tabela só nossa (a carga não as toca)', () => {
+    const filhas: [string, string][] = [];
+    for (const m of sql.matchAll(CREATE_TABLE)) {
+      if (m[0].startsWith('CREATE TABLE "')) continue;
+      for (const r of m[2]!.matchAll(/REFERENCES (\w+)\(/g)) filhas.push([m[1]!, r[1]!]);
+    }
+    for (const m of sql.matchAll(/ALTER TABLE (\w+) ADD CONSTRAINT \w+\s+FOREIGN KEY \(\w+\) REFERENCES (\w+)\(/g)) filhas.push([m[1]!, m[2]!]);
+    expect(filhas.length).toBeGreaterThan(0);
+    for (const [filha, mae] of filhas) expect([filha, mae, (TABELAS_SO_NOSSAS as readonly string[]).includes(filha)]).toEqual([filha, mae, true]);
+  });
+
+  it('conferirEsquemaNosso aceita um banco migrado do zero (nenhuma tabela das migrações é desconhecida)', async () => {
+    const db = { $queryRawUnsafe: async (q: string) => (q.includes('is_identity') ? [{ n: 0 }] : []) } as never;
+    const esquema = new Map<string, { nome: string; tipo: string; nulo: boolean }[]>();
+    for (const m of sql.matchAll(CREATE_TABLE)) esquema.set(m[1]!, []);
+    const erros = await conferirEsquemaNosso(db, esquema);
+    expect(erros.filter((e) => e.includes('que o importador não conhece'))).toEqual([]);
+  });
+
   it('todo gatilho das migrações está em GATILHOS (com o que a carga faz com ele)', () => {
     const gat = [...sql.matchAll(/CREATE TRIGGER (\w+) [\s\S]*? ON (\w+)/g)].map((m) => `${m[2]}.${m[1]}`);
     expect(gat.sort()).toEqual(GATILHOS.map((g) => `${g.tabela}.${g.nome}`).sort());
@@ -53,7 +75,7 @@ describe('esquema.ts × migrações', () => {
 
   it('toda coluna acrescentada por migração em tabela do Lovable está em COLUNAS_SO_NOSSAS', () => {
     const lovable = new Set(TABELAS.map((t) => t.nome));
-    const achadas = [...sql.matchAll(/ALTER TABLE "([a-z_]+)" ADD COLUMN "([a-z_0-9]+)"/g)].filter((m) => lovable.has(m[1]!));
+    const achadas = [...sql.matchAll(/ALTER TABLE "?([a-z_]+)"? ADD COLUMN "?([a-z_0-9]+)"?/g)].filter((m) => lovable.has(m[1]!));
     expect(achadas.length).toBeGreaterThan(0);
     for (const [, t, c] of achadas) expect([t, COLUNAS_SO_NOSSAS[t!]?.includes(c!)]).toEqual([t, true]);
   });

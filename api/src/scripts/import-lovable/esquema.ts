@@ -251,7 +251,12 @@ export const TABELAS: readonly Tabela[] = [
 /** Tabelas de contas do Lovable que viram a nossa `users` (com `auth.users`); não são carregadas como tabela. */
 export const TABELAS_DE_CONTAS = ['profiles', 'user_roles'] as const;
 export const COLUNAS_USERS = ['id', 'email', 'nome', 'password_hash', 'perfil', 'created_at'] as const;
-/** Tabelas que só existem no nosso banco (fora da comparação com o Lovable). `ia_chave` = chave de IA da tela de Configurações (12/11); `certificado_digital*` = certificado A1 (16/11); `sefaz_*` e `notas_sefaz` = busca de notas na SEFAZ (17/11). */
+/**
+ * Tabelas que só existem no nosso banco (fora da comparação com o Lovable). `ia_chave` = chave de IA da tela de Configurações (12/11);
+ * `certificado_digital*` = certificado A1 (16/11); `sefaz_*` e `notas_sefaz` = busca de notas na SEFAZ (17/11); `nfce_*` = cupom fiscal
+ * (19/11); `ponto_*` = ponto (23/11) e `empresas` = cadastro de empresas (24/11), as duas criadas SEM aspas (o teste aceita as duas formas).
+ * `ponto_colaboradores.empresa_id` não vai para COLUNAS_SO_NOSSAS: a tabela inteira já é só nossa.
+ */
 export const TABELAS_SO_NOSSAS = ['users', '_prisma_migrations', 'ia_chave', 'certificado_digital', 'certificado_digital_historico',
   'sefaz_distribuicao',
   'sefaz_distribuicao_historico',
@@ -271,6 +276,14 @@ export const TABELAS_SO_NOSSAS = ['users', '_prisma_migrations', 'ia_chave', 'ce
   'nfce_cupom_itens',
   'nfce_cupom_pagamentos',
   'nfce_envios',
+  'ponto_escalas',
+  'ponto_escala_dias',
+  'ponto_colaboradores',
+  'ponto_folgas',
+  'ponto_terminais',
+  'ponto_marcacoes',
+  'ponto_justificativas',
+  'empresas',
 ] as const;
 
 /** Colunas nossas em tabela do Lovable: ficam nulas na carga (que só insere `colunas`) e o importador as desconta ao conferir o banco. */
