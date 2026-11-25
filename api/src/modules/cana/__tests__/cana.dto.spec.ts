@@ -35,7 +35,9 @@ describe('LancamentoCanaDto (formato; as regras por tipo ficam em camposDoLancam
   });
   it('texto como número e campo a mais são recusados', () => {
     expect(mensagens(LancamentoCanaDto, { tipo: 'recebimento', data: '2026-11-24', duzias: '12' }).length).toBeGreaterThan(0);
-    expect(mensagens(LancamentoCanaDto, { tipo: 'recebimento', data: '2026-11-24', duzias: 12, substitui_id: 'x' }).length).toBeGreaterThan(0);
+    expect(mensagens(LancamentoCanaDto, { tipo: 'recebimento', data: '2026-11-24', duzias: 12, substitui_id: 'x' }).length).toBeGreaterThan(
+      0,
+    );
   });
   it('chave de repetição precisa ser uuid', () => {
     expect(mensagens(LancamentoCanaDto, { tipo: 'recebimento', data: '2026-11-24', duzias: 1, chave_idempotencia: 'abc' })).toEqual([
@@ -55,7 +57,9 @@ describe('AnularCanaDto e CorrigirCanaDto', () => {
   });
   it('corrigir: motivo + os campos novos (sem tipo: o tipo é o do lançamento corrigido)', () => {
     expect(mensagens(CorrigirCanaDto, { motivo: 'Número errado', data: '2026-11-24', duzias: 10 })).toEqual([]);
-    expect(mensagens(CorrigirCanaDto, { motivo: 'Número errado', data: '2026-11-24', duzias: 10, tipo: 'producao' }).length).toBeGreaterThan(0);
+    expect(
+      mensagens(CorrigirCanaDto, { motivo: 'Número errado', data: '2026-11-24', duzias: 10, tipo: 'producao' }).length,
+    ).toBeGreaterThan(0);
   });
 });
 
@@ -81,9 +85,15 @@ describe('camposDoLancamento (o que cada tipo pede)', () => {
       ok: true,
       dados: { duzias: 12, litros_caldo: null, litros_frozen: null, fornecedor: 'Sítio', observacao: null },
     });
-    expect(camposDoLancamento('recebimento', { duzias: 0 })).toEqual({ ok: false, mensagem: 'Digite quantas dúzias chegaram (maior que zero).' });
+    expect(camposDoLancamento('recebimento', { duzias: 0 })).toEqual({
+      ok: false,
+      mensagem: 'Digite quantas dúzias chegaram (maior que zero).',
+    });
     expect(camposDoLancamento('recebimento', {})).toEqual({ ok: false, mensagem: 'Digite quantas dúzias chegaram (maior que zero).' });
-    expect(camposDoLancamento('recebimento', { duzias: 1, litros_caldo: 2 })).toEqual({ ok: false, mensagem: 'Recebimento de cana é só em dúzias.' });
+    expect(camposDoLancamento('recebimento', { duzias: 1, litros_caldo: 2 })).toEqual({
+      ok: false,
+      mensagem: 'Recebimento de cana é só em dúzias.',
+    });
   });
   it('produção: litros > 0; dúzias moídas opcionais (> 0); sem frozen nem fornecedor', () => {
     expect(camposDoLancamento('producao', { litros_caldo: 25 })).toEqual({
@@ -91,17 +101,32 @@ describe('camposDoLancamento (o que cada tipo pede)', () => {
       dados: { duzias: null, litros_caldo: 25, litros_frozen: null, fornecedor: null, observacao: null },
     });
     expect(camposDoLancamento('producao', { litros_caldo: 25, duzias: 5 })).toMatchObject({ ok: true, dados: { duzias: 5 } });
-    expect(camposDoLancamento('producao', { litros_caldo: 0 })).toEqual({ ok: false, mensagem: 'Digite quantos litros de caldo saíram (maior que zero).' });
+    expect(camposDoLancamento('producao', { litros_caldo: 0 })).toEqual({
+      ok: false,
+      mensagem: 'Digite quantos litros de caldo saíram (maior que zero).',
+    });
     expect(camposDoLancamento('producao', { litros_caldo: 1, duzias: 0 })).toEqual({
       ok: false,
       mensagem: 'As dúzias moídas, se informadas, têm de ser maiores que zero.',
     });
-    expect(camposDoLancamento('producao', { litros_caldo: 1, litros_frozen: 1 })).toEqual({ ok: false, mensagem: 'Frozen só entra na contagem.' });
-    expect(camposDoLancamento('producao', { litros_caldo: 1, fornecedor: 'x' })).toEqual({ ok: false, mensagem: 'Fornecedor só entra no recebimento.' });
+    expect(camposDoLancamento('producao', { litros_caldo: 1, litros_frozen: 1 })).toEqual({
+      ok: false,
+      mensagem: 'Frozen só entra na contagem.',
+    });
+    expect(camposDoLancamento('producao', { litros_caldo: 1, fornecedor: 'x' })).toEqual({
+      ok: false,
+      mensagem: 'Fornecedor só entra no recebimento.',
+    });
   });
   it('contagem: dúzias e litros de caldo ≥ 0 (0 = não sobrou); frozen opcional', () => {
-    expect(camposDoLancamento('contagem', { duzias: 0, litros_caldo: 0 })).toMatchObject({ ok: true, dados: { duzias: 0, litros_caldo: 0, litros_frozen: null } });
-    expect(camposDoLancamento('contagem', { duzias: 6, litros_caldo: 5, litros_frozen: 2 })).toMatchObject({ ok: true, dados: { litros_frozen: 2 } });
+    expect(camposDoLancamento('contagem', { duzias: 0, litros_caldo: 0 })).toMatchObject({
+      ok: true,
+      dados: { duzias: 0, litros_caldo: 0, litros_frozen: null },
+    });
+    expect(camposDoLancamento('contagem', { duzias: 6, litros_caldo: 5, litros_frozen: 2 })).toMatchObject({
+      ok: true,
+      dados: { litros_frozen: 2 },
+    });
     expect(camposDoLancamento('contagem', { litros_caldo: 5 })).toEqual({
       ok: false,
       mensagem: 'Digite as dúzias de cana que sobraram (não sobrou? digite 0).',

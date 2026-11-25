@@ -241,7 +241,10 @@ export function apurarSemana(e: EntradaSemana): Apuracao {
   const produzido = soma(producoes.map((l) => l.litros_caldo));
   const caldoInicio = caldoNaContagem(e.inicial, rendimento);
   const caldoFim = e.final ? caldoNaContagem(e.final, rendimento) : null;
-  const perda = e.final === null ? null : litrosNaContagem(e.inicial, rendimento).plus(produzido).minus(vendido).minus(litrosNaContagem(e.final, rendimento));
+  const perda =
+    e.final === null
+      ? null
+      : litrosNaContagem(e.inicial, rendimento).plus(produzido).minus(vendido).minus(litrosNaContagem(e.final, rendimento));
 
   // ---------- moagem e rendimento (sem divisão por zero: cana moída ≤ 0 = null + aviso)
   const podeDividir = moida !== null && moida.gt(0);
@@ -253,14 +256,21 @@ export function apurarSemana(e: EntradaSemana): Apuracao {
   if (e.vendas_importadas_ate === null || e.vendas_importadas_ate < periodo.fim)
     avisos.push({ codigo: 'vendas_incompletas', dados: { ate: e.vendas_importadas_ate, fim: periodo.fim } });
   if (config.size === 0) avisos.push({ codigo: 'nada_configurado', dados: {} });
-  if (semMl.length) avisos.push({ codigo: 'produto_sem_ml', dados: { produtos: semMl.map(({ nome, quantidade }) => ({ nome, quantidade })) } });
+  if (semMl.length)
+    avisos.push({ codigo: 'produto_sem_ml', dados: { produtos: semMl.map(({ nome, quantidade }) => ({ nome, quantidade })) } });
   if (semCardapioLista.length)
-    avisos.push({ codigo: 'venda_sem_cardapio', dados: { produtos: semCardapioLista.map(({ produto_relatorio, vendas }) => ({ produto_relatorio, vendas })) } });
+    avisos.push({
+      codigo: 'venda_sem_cardapio',
+      dados: { produtos: semCardapioLista.map(({ produto_relatorio, vendas }) => ({ produto_relatorio, vendas })) },
+    });
   const frozenContado = [e.inicial, e.final].reduce((s, c) => (c?.litros_frozen ? s.plus(D(c.litros_frozen)) : s), ZERO);
   if (!rendimento && (frozenSemRendimento.length || frozenContado.gt(0)))
     avisos.push({
       codigo: 'frozen_sem_rendimento',
-      dados: { vendidos: qtd(frozenSemRendimento.reduce((s, p) => s.plus(p.quantidade), ZERO)), litros_frozen_contados: lit(frozenContado) },
+      dados: {
+        vendidos: qtd(frozenSemRendimento.reduce((s, p) => s.plus(p.quantidade), ZERO)),
+        litros_frozen_contados: lit(frozenContado),
+      },
     });
   if (moida !== null && moida.lt(0)) avisos.push({ codigo: 'cana_moida_negativa', dados: { duzias: duz(moida) } });
   if (moida !== null && moida.eq(0)) avisos.push({ codigo: 'cana_moida_zero', dados: {} });
@@ -276,7 +286,11 @@ export function apurarSemana(e: EntradaSemana): Apuracao {
       recebida: { duzias: duz(recebida), lancamentos: recebimentos.length, ini: recDatas[0] ?? null, fim: recDatas.at(-1) ?? null },
       fim: fimDz === null ? null : duz(fimDz),
       moida: moida === null ? null : duz(moida),
-      anotada_nas_producoes: { duzias: duz(soma(comDuzias.map((l) => l.duzias))), producoes_com: comDuzias.length, producoes: producoes.length },
+      anotada_nas_producoes: {
+        duzias: duz(soma(comDuzias.map((l) => l.duzias))),
+        producoes_com: comDuzias.length,
+        producoes: producoes.length,
+      },
     },
     caldo: {
       produzido: { litros: lit(produzido), lancamentos: producoes.length, ini: prodDatas[0] ?? null, fim: prodDatas.at(-1) ?? null },

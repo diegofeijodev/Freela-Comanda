@@ -93,7 +93,13 @@ export class CanaService {
       item_ativo: i.ativo,
       parece_cana: pareceCana(i.nome),
       config: c
-        ? { ml_por_unidade: c.ml_por_unidade, frozen: c.frozen, ativo: c.ativo, atualizado_por_nome: c.atualizado_por_nome, atualizado_em: c.atualizado_em }
+        ? {
+            ml_por_unidade: c.ml_por_unidade,
+            frozen: c.frozen,
+            ativo: c.ativo,
+            atualizado_por_nome: c.atualizado_por_nome,
+            atualizado_em: c.atualizado_em,
+          }
         : null,
     }));
   }
@@ -101,8 +107,19 @@ export class CanaService {
   async salvarProduto(u: AuthUser, itemId: string, dto: ProdutoCanaDto) {
     const item = await this.prisma.itens_cardapio.findUnique({ where: { id: itemId }, select: { id: true } });
     if (!item) throw new NotFoundException({ code: 'NOT_FOUND', message: 'Produto do cardápio não encontrado' });
-    const dados = { ml_por_unidade: dto.ml_por_unidade, frozen: dto.frozen, ativo: dto.ativo, atualizado_por: u.id, atualizado_por_nome: u.nome, atualizado_em: new Date() };
-    return this.prisma.cana_produtos.upsert({ where: { item_cardapio_id: itemId }, create: { item_cardapio_id: itemId, ...dados }, update: dados });
+    const dados = {
+      ml_por_unidade: dto.ml_por_unidade,
+      frozen: dto.frozen,
+      ativo: dto.ativo,
+      atualizado_por: u.id,
+      atualizado_por_nome: u.nome,
+      atualizado_em: new Date(),
+    };
+    return this.prisma.cana_produtos.upsert({
+      where: { item_cardapio_id: itemId },
+      create: { item_cardapio_id: itemId, ...dados },
+      update: dados,
+    });
   }
 
   // ---------- lançamentos
@@ -163,7 +180,14 @@ export class CanaService {
         const campos = camposDoLancamento(antigo.tipo as TipoCana, dto);
         if (!campos.ok) throw new BadRequestException({ code: 'VALIDATION_ERROR', message: campos.mensagem });
         return tx.cana_lancamentos.create({
-          data: { tipo: antigo.tipo, data: dayToDb(dto.data), ...campos.dados, substitui_id: id, lancado_por: u.id, lancado_por_nome: u.nome },
+          data: {
+            tipo: antigo.tipo,
+            data: dayToDb(dto.data),
+            ...campos.dados,
+            substitui_id: id,
+            lancado_por: u.id,
+            lancado_por_nome: u.nome,
+          },
         });
       });
     } catch (e) {
@@ -218,7 +242,10 @@ export class CanaService {
     const ls = await this.prisma.cana_lancamentos.findMany({
       where: { data: { gte: dayToDb(ini), lte: dayToDb(fim) }, ...(tipo ? { tipo } : {}) },
       orderBy: [{ data: 'desc' }, { lancado_em: 'desc' }],
-      include: { substituido_por: { select: { id: true } }, substitui: { select: { id: true, data: true, duzias: true, litros_caldo: true, litros_frozen: true, lancado_por_nome: true } } },
+      include: {
+        substituido_por: { select: { id: true } },
+        substitui: { select: { id: true, data: true, duzias: true, litros_caldo: true, litros_frozen: true, lancado_por_nome: true } },
+      },
       take: 2000,
     });
     return ls.map(({ substituido_por, ...l }) => ({ ...l, corrigido_por_id: substituido_por?.id ?? null }));
@@ -270,7 +297,14 @@ export class CanaService {
   }
 
   private resumo(c: Lancamento) {
-    return { id: c.id, data: dia(c.data), duzias: c.duzias, litros_caldo: c.litros_caldo, litros_frozen: c.litros_frozen, lancado_por_nome: c.lancado_por_nome };
+    return {
+      id: c.id,
+      data: dia(c.data),
+      duzias: c.duzias,
+      litros_caldo: c.litros_caldo,
+      litros_frozen: c.litros_frozen,
+      lancado_por_nome: c.lancado_por_nome,
+    };
   }
 
   private apurarPares(contagens: Lancamento[]) {
@@ -284,25 +318,68 @@ export class CanaService {
     const janela = { gt: dayToDb(ini), lte: dayToDb(fim) };
     const [lancs, vendas, semCardapio, produtos, params, ultimaVenda] = await Promise.all([
       this.prisma.cana_lancamentos.findMany({ where: { tipo: { in: ['recebimento', 'producao'] }, anulado_em: null, data: janela } }),
-      this.prisma.vendas.groupBy({ by: ['item_cardapio_id', 'data'], where: { data: janela, item_cardapio_id: { not: null } }, _sum: { quantidade: true } }),
-      this.prisma.vendas.groupBy({ by: ['produto_relatorio', 'data'], where: { data: janela, item_cardapio_id: null }, _sum: { quantidade: true }, _count: { _all: true } }),
+      this.prisma.vendas.groupBy({
+        by: ['item_cardapio_id', 'data'],
+        where: { data: janela, item_cardapio_id: { not: null } },
+        _sum: { quantidade: true },
+      }),
+      this.prisma.vendas.groupBy({
+        by: ['produto_relatorio', 'data'],
+        where: { data: janela, item_cardapio_id: null },
+        _sum: { quantidade: true },
+        _count: { _all: true },
+      }),
       this.prisma.cana_produtos.findMany(),
       this.prisma.cana_parametros.findUnique({ where: { id: 1 } }),
       this.prisma.vendas.aggregate({ _max: { data: true } }),
     ]);
     const ids = [...new Set(vendas.map((v) => v.item_cardapio_id!))];
-    const nomes = new Map((await this.prisma.itens_cardapio.findMany({ where: { id: { in: ids } }, select: { id: true, nome: true } })).map((i) => [i.id, i.nome]));
-    const parametros = { litros_por_duzia_esperado: params?.litros_por_duzia_esperado ?? null, rendimento_frozen: params?.rendimento_frozen ?? null };
+    const nomes = new Map(
+      (await this.prisma.itens_cardapio.findMany({ where: { id: { in: ids } }, select: { id: true, nome: true } })).map((i) => [
+        i.id,
+        i.nome,
+      ]),
+    );
+    const parametros = {
+      litros_por_duzia_esperado: params?.litros_por_duzia_esperado ?? null,
+      rendimento_frozen: params?.rendimento_frozen ?? null,
+    };
     const base: Omit<EntradaSemana, 'inicial' | 'final'> = {
       hoje: todaySp(),
-      lancamentos: lancs.map((l) => ({ tipo: l.tipo as 'recebimento' | 'producao', data: dia(l.data), duzias: l.duzias, litros_caldo: l.litros_caldo })),
-      vendas: vendas.map((v) => ({ item_cardapio_id: v.item_cardapio_id!, nome: nomes.get(v.item_cardapio_id!) ?? '', data: dia(v.data), quantidade: v._sum.quantidade ?? 0 })),
-      vendas_sem_cardapio: semCardapio.map((v) => ({ produto_relatorio: v.produto_relatorio, data: dia(v.data), vendas: v._count._all, quantidade: v._sum.quantidade ?? 0 })),
-      produtos: produtos.map((p) => ({ item_cardapio_id: p.item_cardapio_id, ml_por_unidade: p.ml_por_unidade, frozen: p.frozen, ativo: p.ativo })),
+      lancamentos: lancs.map((l) => ({
+        tipo: l.tipo as 'recebimento' | 'producao',
+        data: dia(l.data),
+        duzias: l.duzias,
+        litros_caldo: l.litros_caldo,
+      })),
+      vendas: vendas.map((v) => ({
+        item_cardapio_id: v.item_cardapio_id!,
+        nome: nomes.get(v.item_cardapio_id!) ?? '',
+        data: dia(v.data),
+        quantidade: v._sum.quantidade ?? 0,
+      })),
+      vendas_sem_cardapio: semCardapio.map((v) => ({
+        produto_relatorio: v.produto_relatorio,
+        data: dia(v.data),
+        vendas: v._count._all,
+        quantidade: v._sum.quantidade ?? 0,
+      })),
+      produtos: produtos.map((p) => ({
+        item_cardapio_id: p.item_cardapio_id,
+        ml_por_unidade: p.ml_por_unidade,
+        frozen: p.frozen,
+        ativo: p.ativo,
+      })),
       parametros,
       vendas_importadas_ate: ultimaVenda._max.data ? dia(ultimaVenda._max.data) : null,
     };
-    const contagem = (c: Lancamento): ContagemCana => ({ id: c.id, data: dia(c.data), duzias: c.duzias!, litros_caldo: c.litros_caldo!, litros_frozen: c.litros_frozen });
+    const contagem = (c: Lancamento): ContagemCana => ({
+      id: c.id,
+      data: dia(c.data),
+      duzias: c.duzias!,
+      litros_caldo: c.litros_caldo!,
+      litros_frozen: c.litros_frozen,
+    });
     const ref = (c: Lancamento) => ({ id: c.id, data: dia(c.data), lancado_por_nome: c.lancado_por_nome });
     return pares.map(([a, b]) => ({
       ...apurarSemana({ ...base, inicial: contagem(a), final: b ? contagem(b) : null }),
@@ -321,7 +398,10 @@ export class CanaService {
     const [l] = await tx.$queryRaw<Lancamento[]>`SELECT * FROM cana_lancamentos WHERE id = ${id}::uuid FOR UPDATE`;
     if (!l) throw new NotFoundException({ code: 'NOT_FOUND', message: 'Lançamento não encontrado' });
     if (l.anulado_em)
-      throw new ConflictException({ code: 'CANA_JA_ANULADO', message: `Este lançamento já foi anulado (por ${l.anulado_por_nome ?? 'outra pessoa'}).` });
+      throw new ConflictException({
+        code: 'CANA_JA_ANULADO',
+        message: `Este lançamento já foi anulado (por ${l.anulado_por_nome ?? 'outra pessoa'}).`,
+      });
     return tx.cana_lancamentos.update({
       where: { id },
       data: { anulado_em: new Date(), anulado_por: u.id, anulado_por_nome: u.nome, anulado_motivo: motivo },
@@ -338,7 +418,11 @@ export class CanaService {
       igualNum(ja.duzias, d.duzias) &&
       igualNum(ja.litros_caldo, d.litros_caldo) &&
       igualNum(ja.litros_frozen, d.litros_frozen);
-    if (!igual) throw new ConflictException({ code: 'CANA_CHAVE_REPETIDA', message: 'Este lançamento já foi enviado com outros números. Abra o formulário de novo.' });
+    if (!igual)
+      throw new ConflictException({
+        code: 'CANA_CHAVE_REPETIDA',
+        message: 'Este lançamento já foi enviado com outros números. Abra o formulário de novo.',
+      });
     return ja;
   }
 

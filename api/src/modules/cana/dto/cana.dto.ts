@@ -14,7 +14,10 @@ const litros = (rotulo: string) => [
   Min(0, { message: `${rotulo} não podem ser negativos` }),
   Max(MAX, { message: `${rotulo}: no máximo 100.000` }),
 ];
-const aplicar = (ds: PropertyDecorator[]): PropertyDecorator => (alvo, campo) => ds.forEach((d) => d(alvo, campo));
+const aplicar =
+  (ds: PropertyDecorator[]): PropertyDecorator =>
+  (alvo, campo) =>
+    ds.forEach((d) => d(alvo, campo));
 
 class CamposCanaDto {
   @IsDayString({ message: 'deve ser uma data AAAA-MM-DD' }) data!: string;

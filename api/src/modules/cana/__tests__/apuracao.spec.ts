@@ -60,8 +60,24 @@ describe('apurarSemana — o exemplo do desenho, número a número', () => {
   it('caldo vendido = 30 L em copos + 16 L de frozen ÷ 1,25 = 12,8 L → 42,8 L; o burger não entra', () => {
     expect(r.caldo.vendido).toEqual({ litros: 42.8, em_copos: 30, em_frozen: 12.8 });
     expect(r.por_produto).toEqual([
-      { item_cardapio_id: CALDO, nome: 'Caldo de cana 300 ml', quantidade: 100, ml_por_unidade: 300, frozen: false, litros: 30, litros_caldo: 30 },
-      { item_cardapio_id: FROZEN, nome: 'Frozen 400 ml', quantidade: 40, ml_por_unidade: 400, frozen: true, litros: 16, litros_caldo: 12.8 },
+      {
+        item_cardapio_id: CALDO,
+        nome: 'Caldo de cana 300 ml',
+        quantidade: 100,
+        ml_por_unidade: 300,
+        frozen: false,
+        litros: 30,
+        litros_caldo: 30,
+      },
+      {
+        item_cardapio_id: FROZEN,
+        nome: 'Frozen 400 ml',
+        quantidade: 40,
+        ml_por_unidade: 400,
+        frozen: true,
+        litros: 16,
+        litros_caldo: 12.8,
+      },
     ]);
   });
   it('perda = 3 + 50 − 42,8 − 5 = 5,2 L (sem resto de ponto flutuante)', () => {
@@ -114,7 +130,12 @@ describe('apurarSemana — parâmetros e configuração', () => {
     ]);
     expect(r.avisos).toContainEqual({
       codigo: 'produto_sem_ml',
-      dados: { produtos: [{ nome: 'Caldo de cana 300 ml', quantidade: 100 }, { nome: 'Garapa jarra', quantidade: 12 }] },
+      dados: {
+        produtos: [
+          { nome: 'Caldo de cana 300 ml', quantidade: 100 },
+          { nome: 'Garapa jarra', quantidade: 12 },
+        ],
+      },
     });
     expect(r.caldo.vendido.litros).toBe(12.8);
   });
@@ -131,7 +152,10 @@ describe('apurarSemana — parâmetros e configuração', () => {
       }),
     );
     expect(r.nao_entram.sem_cardapio).toEqual([{ produto_relatorio: 'CALDO CANA 500', vendas: 8, quantidade: 9 }]);
-    expect(r.avisos).toContainEqual({ codigo: 'venda_sem_cardapio', dados: { produtos: [{ produto_relatorio: 'CALDO CANA 500', vendas: 8 }] } });
+    expect(r.avisos).toContainEqual({
+      codigo: 'venda_sem_cardapio',
+      dados: { produtos: [{ produto_relatorio: 'CALDO CANA 500', vendas: 8 }] },
+    });
   });
 
   it('nada configurado: o aviso, e o caldo vendido é 0', () => {
@@ -209,7 +233,12 @@ describe('apurarSemana — semana em andamento (sem a contagem final)', () => {
       moida: null,
       anotada_nas_producoes: { duzias: 5, producoes_com: 1, producoes: 1 },
     });
-    expect([r.caldo.fim, r.caldo.perda, r.moagem.litros_por_duzia, r.rendimento.litros_vendidos_por_duzia]).toEqual([null, null, null, null]);
+    expect([r.caldo.fim, r.caldo.perda, r.moagem.litros_por_duzia, r.rendimento.litros_vendidos_por_duzia]).toEqual([
+      null,
+      null,
+      null,
+      null,
+    ]);
     expect(r.caldo.vendido.litros).toBe(18 + 12.8);
   });
 });
