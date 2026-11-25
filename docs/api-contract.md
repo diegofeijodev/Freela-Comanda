@@ -509,7 +509,8 @@ inicio/fim { litros, caldo, frozen, frozen_em_caldo }, perda }`, `moagem { litro
 Contas: cana moída = início + recebida − fim; caldo vendido = Σ quantidade × ml ÷ 1.000 (÷ rendimento no frozen), venha a venda de onde vier;
 caldo na contagem = caldo + frozen ÷ rendimento; perda = início + produzido − vendido − fim (negativa = sobra); litros por dúzia = produzido ÷ moída;
 rendimento = vendido ÷ moída (cana moída ≤ 0 = `null`, sem divisão). Códigos dos avisos: `vendas_incompletas`, `nada_configurado`, `produto_sem_ml`,
-`venda_sem_cardapio`, `frozen_sem_rendimento`, `cana_moida_negativa`, `cana_moida_zero`, `producao_zero_com_venda`. Sem "fechar a semana" (B6):
+`venda_sem_cardapio`, `frozen_sem_rendimento`, `cana_moida_negativa`, `cana_moida_zero`, `producao_zero_com_venda` (`produto_sem_ml` = venda de item
+com nome de caldo **sem configuração nenhuma**; o configurado e desligado sai da conta calado; `nada_configurado` = nenhum produto ligado). Sem "fechar a semana" (B6):
 toda semana é calculada na hora, com a configuração de hoje.
 
 | HTTP | `code` | Quando |
