@@ -27,7 +27,7 @@ Num banco vazio, a tela de entrada oferece **"Primeiro acesso? Criar conta de ad
 Na máquina do dono, sempre pelo teto de memória (`scripts/run-capped.sh`, ver `CLAUDE.md`):
 
 - API: `npx jest --runInBand <arquivos>` (6 suítes), `npm run typecheck`, `npx eslint "src/**/*.ts"`,
-  smoke `bash scripts/smoke-capped.sh` (banco descartável, 737 checagens em 24/11: permissões admin × loja, inventário cego de ponta a ponta,
+  smoke `bash scripts/smoke-capped.sh` (banco descartável, 741 checagens em 24/11: permissões admin × loja, inventário cego de ponta a ponta,
   lista de compras, nota fiscal, contas/DRE/caixa, importações, usuários, PDF sem chave, certificado, SEFAZ, cupom, importar vendas e, no fim, o
   roteiro ponta a ponta E1–E9, a Cana e o multiempresa; as 2 que falham em novembro, "DRE de novembro" e "mês de 30 dias", são antigas, de data).
 - Web: `yarn test` (7 arquivos, as regras puras do protótipo), `yarn typecheck`, `yarn lint`,
