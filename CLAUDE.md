@@ -57,7 +57,7 @@ contrato: `docs/api-contract.md`. Protótipo de referência em `.prototype/` (gi
 - Cana (`api/src/modules/cana`, rotas `/v1/cana` em `docs/api-contract.md` §22, tela `web/src/app/(app)/cana`, migração `20261127120000_cana`): módulo próprio que só LÊ
   `vendas` e `itens_cardapio` (nunca estoque, inventário ou CMV), por empresa. A loja (colaborador com a tela `cana`; o `@Staff()` sozinho não basta:
   `exigirModuloCana` no serviço) só alcança `POST /lancamentos` e `GET /lancamentos/recentes` e lança às cegas (só hoje/ontem; nunca vê conta, motivo
-  nem o número novo de uma correção); o resto é `@AdminOnly()` SEM `@Modulos` (tela de visão da loja). Livro só de acréscimo (gatilho): corrigir =
+  nem o número novo de uma correção); o resto é `@AdminOnly()` SEM `@Modulos` (tela de visão da loja). Livro só de acréscimo (gatilhos por linha e, desde `20261128120000_cana_truncate`, contra TRUNCATE): corrigir =
   `POST /lancamentos/:id/corrigir` (anula e lança numa transação); chave de repetição no lançar. 2ª exceção à "regra em SQL": a conta da semana é a
   função pura `modules/cana/apuracao.ts` (Decimal por dentro; testes em `__tests__/apuracao.spec.ts`); `web/src/lib/cana.ts` só formata. Nada vem
   preenchido (ml, frozen, rendimento, esperado). O índice parcial `cana_uma_contagem_por_dia` só existe na migração (como os do cupom).

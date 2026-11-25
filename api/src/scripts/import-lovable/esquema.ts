@@ -360,6 +360,16 @@ export const GATILHOS: readonly { tabela: string; nome: string; porque: string }
     nome: 'cana_parametros_historico_imutavel',
     porque: 'tabela só nossa (controle da cana), que a carga não toca: desligar e religar junto com os outros não muda nada',
   },
+  {
+    tabela: 'cana_lancamentos',
+    nome: 'cana_lancamentos_sem_truncate',
+    porque: 'tabela só nossa (controle da cana; recusa TRUNCATE), que a carga não toca: desligar e religar junto com os outros não muda nada',
+  },
+  {
+    tabela: 'cana_parametros_historico',
+    nome: 'cana_parametros_historico_sem_truncate',
+    porque: 'tabela só nossa (controle da cana; recusa TRUNCATE), que a carga não toca: desligar e religar junto com os outros não muda nada',
+  },
 ];
 
 /** Colunas com id de conta SEM chave estrangeira (como no Lovable): só avisamos quando apontam para conta que não veio. */

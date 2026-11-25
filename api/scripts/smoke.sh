@@ -1085,6 +1085,8 @@ check "K3: o banco recusa apagar lançamento" 1 "$(sql_falha "delete from cana_l
 check "K3: o banco recusa mudar o número" 1 "$(sql_falha "update cana_lancamentos set duzias = 5 where id='$KC1'")"
 check "K3: o banco recusa desfazer a anulação" 1 "$(sql_falha "update cana_lancamentos set anulado_em = null, anulado_por = null, anulado_por_nome = null, anulado_motivo = null where id='$KERR2'")"
 check "K3: o banco recusa mudar o histórico dos números" 1 "$(sql_falha "delete from cana_parametros_historico")"
+check "K3: o banco recusa esvaziar o livro (TRUNCATE)" 1 "$(sql_falha "truncate cana_lancamentos")"
+check "K3: o banco recusa esvaziar o histórico dos números (TRUNCATE)" 1 "$(sql_falha "truncate cana_parametros_historico")"
 req POST /v1/importacoes/vendas "$ADM" "{\"arquivo\":\"cana.csv\",\"modo\":\"acrescentar\",\"linhas\":[
 {\"pedido\":\"K-1\",\"data\":\"$(dias -5)\",\"produto_relatorio\":\"CALDO DE CANA 300\",\"item_cardapio\":\"caldo de cana 300 ml\",\"quantidade\":\"60\",\"valor_total\":\"600\"},
 {\"pedido\":\"K-2\",\"data\":\"$C2\",\"produto_relatorio\":\"CALDO DE CANA 300\",\"item_cardapio\":\"caldo de cana 300 ml\",\"quantidade\":\"40\",\"valor_total\":\"400\"},
@@ -1195,6 +1197,7 @@ reqE "$EB" GET $CANA/semanas "$ADM"
 check "K4 na 2ª: só as contagens dela; cana moída 5 + 3 − 2 = 6, produzido 10, vendido 0, perda 2 + 10 − 0 − 1 = 11" "2 1 6 10 0 11" \
   "$(j .contagens) $(j '.semanas|length') $(j '.semanas[0].cana_moida') $(j '.semanas[0].caldo_produzido') $(j '.semanas[0].caldo_vendido') $(j '.semanas[0].perda')"
 check "K3 na 2ª: o banco recusa apagar lançamento" 1 "$(sql_falha "delete from $SB.cana_lancamentos")"
+check "K3 na 2ª: o banco recusa esvaziar o livro e o histórico (TRUNCATE)" "1 1" "$(sql_falha "truncate $SB.cana_lancamentos") $(sql_falha "truncate $SB.cana_parametros_historico")"
 check "ME: nada da cana da 2ª no public (e vice-versa)" "$PUB_CANA 6" "$(sql "select count(*) from cana_lancamentos") $(sql "select count(*) from $SB.cana_lancamentos")"
 req DELETE "$EMP/$EB" "$ADM"; check "E7: excluir empresa com usuários: 409 EM_USO" "409 EM_USO" "$CODE $(j .error.code)"
 

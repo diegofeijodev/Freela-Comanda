@@ -163,6 +163,21 @@ describe('controle da cana (migração cana)', () => {
   });
 });
 
+describe('controle da cana: o livro também não se esvazia (migração cana_truncate)', () => {
+  const m = readFileSync(join(MIGR, '20261128120000_cana_truncate', 'migration.sql'), 'utf8');
+  it('BEFORE TRUNCATE por instrução nas 2 tabelas só de acréscimo, e os 2 gatilhos em GATILHOS', () => {
+    const gat = [...m.matchAll(/CREATE TRIGGER (\w+) BEFORE TRUNCATE ON (\w+) FOR EACH STATEMENT/g)].map((x) => `${x[2]}.${x[1]}`);
+    const esperados = ['cana_lancamentos.cana_lancamentos_sem_truncate', 'cana_parametros_historico.cana_parametros_historico_sem_truncate'];
+    expect(gat.sort()).toEqual(esperados);
+    expect(GATILHOS.map((g) => `${g.tabela}.${g.nome}`)).toEqual(expect.arrayContaining(esperados));
+  });
+  it('só acrescenta e vale para todo schema de empresa: nada de DROP, DELETE, UPDATE, INSERT nem public.', () => {
+    const fora = m.replace(/\$\$[\s\S]*?\$\$/g, '').replace(/^\s*--.*$/gm, '').replace(/^CREATE TRIGGER .*$/gm, '');
+    expect(fora).not.toMatch(/\bDROP\b|\bDELETE\b|\bUPDATE\b|\bINSERT\b|ALTER COLUMN|RENAME/i);
+    expect(m).not.toMatch(/\bpublic\./);
+  });
+});
+
 describe('conferirEsquemaNosso × COLUNAS_SO_NOSSAS', () => {
   const db = {
     $queryRawUnsafe: async (q: string) => (q.includes('is_identity') ? [{ n: 0 }] : []),
