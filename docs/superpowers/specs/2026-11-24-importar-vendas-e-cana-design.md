@@ -1094,7 +1094,7 @@ Tomadas na implementação (ramo `feat/vendas-cana`), pelo mais seguro quando ha
 | 7.8 Vendas pela URL | aceito: `/vendas?ini=&fim=` abre como "Personalizado" | "Ver vendas do período" |
 | 7.9 cabeçalho fora da 1ª linha | aceito: a 1ª linha (entre as 10 primeiras) com 3+ nomes conhecidos; `primeira_linha` vai ao servidor para as frases "Linha N". **Não feito:** a escolha "Trocar" o cabeçalho na tela | o mais comum fica coberto; trocar à mão é raro |
 | 7.10 rascunho | sem storage (como a UX propôs); aviso do navegador ao sair | o CLAUDE.md só libera 3 usos |
-| 7.11 parece de caldo | aceito: `parece_cana` por produto em `produtos_sem_de_para`, da função `pareceCana` (`importacoes/previa.ts`; a Parte B deve reusar) | uma lista só |
+| 7.11 parece de caldo | aceito: `parece_cana` por produto em `produtos_sem_de_para`, da função `pareceCana` (hoje em `cana/parece-cana.ts`, que a prévia importa; era `importacoes/previa.ts`) | uma lista só |
 | 7.12 P6 | aceito: `ja_existentes_pedido_dia` | o aviso só aparece no caso certo |
 | 7.25 prévia a cada escolha | a tela espera 500 ms e cancela o pedido anterior (`AbortController`); o throttler é 300/min | cabe |
 | 7.26 XML só com cancelamentos | aceito: `IMPORTACAO_VAZIA` só no confirmar e só quando não há venda nova **nem** cancelamento a aplicar; a prévia nunca dá 400 por vazio (devolve `novas = 0` e os motivos, a tela mostra P15/P16/P18) | o cancelamento que chega semanas depois tem de entrar |
@@ -1194,6 +1194,17 @@ escolha; cada uma dá para voltar atrás.
   `Sheet` lateral no computador (hoje cartões em todas as larguras e o formulário no lugar da lista); a barra "Salvar os 2" na Configuração; o link
   "Ver a contagem de dd/mm" no `CANA_CONTAGEM_DO_DIA` do admin; o filtro "a semana escolhida" e "Escolher datas" no período dos Lançamentos (há
   7/30/90 dias e 1 ano); a sugestão "Média real" (7.21).
+
+**Revisão de código da Cana (24/11, depois de no ar e antes do 1º uso)**
+
+- A chave de repetição do `POST /lancamentos` é conferida **antes** da data e dos campos: o reenvio depois da meia-noite devolve o gravado (200).
+- Produto configurado e desligado sai da conta calado; "produto sem ml" é só o que parece de caldo **sem configuração nenhuma** (B.3).
+- `litros_por_duzia_esperado` com até 3 casas no DTO (a coluna é `DECIMAL(10,3)`; com 4 o banco arredondava).
+- Migração `20261128120000_cana_truncate`: o livro e o histórico dos números recusam `TRUNCATE` (gatilho por instrução).
+- `GET /lancamentos` passou a `{ lancamentos, truncado, limite }` (até 2.000, os mais novos); a tela avisa que as somas contam só os listados.
+  Formato novo: a API e o web sobem juntos.
+- `pareceCana` mora em `modules/cana/parece-cana.ts` (a Cana não importa mais de `importacoes`).
+- Mantido de propósito: semanas antigas recalculadas com a configuração de hoje (B6 não feito); o README diz isso ao dono.
 
 **Parte C: o que mudou das checagens de C.3 (desenho anterior ao multiempresa)**
 

@@ -107,6 +107,8 @@ Na máquina do dono, sempre pelo teto de memória (`scripts/run-capped.sh`, ver 
      avisar antes de usar); os litros esperados por dúzia podem ficar em branco nas 2 ou 3 primeiras semanas (a tela mostra a média real).
   4. A loja faz a 1ª contagem (fim do dia; de manhã = marcar Ontem) e, ao longo da semana, lança recebimentos e produção. Na contagem seguinte,
      abrir Cana → Semana e conferir as contas com o caderno da loja; anotar onde não bater.
+     Atenção: toda semana, inclusive as antigas, é recalculada na hora com a configuração de hoje (ml, frozen, rendimento e esperado);
+     mudar um número na Configuração muda também as contas das semanas passadas (a tela diz "Calculada agora, com a configuração de hoje").
   5. Ainda sem resposta (a tela já se ajusta, nada a mudar no código): sobra frozen pronto de uma semana para outra (o campo é opcional)? a loja pode
      desfazer o próprio lançamento por alguns minutos (hoje só o gerente anula)? quer um limite de perda que vire alerta?
 
