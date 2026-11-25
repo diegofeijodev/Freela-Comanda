@@ -6,7 +6,7 @@ import { addDays, dateToString, dayToDb, todaySp } from '../../common/time/dates
 import { apurarSemana, type Apuracao, type ContagemCana, type EntradaSemana } from './apuracao';
 import type { CorrigirCanaDto, LancamentoCanaDto, ParametrosCanaDto, ProdutoCanaDto } from './dto/cana.dto';
 import { pareceCana } from './parece-cana';
-import { camposDoLancamento, conferirData, conferirMotivo, type DadosLancamento, type TipoCana } from './regras';
+import { camposDoLancamento, conferirData, conferirMotivo, numerosDoPedido, type TipoCana } from './regras';
 
 type Lancamento = Prisma.cana_lancamentosGetPayload<object>;
 type Tx = Prisma.TransactionClient;
@@ -123,18 +123,21 @@ export class CanaService {
   }
 
   // ---------- lançamentos
-  /** `repetido` = a mesma chave de repetição do mesmo usuário com os mesmos números: devolve o da 1ª vez (200). */
+  /**
+   * `repetido` = a mesma chave de repetição do mesmo usuário com os mesmos números: devolve o da 1ª vez (200). A repetição vem ANTES
+   * das regras do lançamento novo: o reenvio depois da meia-noite (o "ontem" da loja virou anteontem) devolve o que já entrou, em vez de
+   * um 400 "A loja lança só hoje ou ontem." de um lançamento gravado.
+   */
   async lancar(u: AuthUser, dto: LancamentoCanaDto): Promise<{ lancamento: Lancamento; repetido: boolean }> {
-    const hoje = todaySp();
-    const erroData = conferirData(dto.data, hoje, ehAdmin(u));
+    if (dto.chave_idempotencia) {
+      const ja = await this.prisma.cana_lancamentos.findUnique({ where: { chave_idempotencia: dto.chave_idempotencia } });
+      if (ja) return { lancamento: this.mesmoPedido(ja, u, dto), repetido: true };
+    }
+    const erroData = conferirData(dto.data, todaySp(), ehAdmin(u));
     if (erroData) throw new BadRequestException({ code: 'CANA_DATA_FORA', message: erroData });
     const campos = camposDoLancamento(dto.tipo, dto);
     if (!campos.ok) throw new BadRequestException({ code: 'VALIDATION_ERROR', message: campos.mensagem });
 
-    if (dto.chave_idempotencia) {
-      const ja = await this.prisma.cana_lancamentos.findUnique({ where: { chave_idempotencia: dto.chave_idempotencia } });
-      if (ja) return { lancamento: this.mesmoPedido(ja, u, dto.tipo, dto.data, campos.dados), repetido: true };
-    }
     try {
       const lancamento = await this.prisma.cana_lancamentos.create({
         data: {
@@ -152,7 +155,7 @@ export class CanaService {
       // Corrida da mesma chave (duas idas ao mesmo tempo): a que chegou primeiro vale.
       if (dto.chave_idempotencia) {
         const ja = await this.prisma.cana_lancamentos.findUnique({ where: { chave_idempotencia: dto.chave_idempotencia } });
-        if (ja) return { lancamento: this.mesmoPedido(ja, u, dto.tipo, dto.data, campos.dados), repetido: true };
+        if (ja) return { lancamento: this.mesmoPedido(ja, u, dto), repetido: true };
       }
       throw this.contagemDoDia(dto.data, u);
     }
@@ -409,12 +412,13 @@ export class CanaService {
   }
 
   /** A mesma chave só devolve o lançamento guardado se for do mesmo usuário e com os mesmos números (senão vazaria o de outra pessoa). */
-  private mesmoPedido(ja: Lancamento, u: AuthUser, tipo: TipoCana, data: string, d: DadosLancamento): Lancamento {
+  private mesmoPedido(ja: Lancamento, u: AuthUser, dto: LancamentoCanaDto): Lancamento {
     const igualNum = (a: Prisma.Decimal | null, b: number | null) => (a === null ? b === null : b !== null && a.equals(b));
+    const d = numerosDoPedido(dto);
     const igual =
       ja.lancado_por === u.id &&
-      ja.tipo === tipo &&
-      dia(ja.data) === data &&
+      ja.tipo === dto.tipo &&
+      dia(ja.data) === dto.data &&
       igualNum(ja.duzias, d.duzias) &&
       igualNum(ja.litros_caldo, d.litros_caldo) &&
       igualNum(ja.litros_frozen, d.litros_frozen);

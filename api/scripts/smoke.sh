@@ -1031,6 +1031,11 @@ req POST "$CANA/lancamentos/$KL2/anular" "$ADM" '{"motivo":"Segredo do gerente"}
 req POST $CANA/lancamentos "$LOJA" "$K_REC2"
 check "K1 (7.13/7.16): a mesma chave depois de o gerente anular: 200 e anulado, sem o motivo nem quem anulou" "200 $KL2 true false" \
   "$CODE $(j .id) $(j .anulado) $(echo "$BODY" | jq 'has("anulado_motivo") or has("anulado_por_nome") or has("lancado_por") or (tostring | test("Segredo"))')"
+K_CH3=00000000-0000-4000-8000-00000000ca03; K_VELHO=$(dias -30)
+sql "insert into cana_lancamentos (tipo, data, duzias, chave_idempotencia, lancado_por, lancado_por_nome) values ('recebimento', '$K_VELHO', 7, '$K_CH3', '$LOJA_ID', 'Loja Demo')" >/dev/null
+req POST $CANA/lancamentos "$LOJA" "{\"tipo\":\"recebimento\",\"data\":\"$K_VELHO\",\"duzias\":7,\"chave_idempotencia\":\"$K_CH3\"}"
+check "K1: o reenvio do que já entrou, com o dia já fora para a loja (passou da meia-noite), devolve o gravado: 200, sem 400 de data" "200 true 1" \
+  "$CODE $(j .repetido) $(sql "select count(*) from cana_lancamentos where chave_idempotencia='$K_CH3'")"
 req POST $CANA/lancamentos "$LOJA" "{\"tipo\":\"recebimento\",\"data\":\"$(dias -3)\",\"duzias\":5}"
 check "K1: a loja com data de 3 dias atrás: 400 CANA_DATA_FORA" "400 CANA_DATA_FORA A loja lança só hoje ou ontem." "$CODE $(j .error.code) $(j .error.message)"
 req POST $CANA/lancamentos "$ADM" "{\"tipo\":\"recebimento\",\"data\":\"$(dias 1)\",\"duzias\":5}"; check "K1: data no futuro (admin): 400" "400 Data no futuro." "$CODE $(j .error.message)"

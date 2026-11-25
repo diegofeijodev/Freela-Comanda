@@ -26,11 +26,18 @@ const texto = (s: string | null | undefined) => (s && s.trim() ? s.trim().replac
 const tem = (n: number | null | undefined): n is number => typeof n === 'number';
 const erro = (mensagem: string) => ({ ok: false as const, mensagem });
 
-export function camposDoLancamento(tipo: TipoCana, c: CamposCana): { ok: true; dados: DadosLancamento } | { ok: false; mensagem: string } {
-  const dados: DadosLancamento = {
+/** Os números do pedido como o livro os guarda (ausente = null): é o que a chave de repetição compara, antes de qualquer regra. */
+export function numerosDoPedido(c: CamposCana): Pick<DadosLancamento, 'duzias' | 'litros_caldo' | 'litros_frozen'> {
+  return {
     duzias: tem(c.duzias) ? c.duzias : null,
     litros_caldo: tem(c.litros_caldo) ? c.litros_caldo : null,
     litros_frozen: tem(c.litros_frozen) ? c.litros_frozen : null,
+  };
+}
+
+export function camposDoLancamento(tipo: TipoCana, c: CamposCana): { ok: true; dados: DadosLancamento } | { ok: false; mensagem: string } {
+  const dados: DadosLancamento = {
+    ...numerosDoPedido(c),
     fornecedor: texto(c.fornecedor),
     observacao: texto(c.observacao),
   };
