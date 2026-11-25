@@ -119,25 +119,32 @@ describe('apurarSemana — parâmetros e configuração', () => {
     expect(r.caldo.perda).toBe(3.6);
   });
 
-  it('produto que parece de caldo, vendido e sem ml (ou desligado), avisa; o que não parece fica fora calado', () => {
+  it('produto que parece de caldo, vendido e sem configuração nenhuma, avisa; o que não parece fica fora calado', () => {
     const e = exemplo();
     e.vendas.push({ item_cardapio_id: GARAPA, nome: 'Garapa jarra', data: '2026-11-22', quantidade: 12 });
+    const r = apurarSemana(e);
+    expect(r.nao_entram.sem_ml).toEqual([{ item_cardapio_id: GARAPA, nome: 'Garapa jarra', quantidade: 12 }]);
+    expect(r.avisos).toContainEqual({ codigo: 'produto_sem_ml', dados: { produtos: [{ nome: 'Garapa jarra', quantidade: 12 }] } });
+    expect(r.caldo.vendido.litros).toBe(42.8);
+  });
+
+  it('produto configurado e desligado ("não leva caldo") fica fora da conta, sem o aviso de "sem ml"', () => {
+    const e = exemplo();
     e.produtos = e.produtos.map((p) => (p.item_cardapio_id === CALDO ? { ...p, ativo: false } : p));
     const r = apurarSemana(e);
-    expect(r.nao_entram.sem_ml).toEqual([
-      { item_cardapio_id: CALDO, nome: 'Caldo de cana 300 ml', quantidade: 100 },
-      { item_cardapio_id: GARAPA, nome: 'Garapa jarra', quantidade: 12 },
-    ]);
-    expect(r.avisos).toContainEqual({
-      codigo: 'produto_sem_ml',
-      dados: {
-        produtos: [
-          { nome: 'Caldo de cana 300 ml', quantidade: 100 },
-          { nome: 'Garapa jarra', quantidade: 12 },
-        ],
-      },
-    });
-    expect(r.caldo.vendido.litros).toBe(12.8);
+    expect(r.nao_entram.sem_ml).toEqual([]);
+    expect(r.avisos.map((a) => a.codigo)).not.toContain('produto_sem_ml');
+    expect(r.por_produto.map((p) => p.nome)).toEqual(['Frozen 400 ml']);
+    expect(r.caldo.vendido).toEqual({ litros: 12.8, em_copos: 0, em_frozen: 12.8 });
+  });
+
+  it('todos os configurados desligados: "nada configurado" (nada entra na conta), e nenhum vira "sem ml"', () => {
+    const e = exemplo();
+    e.produtos = e.produtos.map((p) => ({ ...p, ativo: false }));
+    const r = apurarSemana(e);
+    expect(r.avisos.map((a) => a.codigo)).toContain('nada_configurado');
+    expect(r.avisos.map((a) => a.codigo)).not.toContain('produto_sem_ml');
+    expect(r.caldo.vendido.litros).toBe(0);
   });
 
   it('venda com nome de caldo sem item do cardápio avisa (o resto do de-para pendente não)', () => {

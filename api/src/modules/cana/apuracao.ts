@@ -183,7 +183,10 @@ export function apurarSemana(e: EntradaSemana): Apuracao {
   const comDuzias = producoes.filter((l) => l.duzias !== null);
 
   // ---------- caldo vendido, produto a produto (qualquer origem: planilha, XML, PDF ou cupom)
-  const config = new Map(e.produtos.filter((p) => p.ativo).map((p) => [p.item_cardapio_id, p]));
+  // Toda a configuração, ligada ou não: produto desligado ("não leva caldo") fica fora da conta, calado; "sem ml" é só o que parece de
+  // caldo e não tem configuração NENHUMA (desenho B.3).
+  const config = new Map(e.produtos.map((p) => [p.item_cardapio_id, p]));
+  const ligados = e.produtos.filter((p) => p.ativo).length;
   const porItem = new Map<string, { nome: string; quantidade: Prisma.Decimal }>();
   for (const v of e.vendas) {
     if (!noPeriodo(v.data)) continue;
@@ -202,6 +205,7 @@ export function apurarSemana(e: EntradaSemana): Apuracao {
       if (pareceCana(nome)) semMl.push({ item_cardapio_id: id, nome, quantidade: qtd(quantidade) });
       continue;
     }
+    if (!p.ativo) continue;
     const litros = quantidade.times(D(p.ml_por_unidade)).div(1000);
     if (p.frozen && !rendimento) {
       frozenSemRendimento.push({ item_cardapio_id: id, nome, quantidade: qtd(quantidade) });
@@ -255,7 +259,7 @@ export function apurarSemana(e: EntradaSemana): Apuracao {
   // ---------- avisos (a ordem é a da tela)
   if (e.vendas_importadas_ate === null || e.vendas_importadas_ate < periodo.fim)
     avisos.push({ codigo: 'vendas_incompletas', dados: { ate: e.vendas_importadas_ate, fim: periodo.fim } });
-  if (config.size === 0) avisos.push({ codigo: 'nada_configurado', dados: {} });
+  if (ligados === 0) avisos.push({ codigo: 'nada_configurado', dados: {} });
   if (semMl.length)
     avisos.push({ codigo: 'produto_sem_ml', dados: { produtos: semMl.map(({ nome, quantidade }) => ({ nome, quantidade })) } });
   if (semCardapioLista.length)
