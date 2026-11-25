@@ -484,7 +484,7 @@ lançamentos, sem conta nenhuma (contagem cega). O resto é do admin (sem `@Modu
 | Rota | Marca | O quê |
 |---|---|---|
 | `GET /v1/cana/parametros` | admin | `{ litros_por_duzia_esperado\|null, rendimento_frozen\|null, atualizado_por_nome, atualizado_em, historico: [5 últimas: { litros_por_duzia_esperado, rendimento_frozen, alterado_por_nome, alterado_em }] }`. Nulo = "não informado" (nada vem preenchido) |
-| `PUT /v1/cana/parametros` | admin | `{ litros_por_duzia_esperado: número > 0 \| null, rendimento_frozen: número > 0 \| null }` (os dois campos, até 4 casas); acrescenta uma linha ao histórico (imutável) |
+| `PUT /v1/cana/parametros` | admin | `{ litros_por_duzia_esperado: número > 0 \| null, rendimento_frozen: número > 0 \| null }` (os dois campos; o esperado com até 3 casas e o rendimento com até 4, as casas das colunas); acrescenta uma linha ao histórico (imutável) |
 | `GET /v1/cana/produtos` | admin | itens ativos do cardápio (e os já configurados, mesmo inativos): `[{ item_cardapio_id, nome, categoria, grupo, item_ativo, parece_cana, config: { ml_por_unidade, frozen, ativo, atualizado_por_nome, atualizado_em } \| null }]` |
 | `PUT /v1/cana/produtos/:itemCardapioId` | admin | `{ ml_por_unidade (> 0, 2 casas), frozen, ativo }` (no frozen, o ml é o tamanho do copo de frozen); `ativo: false` = não entra mais na conta |
 | `GET /v1/cana/lancamentos/recentes` | **staff** + tela `cana` | `{ hoje, ontem, lancamentos: [só os da pessoa, 7 dias: { id, tipo, data, duzias, litros_caldo, litros_frozen, fornecedor, observacao, lancado_em, anulado, corrigido }], contagens_lancadas: [{ data, por_nome, em }] (hoje e ontem, de qualquer pessoa, sem número), fornecedores: [até 5] }`. Sem motivo da anulação e sem o número novo de uma correção |

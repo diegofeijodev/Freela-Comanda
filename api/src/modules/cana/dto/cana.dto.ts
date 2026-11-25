@@ -44,15 +44,18 @@ export class CorrigirCanaDto extends CamposCanaDto {
   @IsOptional() @IsString() @MaxLength(300, { message: 'O motivo tem no máximo 300 letras.' }) motivo?: string;
 }
 
-const positivoOuNulo = [
-  IsNumber({ maxDecimalPlaces: 4, allowNaN: false, allowInfinity: false }, { message: 'Use um número com até 4 casas.' }),
-  Min(0.0001, { message: 'Use um número maior que zero (ex.: 5,5).' }),
+/** Positivo com as casas da coluna (o banco arredondaria em silêncio o que passasse daqui). */
+const positivoOuNulo = (casas: 3 | 4) => [
+  IsNumber({ maxDecimalPlaces: casas, allowNaN: false, allowInfinity: false }, { message: `Use um número com até ${casas} casas.` }),
+  Min(casas === 3 ? 0.001 : 0.0001, { message: 'Use um número maior que zero (ex.: 5,5).' }),
   Max(1000, { message: 'Use um número até 1.000.' }),
 ];
 
 export class ParametrosCanaDto {
-  @ValidateIf((_, v) => v !== null) @aplicar(positivoOuNulo) litros_por_duzia_esperado!: number | null;
-  @ValidateIf((_, v) => v !== null) @aplicar(positivoOuNulo) rendimento_frozen!: number | null;
+  /** DECIMAL(10,3). */
+  @ValidateIf((_, v) => v !== null) @aplicar(positivoOuNulo(3)) litros_por_duzia_esperado!: number | null;
+  /** DECIMAL(10,4). */
+  @ValidateIf((_, v) => v !== null) @aplicar(positivoOuNulo(4)) rendimento_frozen!: number | null;
 }
 
 export class ProdutoCanaDto {

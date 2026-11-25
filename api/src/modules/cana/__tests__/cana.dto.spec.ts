@@ -72,6 +72,15 @@ describe('ParametrosCanaDto e ProdutoCanaDto', () => {
       'Use um número maior que zero (ex.: 5,5).',
     ]);
   });
+  it('casas = as da coluna: litros esperados por dúzia com até 3 (DECIMAL(10,3)), rendimento do frozen com até 4 (DECIMAL(10,4))', () => {
+    expect(mensagens(ParametrosCanaDto, { litros_por_duzia_esperado: 5.125, rendimento_frozen: 1.2575 })).toEqual([]);
+    expect(mensagens(ParametrosCanaDto, { litros_por_duzia_esperado: 5.1255, rendimento_frozen: null })).toEqual([
+      'Use um número com até 3 casas.',
+    ]);
+    expect(mensagens(ParametrosCanaDto, { litros_por_duzia_esperado: null, rendimento_frozen: 1.25755 })).toEqual([
+      'Use um número com até 4 casas.',
+    ]);
+  });
   it('produto: ml maior que zero, frozen e ativo obrigatórios', () => {
     expect(mensagens(ProdutoCanaDto, { ml_por_unidade: 300, frozen: false, ativo: true })).toEqual([]);
     expect(mensagens(ProdutoCanaDto, { ml_por_unidade: 0, frozen: false, ativo: true })).toEqual(['Digite os ml (maior que zero).']);
