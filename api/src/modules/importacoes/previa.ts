@@ -2,6 +2,7 @@
 // servidor contra os "fatos do banco" (vendas que já existem, por fonte; o que o Substituir apagaria; arquivo já importado; de-para).
 // Pura, testada sem banco. O confirmar refaz a mesma conta dentro da transação (os números podem mudar se entrou venda no meio).
 import { Prisma } from '@prisma/client';
+import { pareceCana } from '../cana/parece-cana';
 import { agregarVendas, centavos, chaveVenda, type LinhaVenda, type Problema } from './planilha';
 
 export type TipoFonte = 'cupom' | 'padrao' | 'sistema' | 'xml';
@@ -67,8 +68,6 @@ const MAX_AMOSTRA = 20;
 
 const semAcento = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 
-/** Nome que parece de produto de caldo de cana (mesma lista da Configuração da Cana: cana, caldo, garapa, frozen). */
-export const pareceCana = (nome: string) => /\b(cana|caldo|garapa|frozen)\b/.test(semAcento(nome));
 
 const palavras = (s: string) =>
   semAcento(s)

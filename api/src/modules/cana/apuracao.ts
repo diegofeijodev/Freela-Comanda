@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { addDays, dateFromString } from '../../common/time/dates';
-import { pareceCana } from '../importacoes/previa';
+import { pareceCana } from './parece-cana';
 
 /**
  * A conta da semana da cana (desenho 2026-11-24, B.3), pura e testada sem banco: a 2ª exceção à "regra em SQL" (a 1ª é o

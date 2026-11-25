@@ -4,7 +4,6 @@ import {
   montarPrevia,
   NOME_CUPOM,
   NOME_PADRAO,
-  pareceCana,
   sugerirItemCardapio,
   type FatosPrevia,
   type Fonte,
@@ -182,14 +181,6 @@ describe('prévia: produtos ainda não ligados ao cardápio', () => {
     expect(p.produtos_sem_de_para).toEqual([
       { produto_relatorio: 'CALDO CANA 500ML', linhas: 1, valor_centavos: 1200, sugestao_item_cardapio_id: 'c-2', parece_cana: true },
       { produto_relatorio: 'Pastel de Carne', linhas: 1, valor_centavos: 900, sugestao_item_cardapio_id: 'c-1', parece_cana: false },
-    ]);
-  });
-  it('parece de caldo: palavra inteira, sem caixa e sem acento', () => {
-    expect([pareceCana('Garapa 300'), pareceCana('FROZEN de cana'), pareceCana('Canapé'), pareceCana('Americana')]).toEqual([
-      true,
-      true,
-      false,
-      false,
     ]);
   });
   it('sugestão por palavras em comum (≥ 50%)', () => {

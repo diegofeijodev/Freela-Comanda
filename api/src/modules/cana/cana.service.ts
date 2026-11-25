@@ -3,9 +3,9 @@ import { Prisma } from '@prisma/client';
 import type { AuthUser } from '../../common/auth/auth-user';
 import { PrismaService } from '../../common/database/prisma.service';
 import { addDays, dateToString, dayToDb, todaySp } from '../../common/time/dates';
-import { pareceCana } from '../importacoes/previa';
 import { apurarSemana, type Apuracao, type ContagemCana, type EntradaSemana } from './apuracao';
 import type { CorrigirCanaDto, LancamentoCanaDto, ParametrosCanaDto, ProdutoCanaDto } from './dto/cana.dto';
+import { pareceCana } from './parece-cana';
 import { camposDoLancamento, conferirData, conferirMotivo, type DadosLancamento, type TipoCana } from './regras';
 
 type Lancamento = Prisma.cana_lancamentosGetPayload<object>;
