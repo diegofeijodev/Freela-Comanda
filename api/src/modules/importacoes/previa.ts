@@ -68,7 +68,6 @@ const MAX_AMOSTRA = 20;
 
 const semAcento = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 
-
 const palavras = (s: string) =>
   semAcento(s)
     .replace(/[^a-z0-9 ]/g, ' ')

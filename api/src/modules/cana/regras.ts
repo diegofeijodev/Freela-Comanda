@@ -51,7 +51,8 @@ export function camposDoLancamento(tipo: TipoCana, c: CamposCana): { ok: true; d
     if (dados.duzias !== null && dados.duzias <= 0) return erro('As dúzias moídas, se informadas, têm de ser maiores que zero.');
   } else {
     if (dados.duzias === null || dados.duzias < 0) return erro('Digite as dúzias de cana que sobraram (não sobrou? digite 0).');
-    if (dados.litros_caldo === null || dados.litros_caldo < 0) return erro('Digite os litros de caldo que sobraram (não sobrou? digite 0).');
+    if (dados.litros_caldo === null || dados.litros_caldo < 0)
+      return erro('Digite os litros de caldo que sobraram (não sobrou? digite 0).');
   }
   return { ok: true, dados };
 }

@@ -161,6 +161,10 @@ export function botaoLancar(tipo: TipoCana, q: Partial<CanaQuantidades>, quando:
   return `Lançar a contagem de ${quando.replace(/^em /, "")}`;
 }
 
+/** A lista do admin veio cortada pelo servidor (mais lançamentos no período do que o limite): as somas do topo contam só os listados. */
+export const avisoListaCortada = (limite: number) =>
+  `A lista mostra só os ${limite.toLocaleString("pt-BR")} lançamentos mais novos deste período, e as somas acima contam só eles. Escolha um período menor (ou um tipo) para ver os outros.`;
+
 export function resumoLancamento(l: { tipo: TipoCana } & CanaQuantidades) {
   if (l.tipo === "recebimento") return `${TITULO_TIPO.recebimento} · ${duzias(l.duzias ?? 0)}`;
   if (l.tipo === "producao")

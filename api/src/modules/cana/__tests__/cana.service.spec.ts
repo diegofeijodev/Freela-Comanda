@@ -38,7 +38,8 @@ function montar(o: { ja?: ReturnType<typeof guardado> | null; lista?: unknown[] 
   const cana_lancamentos = {
     findUnique: jest.fn(() => Promise.resolve(o.ja ?? null)),
     create: jest.fn((a: { data: object }) => Promise.resolve({ id: 'novo', ...a.data })),
-    findMany: jest.fn(() => Promise.resolve(o.lista ?? [])),
+    // como o banco: devolve no máximo `take` linhas
+    findMany: jest.fn((a: { take?: number }) => Promise.resolve((o.lista ?? []).slice(0, a.take ?? Infinity))),
   };
   const svc = new CanaService({ cana_lancamentos } as unknown as PrismaService);
   return { svc, cana_lancamentos };
@@ -83,5 +84,28 @@ describe('CanaService.lancar — a repetição vem antes das regras do lançamen
       expect(await falha(svc.lancar(LOJA, pedido(12, chave)))).toEqual([400, 'CANA_DATA_FORA']);
       expect(cana_lancamentos.create).not.toHaveBeenCalled();
     }
+  });
+});
+
+describe('CanaService.listar — a lista do admin diz quando cortou', () => {
+  const linhas = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `l-${i}`, substituido_por: i === 0 ? { id: 'novo' } : null }));
+
+  it('mais de 2.000 no período: devolve os 2.000 mais novos e truncado = true', async () => {
+    const { svc } = montar({ lista: linhas(2500) });
+    const r = await svc.listar('2026-01-01', '2026-11-24');
+    expect([r.lancamentos.length, r.truncado, r.limite]).toEqual([2000, true, 2000]);
+    expect(r.lancamentos[0]).toEqual({ id: 'l-0', corrigido_por_id: 'novo' });
+  });
+
+  it('exatamente 2.000: não diz que cortou', async () => {
+    const { svc } = montar({ lista: linhas(2000) });
+    const r = await svc.listar('2026-01-01', '2026-11-24');
+    expect([r.lancamentos.length, r.truncado]).toEqual([2000, false]);
+  });
+
+  it('poucos: todos, truncado = false', async () => {
+    const { svc } = montar({ lista: linhas(3) });
+    const r = await svc.listar('2026-11-01', '2026-11-24', 'contagem');
+    expect([r.lancamentos.length, r.truncado]).toEqual([3, false]);
   });
 });

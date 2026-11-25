@@ -1233,7 +1233,9 @@ export type CanaSemanas = {
 export const canaRecentes = () => get<CanaRecentes>('/v1/cana/lancamentos/recentes');
 /** A loja recebe o recorte (`CanaMeu`); o admin, a linha inteira. */
 export const canaLancar = (l: CanaNovo) => post<CanaMeu & { repetido: boolean }>('/v1/cana/lancamentos', l);
-export const canaLancamentos = (ini: string, fim: string, tipo?: TipoCana) => get<CanaLancamento[]>('/v1/cana/lancamentos', { ini, fim, ...(tipo ? { tipo } : {}) });
+/** Os mais novos do período, até `limite`; `truncado` = havia mais (a tela avisa que as somas contam só os listados). */
+export type CanaLancamentosLista = { lancamentos: CanaLancamento[]; truncado: boolean; limite: number };
+export const canaLancamentos = (ini: string, fim: string, tipo?: TipoCana) => get<CanaLancamentosLista>('/v1/cana/lancamentos', { ini, fim, ...(tipo ? { tipo } : {}) });
 export const canaAnular = (id: string, motivo: string) => post<CanaLancamento>(`/v1/cana/lancamentos/${id}/anular`, { motivo });
 export const canaCorrigir = (id: string, c: Omit<CanaNovo, 'tipo' | 'chave_idempotencia'> & { motivo: string }) =>
   post<CanaLancamento>(`/v1/cana/lancamentos/${id}/corrigir`, c);

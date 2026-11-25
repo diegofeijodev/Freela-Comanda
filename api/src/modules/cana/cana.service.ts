@@ -13,6 +13,8 @@ type Tx = Prisma.TransactionClient;
 
 /** Quantas semanas a lista devolve (a mais nova primeiro). */
 const MAX_SEMANAS = 26;
+/** Quantos lançamentos a lista do admin traz de uma vez (os mais novos); passou disso, a resposta diz `truncado`. */
+export const MAX_LANCAMENTOS_LISTA = 2000;
 const dia = (d: Date) => dateToString(d);
 const diaBr = (s: string) => `${s.slice(8, 10)}/${s.slice(5, 7)}`;
 const ehAdmin = (u: AuthUser) => u.perfil === 'admin';
@@ -240,7 +242,10 @@ export class CanaService {
     };
   }
 
-  /** Admin: todos os lançamentos do período (com os anulados e as correções). */
+  /**
+   * Admin: os lançamentos do período (com os anulados e as correções), os mais novos primeiro, até `MAX_LANCAMENTOS_LISTA`. Pede um a
+   * mais para saber se cortou: `truncado` = havia mais no período (a tela avisa que as somas contam só os listados).
+   */
   async listar(ini: string, fim: string, tipo?: TipoCana) {
     const ls = await this.prisma.cana_lancamentos.findMany({
       where: { data: { gte: dayToDb(ini), lte: dayToDb(fim) }, ...(tipo ? { tipo } : {}) },
@@ -249,9 +254,15 @@ export class CanaService {
         substituido_por: { select: { id: true } },
         substitui: { select: { id: true, data: true, duzias: true, litros_caldo: true, litros_frozen: true, lancado_por_nome: true } },
       },
-      take: 2000,
+      take: MAX_LANCAMENTOS_LISTA + 1,
     });
-    return ls.map(({ substituido_por, ...l }) => ({ ...l, corrigido_por_id: substituido_por?.id ?? null }));
+    return {
+      lancamentos: ls
+        .slice(0, MAX_LANCAMENTOS_LISTA)
+        .map(({ substituido_por, ...l }) => ({ ...l, corrigido_por_id: substituido_por?.id ?? null })),
+      truncado: ls.length > MAX_LANCAMENTOS_LISTA,
+      limite: MAX_LANCAMENTOS_LISTA,
+    };
   }
 
   // ---------- semanas (admin)

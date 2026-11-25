@@ -5,7 +5,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { canaAnular, canaLancamentos, canaRecentes, type CanaLancamento, type TipoCana } from "@/lib/erp-api";
 import { errCode, errMsg } from "@/lib/db";
-import { dataCurta, dataSp, duzias, horaSp, litros, quandoLoja, resumoLancamento } from "@/lib/cana";
+import { avisoListaCortada, dataCurta, dataSp, duzias, horaSp, litros, quandoLoja, resumoLancamento } from "@/lib/cana";
 import { Tag } from "@/components/ui-kit";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -81,10 +81,11 @@ export function CanaLancamentosAba() {
   const [anular, setAnular] = useState<CanaLancamento | null>(null);
   const ini = hoje ? menosDias(hoje, dias) : "";
   const lista = useQuery({ queryKey: ["cana-lancamentos", ini, hoje, tipo], queryFn: () => canaLancamentos(ini, hoje!, tipo || undefined), enabled: !!hoje });
-  const visiveis = useMemo(() => (lista.data ?? []).filter((l) => anulados || !l.anulado_em), [lista.data, anulados]);
-  const ativos = (lista.data ?? []).filter((l) => !l.anulado_em);
+  const todos = useMemo(() => lista.data?.lancamentos ?? [], [lista.data]);
+  const visiveis = useMemo(() => todos.filter((l) => anulados || !l.anulado_em), [todos, anulados]);
+  const ativos = todos.filter((l) => !l.anulado_em);
   const soma = (t: TipoCana, f: (l: CanaLancamento) => number) => ativos.filter((l) => l.tipo === t).reduce((s, l) => s + f(l), 0);
-  const nAnulados = (lista.data ?? []).length - ativos.length;
+  const nAnulados = todos.length - ativos.length;
   const relerTudo = () => { void qc.invalidateQueries({ queryKey: ["cana-lancamentos"] }); void qc.invalidateQueries({ queryKey: ["cana-semanas"] });
     void qc.invalidateQueries({ queryKey: ["cana-semana"] }); void qc.invalidateQueries({ queryKey: ["cana-recentes"] }); };
 
@@ -121,6 +122,7 @@ export function CanaLancamentosAba() {
           {nAnulados ? ` (sem contar ${nAnulados} ${nAnulados === 1 ? "lançamento anulado" : "lançamentos anulados"})` : ""}
         </p>
       )}
+      {lista.data?.truncado && <p role="status" className="text-sm text-warning">{avisoListaCortada(lista.data.limite)}</p>}
       {(lista.isLoading || recentes.isLoading) && <div className="space-y-2">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-16 w-full" />)}</div>}
       {lista.isError && (
         <div className="rounded-lg border p-3 text-sm">Não consegui ver os lançamentos agora. <Button variant="link" className="h-auto p-0" onClick={() => lista.refetch()}>Tentar de novo</Button></div>

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { CanaSemana } from "../erp-api";
 import {
-  botaoLancar, contaCanaMoida, contaMoagem, contaPerda, contaProduto, contaRendimento, contaUmaVenda, contaVendido, duzias, fraseAviso,
+  avisoListaCortada, botaoLancar, contaCanaMoida, contaMoagem, contaPerda, contaProduto, contaRendimento, contaUmaVenda, contaVendido, duzias, fraseAviso,
   lerNumero, litros, lPorDz, pct, quandoLoja, resumoLancamento, rotuloSemana,
 } from "../cana";
 
@@ -138,5 +138,13 @@ describe("a tela da loja (sem conta nenhuma)", () => {
       resumoLancamento({ tipo: "contagem", duzias: 6, litros_caldo: 5, litros_frozen: 2 }),
     ].join(" ");
     expect(textos).not.toMatch(/perda|vendido|rendimento|esperado|sumiu|L\/DZ/i);
+  });
+});
+
+describe("a lista de lançamentos do admin", () => {
+  it("cortada pelo servidor: diz quantos mostra e que as somas contam só eles", () => {
+    expect(avisoListaCortada(2000)).toBe(
+      "A lista mostra só os 2.000 lançamentos mais novos deste período, e as somas acima contam só eles. Escolha um período menor (ou um tipo) para ver os outros.",
+    );
   });
 });

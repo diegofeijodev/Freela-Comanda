@@ -1115,8 +1115,8 @@ req GET "$CANA/semanas/atual" "$ADM"
 check "K4: em andamento desde a de ontem: o recebimento da loja de hoje, sem perda nem cana moída" "true $KC2 12 null null" \
   "$(j .apuracao.em_andamento) $(j .apuracao.contagem_inicial.id) $(j .apuracao.cana.recebida.duzias) $(j .apuracao.caldo.perda) $(j .apuracao.cana.moida)"
 req GET "$CANA/lancamentos?ini=$C1&fim=$HOJE" "$ADM"
-check "K: a lista do admin traz tudo, com os 3 anulados e a correção" "12 3 $KERR" \
-  "$(j length) $(echo "$BODY" | jq '[.[] | select(.anulado_em != null)] | length') $(echo "$BODY" | jq -r '.[] | select(.substitui_id != null) | .substitui_id')"
+check "K: a lista do admin traz tudo, com os 3 anulados e a correção, e diz que não cortou" "12 3 $KERR false 2000" \
+  "$(j '.lancamentos|length') $(echo "$BODY" | jq '[.lancamentos[] | select(.anulado_em != null)] | length') $(echo "$BODY" | jq -r '.lancamentos[] | select(.substitui_id != null) | .substitui_id') $(j .truncado) $(j .limite)"
 req GET $CANA/lancamentos/recentes "$LOJA"
 check "K (7.16): a loja vê só o que ela lançou (o anulado marcado), com hoje e ontem do servidor" "$HOJE $C2 2 false false true" \
   "$(j .hoje) $(j .ontem) $(j '.lancamentos|length') $(echo "$BODY" | jq -r --arg a "$KL1" --arg b "$KL2" '[(.lancamentos[] | select(.id==$a) | .anulado, .corrigido), (.lancamentos[] | select(.id==$b) | .anulado)] | join(" ")')"
